@@ -1,6 +1,34 @@
 module.exports = {
   apps: [
     {
+      name: 'selfx-backend',
+      cwd: './backend',
+      script: 'artisan',
+      args: 'serve --host=127.0.0.1 --port=8000',
+      interpreter: 'php',
+      instances: 1,
+      autorestart: true,
+      watch: false,
+      max_memory_restart: '1G',
+      env: {
+        APP_ENV: 'production',
+      },
+    },
+    {
+      name: 'selfx-queue',
+      cwd: './backend',
+      script: 'artisan',
+      args: 'queue:work --sleep=3 --tries=3',
+      interpreter: 'php',
+      instances: 1,
+      autorestart: true,
+      watch: false,
+      max_memory_restart: '500M',
+      env: {
+        APP_ENV: 'production',
+      },
+    },
+    {
       name: 'selfx-superadmin',
       cwd: './frontend/apps/admin',
       script: 'node_modules/next/dist/bin/next',
