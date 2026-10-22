@@ -132,7 +132,10 @@ export function AdminShell({ children }: { children: ReactNode }) {
         if (!active) return;
         if (res.data?.kind && res.data.kind !== "platform") {
           setAuthState("unauthenticated");
-          window.location.replace("/login?error=platform_required");
+          const loginTarget = window.location.pathname.startsWith("/superadmin")
+            ? "/superadmin/login?error=platform_required"
+            : "/login?error=platform_required";
+          window.location.replace(loginTarget);
           return;
         }
         if (res.data?.name) setUserName(res.data.name);
@@ -141,7 +144,10 @@ export function AdminShell({ children }: { children: ReactNode }) {
       .catch(() => {
         if (!active) return;
         setAuthState("unauthenticated");
-        window.location.replace("/login");
+        const loginTarget = window.location.pathname.startsWith("/superadmin")
+          ? "/superadmin/login"
+          : "/login";
+        window.location.replace(loginTarget);
       });
 
     return () => {
@@ -155,7 +161,10 @@ export function AdminShell({ children }: { children: ReactNode }) {
     } catch {
       // Continue even if network error
     }
-    window.location.replace("/login");
+    const loginTarget = window.location.pathname.startsWith("/superadmin")
+      ? "/superadmin/login"
+      : "/login";
+    window.location.replace(loginTarget);
   }
 
   if (authState === "checking") {
