@@ -188,12 +188,26 @@ export function AdminShell({ children }: { children: ReactNode }) {
     );
   }
 
+  const resolvedGroups = groups.map((g) => ({
+    ...g,
+    items: g.items.map((item) => ({
+      ...item,
+      href: item.href.startsWith("http") || item.href.startsWith("/superadmin")
+        ? item.href
+        : `/superadmin${item.href === "/" ? "" : item.href}`,
+    })),
+  }));
+
+  const activePathname = pathname?.startsWith("/superadmin")
+    ? pathname
+    : `/superadmin${pathname === "/" ? "" : pathname}`;
+
   return (
     <AppShell
       product="SelfX"
       logoUrl={platformLogo}
-      groups={groups}
-      pathname={pathname}
+      groups={resolvedGroups}
+      pathname={activePathname}
       user={{ name: userName, role: "Platform" }}
       onLogout={handleLogout}
     >
