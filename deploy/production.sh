@@ -20,9 +20,18 @@ php artisan up
 
 # 2. Node & Next.js Monorepo Build
 echo "--> Building Next.js Frontends (Super Admin, Console, Storefront)..."
-cd "${ROOT_DIR}/frontend"
+cd "${ROOT_DIR}"
 pnpm install --frozen-lockfile
-pnpm run build
+pnpm run -r build
+
+# Ensure storage permissions for web server (nginx or www-data or apache)
+for webuser in nginx www-data apache; do
+    if id "$webuser" &>/dev/null; then
+        sudo chown -R :$webuser "${ROOT_DIR}/backend/storage" "${ROOT_DIR}/backend/bootstrap/cache" 2>/dev/null || true
+        sudo chmod -R 775 "${ROOT_DIR}/backend/storage" "${ROOT_DIR}/backend/bootstrap/cache" 2>/dev/null || true
+        break
+    fi
+done
 
 # 3. Reload Services
 echo "--> Reloading Systemd / PM2 Processes..."
