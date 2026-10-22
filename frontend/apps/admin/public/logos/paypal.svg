@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 60" fill="none">
+  <rect width="200" height="60" rx="8" fill="white"/>
+  <path d="M30 14H42C48 14 52 17 50.5 23C49 29 44 32 38.5 32H33.5L30 50H22L28 17C28.3 15.3 29.8 14 30 14Z" fill="#003087"/>
+  <path d="M36 21H48C54 21 58 24 56.5 30C55 36 50 39 44.5 39H39.5L36.5 54H28.5L34 24C34.3 22.3 35.8 21 36 21Z" fill="#0079C1"/>
+  <text x="68" y="40" font-family="system-ui, -apple-system, sans-serif" font-size="24" font-weight="700" fill="#003087">Pay<tspan fill="#0079C1">Pal</tspan></text>
+</svg>

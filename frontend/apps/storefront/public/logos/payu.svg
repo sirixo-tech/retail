@@ -1,0 +1,4 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 60" fill="none">
+  <rect width="200" height="60" rx="8" fill="white"/>
+  <text x="24" y="42" font-family="system-ui, -apple-system, sans-serif" font-size="34" font-weight="800" fill="#A4C639">Pay<tspan fill="#333333">U</tspan></text>
+</svg>

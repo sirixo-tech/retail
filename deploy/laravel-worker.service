@@ -1,0 +1,13 @@
+[Unit]
+Description=SelfX Retail Background Queue Worker
+After=network.target
+
+[Service]
+User=www-data
+Group=www-data
+Restart=always
+ExecStart=/usr/bin/php /var/www/selfx/backend/artisan queue:work --sleep=3 --tries=3 --max-time=3600
+RestartSec=5s
+
+[Install]
+WantedBy=multi-user.target

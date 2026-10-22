@@ -1,0 +1,55 @@
+# Dependencies
+node_modules/
+*/node_modules/
+*/*/node_modules/
+*/*/*/node_modules/
+backend/vendor/
+
+# Next.js Build Outputs
+.next/
+*/.next/
+*/*/.next/
+*/*/*/.next/
+dist/
+out/
+
+# Turbo & Cache
+.turbo/
+.cache/
+
+# Environment Files (Keep secrets safe!)
+.env
+.env.local
+.env.development
+.env.test
+.env.production
+.env.backup
+backend/.env
+backend/.env.backup
+backend/.env.production
+!.env.example
+!backend/.env.example
+
+# OS & Editor Files
+.DS_Store
+*/.DS_Store
+*/*/.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Logs
+*.log
+backend/storage/logs/*.log
+backend/storage/framework/cache/*
+!backend/storage/framework/cache/.gitignore
+backend/storage/framework/sessions/*
+!backend/storage/framework/sessions/.gitignore
+backend/storage/framework/views/*
+!backend/storage/framework/views/.gitignore
+
+# Local SQLite databases
+backend/database/*.sqlite
+backend/database/*.sqlite-journal
