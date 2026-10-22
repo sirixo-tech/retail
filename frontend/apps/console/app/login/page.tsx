@@ -193,7 +193,9 @@ export default function LoginPage() {
         const isLocal = window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1";
         const adminUrl = isLocal
           ? `${window.location.protocol}//${window.location.hostname}:3001/`
-          : window.location.origin.replace("app.", "admin.") + "/";
+          : window.location.origin.includes("app.")
+            ? window.location.origin.replace("app.", "admin.") + "/"
+            : "/superadmin/";
         window.location.href = adminUrl;
         return;
       }

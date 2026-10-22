@@ -22,7 +22,8 @@ export default function LoginPage() {
     api<{ data?: { kind?: string } }>("/api/v1/auth/platform/me")
       .then((res) => {
         if (active && res.data?.kind === "platform") {
-          window.location.replace("/");
+          const target = window.location.pathname.startsWith("/superadmin") ? "/superadmin/" : "/";
+          window.location.replace(target);
         }
       })
       .catch(() => {
@@ -53,12 +54,15 @@ export default function LoginPage() {
         const isLocal = window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1";
         const consoleUrl = isLocal
           ? `${window.location.protocol}//${window.location.hostname}:3002/`
-          : window.location.origin.replace("admin.", "app.") + "/";
+          : window.location.origin.includes("admin.")
+            ? window.location.origin.replace("admin.", "app.") + "/"
+            : "/login";
         window.location.href = consoleUrl;
         return;
       }
 
-      window.location.replace("/");
+      const target = window.location.pathname.startsWith("/superadmin") ? "/superadmin/" : "/";
+      window.location.replace(target);
     } catch {
       setError("Those details do not match a platform administrator account.");
     } finally {
