@@ -70,7 +70,8 @@ export function OrganizationDashboard({ data }: { data: OrgData | null }) {
   const vendorsByArea = data.vendors_by_area || [];
   const memberStores = data.member_stores || [];
 
-  const directoryUrl = `http://localhost:3003/org/${org.slug}`;
+  const isLocal = typeof window !== "undefined" && (window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1");
+  const directoryUrl = isLocal ? `http://localhost:3003/org/${org.slug}` : `/org/${org.slug}`;
   const outletsPct = Math.min(100, Math.round((org.active_outlets / Math.max(1, org.max_outlets)) * 100));
 
   return (
@@ -385,7 +386,7 @@ export function OrganizationDashboard({ data }: { data: OrgData | null }) {
                     <td className="py-3 text-muted">{store.email}</td>
                     <td className="py-3 text-right">
                       <a
-                        href={`http://localhost:3003/org/${org.slug}?store=${encodeURIComponent(store.slug)}`}
+                        href={isLocal ? `http://localhost:3003/org/${org.slug}?store=${encodeURIComponent(store.slug)}` : `/org/${org.slug}?store=${encodeURIComponent(store.slug)}`}
                         target="_blank"
                         rel="noreferrer"
                         className="inline-flex items-center gap-1 text-[11.5px] font-semibold text-emerald-600 hover:underline"

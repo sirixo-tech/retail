@@ -83,7 +83,8 @@ export default function QrBuilderPage() {
   // Compute the live target URL
   const targetUrl = (() => {
     const slug = activeBranch?.public_slug || activeBranch?.code || "annapurna";
-    let base = `http://127.0.0.1:3003?store=${encodeURIComponent(slug)}`;
+    const isLocal = typeof window !== "undefined" && (window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1");
+    let base = isLocal ? `http://127.0.0.1:3003?store=${encodeURIComponent(slug)}` : `${window.location.origin}/store?store=${encodeURIComponent(slug)}`;
     if (qrType === "table") {
       base += `&counter=${encodeURIComponent(selectedTableCounter)}`;
     }

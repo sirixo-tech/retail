@@ -62,7 +62,7 @@ const groups: NavGroup[] = [
         label: "Online Store",
         icon: Globe,
         children: [
-          { href: "http://127.0.0.1:3003", label: "Visit Online Store" },
+          { href: "/store", label: "Visit Online Store" },
           { href: "/online-store/settings", label: "Settings" },
           { href: "/online-store/payments", label: "Payment Gateway" },
           { href: "/online-store/orders", label: "Online Orders" },
@@ -398,11 +398,15 @@ export function ConsoleShell({ children }: { children: ReactNode }) {
     if (isOrganization) {
       window.location.href = "http://127.0.0.1:3001/organizations";
     } else {
-      window.location.href = "http://127.0.0.1:3001/impersonation-logs";
+      const isLocalHost = typeof window !== "undefined" && (window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1");
+      window.location.href = isLocalHost ? "http://127.0.0.1:3001/impersonation-logs" : "/superadmin/impersonation-logs";
     }
   }
 
-  const visitStoreHref = storeSlug ? `http://127.0.0.1:3003/?store=${encodeURIComponent(storeSlug)}` : "http://127.0.0.1:3003";
+  const isLocalHost = typeof window !== "undefined" && (window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1");
+  const visitStoreHref = isLocalHost
+    ? (storeSlug ? `http://127.0.0.1:3003/?store=${encodeURIComponent(storeSlug)}` : "http://127.0.0.1:3003")
+    : (storeSlug ? `/store?store=${encodeURIComponent(storeSlug)}` : "/store");
 
   const ts = summaryData?.today_summary;
   const netSalesPaise = ts?.net_sales_paise ?? ((summaryData?.sales_paise ?? 0) - (summaryData?.returns_paise ?? 0));
@@ -500,7 +504,9 @@ export function ConsoleShell({ children }: { children: ReactNode }) {
     );
   }
 
-  const orgDirectoryHref = orgSlug ? `http://localhost:3003/org/${encodeURIComponent(orgSlug)}` : "http://localhost:3003";
+  const orgDirectoryHref = isLocalHost
+    ? (orgSlug ? `http://localhost:3003/org/${encodeURIComponent(orgSlug)}` : "http://localhost:3003")
+    : (orgSlug ? `/org/${encodeURIComponent(orgSlug)}` : "/store");
 
   const organizationNavGroups: NavGroup[] = [
     {

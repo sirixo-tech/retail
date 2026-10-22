@@ -726,7 +726,7 @@ export function PaymentGatewaysSection({
               {stats.turnedOn} of {stats.total} Active
             </span>
             <a
-              href="http://localhost:3003"
+              href="/store"
               target="_blank"
               rel="noreferrer"
               className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-700 transition hover:bg-slate-50 shadow-2xs"
@@ -1486,7 +1486,7 @@ export function SettingsWorkspace({ section = "profile" }: { section?: TenantSet
         <div className="flex items-center gap-2">
           {activeSection === "gateways" ? (
             <a
-              href="http://localhost:3003"
+              href="/store"
               target="_blank"
               rel="noreferrer"
               className="inline-flex h-9 items-center gap-1.5 rounded-[8px] border border-line bg-surface px-3 text-[12.5px] font-semibold text-ink hover:bg-bg"

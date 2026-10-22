@@ -249,7 +249,9 @@ export default function BranchesPage() {
   }
 
   function copyStorefrontLink(store: StoreBranch) {
-    const url = `http://127.0.0.1:3003?store=${store.public_slug || store.code}`;
+    const isLocal = typeof window !== "undefined" && (window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1");
+    const base = isLocal ? "http://127.0.0.1:3003" : `${window.location.origin}/store`;
+    const url = `${base}?store=${store.public_slug || store.code}`;
     void navigator.clipboard.writeText(url);
     setCopiedId(store.id);
     setTimeout(() => setCopiedId(null), 2000);

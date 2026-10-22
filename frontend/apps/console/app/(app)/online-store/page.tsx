@@ -838,6 +838,9 @@ export function OnlineStoreWorkspace({ initialSection = "settings" }: { initialS
 
   const storefrontUrl = useMemo(() => {
     const slug = config.basics.storeUrlPath.trim() || storeSlug;
+    if (typeof window !== "undefined" && window.location.hostname !== "localhost" && window.location.hostname !== "127.0.0.1") {
+      return slug ? `${window.location.origin}/store?store=${encodeURIComponent(slug)}` : `${window.location.origin}/store`;
+    }
     return slug ? `http://127.0.0.1:3003/?store=${encodeURIComponent(slug)}` : "http://127.0.0.1:3003";
   }, [config.basics.storeUrlPath, storeSlug]);
 
