@@ -23,10 +23,15 @@ sudo dnf module reset php -y || true
 sudo dnf module enable php:remi-8.3 -y || true
 
 # 4. Install PHP 8.3 and all required extensions
-echo "--> Installing PHP 8.3 and extensions..."
+echo "--> Installing / Upgrading to PHP 8.3 and extensions..."
 sudo dnf install -y php php-fpm php-cli php-common php-pgsql php-sqlite3 \
     php-curl php-mbstring php-xml php-zip php-bcmath php-intl php-gd \
-    php-opcache php-process git curl unzip nginx certbot python3-certbot-nginx
+    php-opcache php-process git curl unzip --allowerasing
+
+# Install Nginx only if neither nginx nor sw-nginx (Plesk) is installed
+if ! rpm -q nginx &>/dev/null && ! rpm -q sw-nginx &>/dev/null; then
+    sudo dnf install -y nginx
+fi
 
 # 5. Install Composer
 echo "--> Installing Composer..."
@@ -58,8 +63,8 @@ fi
 
 # 9. Enable & Start Services
 echo "--> Enabling and starting Nginx & PHP-FPM..."
-sudo systemctl enable --now nginx
-sudo systemctl enable --now php-fpm
+sudo systemctl enable --now nginx 2>/dev/null || sudo systemctl enable --now sw-nginx 2>/dev/null || true
+sudo systemctl enable --now php-fpm || true
 
 echo "=========================================================="
 echo " AlmaLinux Environment Setup Completed Successfully! "
