@@ -266,21 +266,21 @@ export default function EnterpriseLandingPage() {
           {/* Top Header Login & Portal Action Buttons */}
           <div className="flex items-center gap-2.5">
             <a
-              href="http://127.0.0.1:3003"
+              href="/store"
               className="hidden h-9 items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-700 transition hover:bg-slate-50 sm:inline-flex"
             >
               <Globe className="h-3.5 w-3.5 text-slate-500" />
               Live Storefront
             </a>
             <a
-              href="http://127.0.0.1:3001/login"
+              href="/superadmin/login"
               className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-slate-300 bg-slate-50 px-3.5 text-xs font-semibold text-slate-800 transition hover:bg-slate-100"
             >
               <ShieldCheck className="h-3.5 w-3.5 text-slate-700" />
               Super Admin Login
             </a>
             <a
-              href="http://127.0.0.1:3002/login"
+              href="/login"
               className="inline-flex h-9 items-center gap-1.5 rounded-lg bg-slate-900 px-4 text-xs font-semibold text-white transition hover:bg-slate-800"
             >
               <Store className="h-3.5 w-3.5" />
@@ -315,7 +315,7 @@ export default function EnterpriseLandingPage() {
               {/* Login & Portal CTA Row */}
               <div className="mt-7 flex flex-wrap items-center gap-3">
                 <a
-                  href="http://127.0.0.1:3002/login"
+                  href="/login"
                   className="inline-flex h-11 items-center gap-2 rounded-lg bg-slate-900 px-5 text-xs font-semibold text-white shadow-xs transition hover:bg-slate-800"
                 >
                   <Store className="h-4 w-4" />
@@ -323,14 +323,14 @@ export default function EnterpriseLandingPage() {
                   <ArrowRight className="h-4 w-4" />
                 </a>
                 <a
-                  href="http://127.0.0.1:3001/login"
+                  href="/superadmin/login"
                   className="inline-flex h-11 items-center gap-2 rounded-lg border border-slate-300 bg-white px-5 text-xs font-semibold text-slate-800 transition hover:bg-slate-50"
                 >
                   <ShieldCheck className="h-4 w-4 text-slate-700" />
                   Super Admin Portal
                 </a>
                 <a
-                  href="http://127.0.0.1:3003"
+                  href="/store"
                   className="inline-flex h-11 items-center gap-2 rounded-lg border border-slate-200 bg-white px-4 text-xs font-semibold text-slate-600 transition hover:bg-slate-50 hover:text-slate-900"
                 >
                   <Globe className="h-4 w-4" />
@@ -500,14 +500,14 @@ export default function EnterpriseLandingPage() {
                     </span>
                     <div className="flex items-center gap-2">
                       <a
-                        href="http://127.0.0.1:3002/login"
+                        href="/login"
                         className="font-semibold text-slate-900 underline hover:text-slate-700"
                       >
                         Tenant Login →
                       </a>
                       <span className="text-slate-300">|</span>
                       <a
-                        href="http://127.0.0.1:3001/login"
+                        href="/superadmin/login"
                         className="font-semibold text-slate-900 underline hover:text-slate-700"
                       >
                         Super Admin →
@@ -658,7 +658,7 @@ export default function EnterpriseLandingPage() {
                     Test this module live:
                   </span>
                   <a
-                    href="http://127.0.0.1:3002/login"
+                    href="/login"
                     className="inline-flex h-9 items-center gap-1.5 rounded-lg bg-slate-900 px-3.5 text-xs font-semibold text-white hover:bg-slate-800"
                   >
                     Open in Store Console
@@ -875,7 +875,7 @@ export default function EnterpriseLandingPage() {
                 </div>
 
                 <a
-                  href="http://127.0.0.1:3002/login"
+                  href="/login"
                   className={`mt-8 inline-flex h-10 w-full items-center justify-center rounded-lg text-xs font-semibold transition ${
                     plan.featured
                       ? "bg-white text-slate-900 hover:bg-slate-100"
@@ -961,21 +961,21 @@ export default function EnterpriseLandingPage() {
 
             <div className="flex flex-wrap items-center gap-3">
               <a
-                href="http://127.0.0.1:3002/login"
+                href="/login"
                 className="inline-flex h-9 items-center gap-1.5 rounded-lg bg-white px-4 text-xs font-semibold text-slate-900 hover:bg-slate-100"
               >
                 <Store className="h-3.5 w-3.5" />
                 Store Console Login
               </a>
               <a
-                href="http://127.0.0.1:3001/login"
+                href="/superadmin/login"
                 className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-slate-700 bg-slate-800 px-4 text-xs font-semibold text-white hover:bg-slate-700"
               >
                 <ShieldCheck className="h-3.5 w-3.5" />
                 Super Admin Login
               </a>
               <a
-                href="http://127.0.0.1:3003"
+                href="/store"
                 className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-slate-700 bg-slate-800 px-4 text-xs font-semibold text-slate-200 hover:bg-slate-700"
               >
                 <Globe className="h-3.5 w-3.5" />

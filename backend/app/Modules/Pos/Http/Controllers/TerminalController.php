@@ -37,7 +37,14 @@ class TerminalController
                 'device_name' => $row->device_name ?: ($isPaired ? 'Paired POS Tablet' : null),
                 'pairing_code' => $row->pairing_code,
                 'pairing_expires_at' => $row->pairing_expires_at,
-                'customer_display_url' => "http://127.0.0.1:3002/customer-display?terminal=" . urlencode($row->code) . "&store=" . urlencode($store->public_slug ?: $store->code),
+                'customer_display_url' => (function () use ($row, $store) {
+                    $host = request()->header('x-forwarded-host') ?: request()->getHost();
+                    if ($host === '127.0.0.1' || $host === 'localhost' || empty($host) || str_starts_with($host, '127.0.0.1') || str_starts_with($host, 'localhost')) {
+                        $host = 'retail.sirixo.com';
+                    }
+                    $scheme = (request()->secure() || request()->header('x-forwarded-proto') === 'https' || !str_contains($host, ':')) ? 'https://' : 'http://';
+                    return "{$scheme}{$host}/customer-display?terminal=" . urlencode($row->code) . "&store=" . urlencode($store->public_slug ?: $store->code);
+                })(),
                 'created_at' => $row->created_at,
             ];
         });

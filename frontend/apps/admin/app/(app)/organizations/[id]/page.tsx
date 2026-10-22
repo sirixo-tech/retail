@@ -265,7 +265,7 @@ export default function OrganizationDetailPage() {
         method: "POST",
         body: "{}",
       });
-      window.location.href = `http://127.0.0.1:3002/impersonate?ticket=${encodeURIComponent(body.data.ticket)}`;
+      window.location.href = `/impersonate?ticket=${encodeURIComponent(body.data.ticket)}`;
     } catch (err: any) {
       setError(err?.error?.message ?? "Could not initiate organization impersonation session.");
     }
@@ -411,17 +411,17 @@ export default function OrganizationDetailPage() {
             <Store size={14} className="text-violet-600" />
             <span>Public Multi-Store Directory &amp; Unified Food/Retail Ordering:</span>
             <a
-              href={`http://127.0.0.1:3003/org/${org.slug}`}
+              href={`/org/${org.slug}`}
               target="_blank"
               rel="noreferrer"
               className="font-mono text-indigo-600 font-semibold hover:underline flex items-center gap-1"
             >
-              http://localhost:3003/org/{org.slug}
+              /org/{org.slug}
               <ExternalLink size={11} />
             </a>
           </div>
           <a
-            href={`http://127.0.0.1:3003/org/${org.slug}`}
+            href={`/org/${org.slug}`}
             target="_blank"
             rel="noreferrer"
             className="inline-flex items-center gap-1.5 rounded-lg border border-violet-200 bg-violet-50/70 px-3 py-1.5 text-xs font-semibold text-violet-800 hover:bg-violet-100 transition shadow-2xs"

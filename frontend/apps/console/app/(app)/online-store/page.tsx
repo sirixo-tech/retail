@@ -453,7 +453,7 @@ const DEFAULT_ONLINE_STORE_CONFIG: OnlineStoreConfig = {
     metaDescription: "",
     metaKeywords: "",
     ogImageUrl: "",
-    canonicalUrl: "http://127.0.0.1:3003",
+    canonicalUrl: "/store",
     robotsIndex: true,
     googleAnalyticsId: "",
     metaPixelId: "",
@@ -838,10 +838,8 @@ export function OnlineStoreWorkspace({ initialSection = "settings" }: { initialS
 
   const storefrontUrl = useMemo(() => {
     const slug = config.basics.storeUrlPath.trim() || storeSlug;
-    if (typeof window !== "undefined" && window.location.hostname !== "localhost" && window.location.hostname !== "127.0.0.1") {
-      return slug ? `${window.location.origin}/store?store=${encodeURIComponent(slug)}` : `${window.location.origin}/store`;
-    }
-    return slug ? `http://127.0.0.1:3003/?store=${encodeURIComponent(slug)}` : "http://127.0.0.1:3003";
+    const origin = typeof window !== "undefined" ? window.location.origin : "https://retail.sirixo.com";
+    return slug ? `${origin}/store?store=${encodeURIComponent(slug)}` : `${origin}/store`;
   }, [config.basics.storeUrlPath, storeSlug]);
 
   async function saveAllSettings() {
@@ -1295,7 +1293,7 @@ export function OnlineStoreWorkspace({ initialSection = "settings" }: { initialS
                       <label className="block text-xs font-semibold text-slate-700">Store URL path :</label>
                       <div className="mt-2 flex h-10 overflow-hidden rounded-lg border border-slate-200 focus-within:border-[#6c47ff]">
                         <span className="inline-flex items-center bg-slate-50 px-3 text-xs text-slate-500 border-r border-slate-200">
-                          http://127.0.0.1:3003/?store=
+                          /store?store=
                         </span>
                         <input
                           type="text"

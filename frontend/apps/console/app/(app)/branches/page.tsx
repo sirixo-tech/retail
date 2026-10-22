@@ -249,9 +249,8 @@ export default function BranchesPage() {
   }
 
   function copyStorefrontLink(store: StoreBranch) {
-    const isLocal = typeof window !== "undefined" && (window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1");
-    const base = isLocal ? "http://127.0.0.1:3003" : `${window.location.origin}/store`;
-    const url = `${base}?store=${store.public_slug || store.code}`;
+    const origin = typeof window !== "undefined" ? window.location.origin : "https://retail.sirixo.com";
+    const url = `${origin}/store?store=${store.public_slug || store.code}`;
     void navigator.clipboard.writeText(url);
     setCopiedId(store.id);
     setTimeout(() => setCopiedId(null), 2000);
@@ -477,7 +476,7 @@ export default function BranchesPage() {
                   <td className="px-4 py-3.5">
                     <div className="flex items-center gap-1.5">
                       <span className="font-mono text-[11px] text-accent truncate max-w-[150px]">
-                        http://127.0.0.1:3003?store={store.public_slug || store.code}
+                        /store?store={store.public_slug || store.code}
                       </span>
                       <button
                         type="button"

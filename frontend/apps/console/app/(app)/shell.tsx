@@ -396,17 +396,13 @@ export function ConsoleShell({ children }: { children: ReactNode }) {
       headers: { Accept: "application/json", "Content-Type": "application/json", "X-XSRF-TOKEN": token },
     });
     if (isOrganization) {
-      window.location.href = "http://127.0.0.1:3001/organizations";
+      window.location.href = "/superadmin/organizations";
     } else {
-      const isLocalHost = typeof window !== "undefined" && (window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1");
-      window.location.href = isLocalHost ? "http://127.0.0.1:3001/impersonation-logs" : "/superadmin/impersonation-logs";
+      window.location.href = "/superadmin/impersonation-logs";
     }
   }
 
-  const isLocalHost = typeof window !== "undefined" && (window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1");
-  const visitStoreHref = isLocalHost
-    ? (storeSlug ? `http://127.0.0.1:3003/?store=${encodeURIComponent(storeSlug)}` : "http://127.0.0.1:3003")
-    : (storeSlug ? `/store?store=${encodeURIComponent(storeSlug)}` : "/store");
+  const visitStoreHref = storeSlug ? `/store?store=${encodeURIComponent(storeSlug)}` : "/store";
 
   const ts = summaryData?.today_summary;
   const netSalesPaise = ts?.net_sales_paise ?? ((summaryData?.sales_paise ?? 0) - (summaryData?.returns_paise ?? 0));
@@ -504,9 +500,7 @@ export function ConsoleShell({ children }: { children: ReactNode }) {
     );
   }
 
-  const orgDirectoryHref = isLocalHost
-    ? (orgSlug ? `http://localhost:3003/org/${encodeURIComponent(orgSlug)}` : "http://localhost:3003")
-    : (orgSlug ? `/org/${encodeURIComponent(orgSlug)}` : "/store");
+  const orgDirectoryHref = orgSlug ? `/org/${encodeURIComponent(orgSlug)}` : "/store";
 
   const organizationNavGroups: NavGroup[] = [
     {

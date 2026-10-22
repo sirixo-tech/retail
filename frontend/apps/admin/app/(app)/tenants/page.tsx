@@ -119,7 +119,7 @@ export default function TenantsPage() {
         method: "POST",
         body: "{}",
       });
-      window.location.href = `http://127.0.0.1:3002/impersonate?ticket=${encodeURIComponent(body.data.ticket)}`;
+      window.location.href = `/impersonate?ticket=${encodeURIComponent(body.data.ticket)}`;
     } catch (err) {
       const body = err as ApiError;
       setViewError(body.error?.message ?? "Could not open that store.");
@@ -369,7 +369,7 @@ export default function TenantsPage() {
                   </td>
                   <td className="px-4 py-3">
                     <a
-                      href={`http://127.0.0.1:3003?store=${row.slug}`}
+                      href={`/store?store=${row.slug}`}
                       target="_blank"
                       rel="noreferrer"
                       className="inline-flex items-center gap-1 font-mono font-medium text-accent hover:underline"

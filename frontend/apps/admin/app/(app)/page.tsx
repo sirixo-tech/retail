@@ -590,7 +590,7 @@ export default function DashboardPage() {
               </Link>
 
               <a
-                href="http://localhost:3003"
+                href="/store"
                 target="_blank"
                 rel="noreferrer"
                 className="flex flex-col items-center justify-center gap-2 rounded-xl border border-slate-200/80 bg-slate-50/50 p-4 text-center hover:bg-slate-100/80 hover:border-slate-300 transition group"

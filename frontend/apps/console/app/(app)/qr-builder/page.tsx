@@ -83,8 +83,8 @@ export default function QrBuilderPage() {
   // Compute the live target URL
   const targetUrl = (() => {
     const slug = activeBranch?.public_slug || activeBranch?.code || "annapurna";
-    const isLocal = typeof window !== "undefined" && (window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1");
-    let base = isLocal ? `http://127.0.0.1:3003?store=${encodeURIComponent(slug)}` : `${window.location.origin}/store?store=${encodeURIComponent(slug)}`;
+    const origin = typeof window !== "undefined" ? window.location.origin : "https://retail.sirixo.com";
+    let base = `${origin}/store?store=${encodeURIComponent(slug)}`;
     if (qrType === "table") {
       base += `&counter=${encodeURIComponent(selectedTableCounter)}`;
     }

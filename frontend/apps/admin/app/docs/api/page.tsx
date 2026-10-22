@@ -17,6 +17,7 @@ import {
   Lock,
   Package,
   Play,
+  Printer,
   Receipt,
   RefreshCw,
   Search,
@@ -24,6 +25,8 @@ import {
   ShieldCheck,
   Store,
   Terminal,
+  Truck,
+  Users,
 } from "lucide-react";
 import Link from "next/link";
 import { useMemo, useState } from "react";
@@ -569,6 +572,1066 @@ const API_ENDPOINTS: ApiEndpoint[] = [
       { status: 400, description: "Invalid signature or amount mismatch", example: { error: "validation.failed" } },
     ],
   },
+
+  // 8. Authentication Additional
+  {
+    id: "auth-staff-pin",
+    group: "Authentication",
+    method: "POST",
+    path: "/api/v1/staff/pin",
+    title: "Quick PIN Verification for POS",
+    description: "Authenticates cashier or store associate via 4-digit security PIN on shared billing counter tablets without full email re-login.",
+    auth: "Session Cookie",
+    requestBody: {
+      schema: [
+        { name: "pin", type: "string", required: true, description: "4-to-6 digit security PIN" },
+      ],
+      example: { pin: "1234" },
+    },
+    responses: [
+      {
+        status: 200,
+        description: "PIN verified and staff unlocked",
+        example: { data: { authenticated: true, staff: { id: "01a154f0-user", name: "Kiran Cashier", role: "Cashier" } } },
+      },
+      {
+        status: 401,
+        description: "Invalid PIN code",
+        example: { error: "Invalid staff PIN." },
+      },
+    ],
+  },
+  {
+    id: "auth-switch-store",
+    group: "Authentication",
+    method: "POST",
+    path: "/api/v1/auth/switch-store",
+    title: "Switch Active Branch Context",
+    description: "Switches the active branch/store session for multi-outlet managers.",
+    auth: "Session Cookie",
+    requestBody: {
+      schema: [
+        { name: "store_id", type: "string", required: true, description: "Target store UUID" },
+      ],
+      example: { store_id: "01a154f0-store" },
+    },
+    responses: [
+      {
+        status: 200,
+        description: "Active store switched",
+        example: { data: { active_store_id: "01a154f0-store", name: "Indiranagar Express" } },
+      },
+    ],
+  },
+
+  // 9. Branches & POS Terminals
+  {
+    id: "stores-list",
+    group: "Branches & POS Terminals",
+    method: "GET",
+    path: "/api/v1/stores",
+    title: "List Branches & Store Outlets",
+    description: "Retrieves all physical outlets, dark stores, and warehouse locations configured under the current tenant.",
+    auth: "Session Cookie",
+    responses: [
+      {
+        status: 200,
+        description: "Array of store branches",
+        example: {
+          data: {
+            stores: [
+              {
+                id: "01a154f0-store",
+                name: "MG Road Flagship",
+                code: "MGR-01",
+                public_slug: "mg-road",
+                is_default: true,
+                terminals_count: 3,
+                staff_count: 5,
+                storefront_url: "https://retail.sirixo.com/store?store=mg-road",
+              },
+            ],
+            stats: { total: 1, active: 1 },
+          },
+        },
+      },
+    ],
+  },
+  {
+    id: "stores-create",
+    group: "Branches & POS Terminals",
+    method: "POST",
+    path: "/api/v1/stores",
+    title: "Create Branch / Outlet",
+    description: "Provisions a new store branch with unique code, public slug, address, contact details, and optional GSTIN override.",
+    auth: "Session Cookie",
+    requestBody: {
+      schema: [
+        { name: "name", type: "string", required: true, description: "Store branch name" },
+        { name: "code", type: "string", required: true, description: "Unique outlet code (e.g. BLR-01)" },
+        { name: "public_slug", type: "string", required: false, description: "Custom URL slug for online ordering" },
+        { name: "contact_phone", type: "string", required: false, description: "Branch phone number" },
+        { name: "contact_email", type: "string", required: false, description: "Branch email address" },
+        { name: "gstin", type: "string", required: false, description: "Branch specific GSTIN if separate state" },
+      ],
+      example: {
+        name: "Indiranagar Express",
+        code: "IND-02",
+        public_slug: "indiranagar",
+        contact_phone: "+91 98450 11223",
+        contact_email: "indiranagar@store.in",
+        gstin: "29AAAAA0000A1Z5",
+      },
+    },
+    responses: [
+      {
+        status: 201,
+        description: "Store created successfully",
+        example: { data: { id: "01a154f0-store-2", name: "Indiranagar Express", code: "IND-02" } },
+      },
+    ],
+  },
+  {
+    id: "terminals-list",
+    group: "Branches & POS Terminals",
+    method: "GET",
+    path: "/api/v1/stores/{store}/terminals",
+    title: "List Branch Terminals & Counters",
+    description: "Returns all billing registers, Android/iOS POS tablets, and secondary customer-facing displays paired with this branch.",
+    auth: "Session Cookie",
+    parameters: [
+      { name: "store", type: "string", required: true, description: "Store ID or slug", example: "bangalore" },
+    ],
+    responses: [
+      {
+        status: 200,
+        description: "List of terminals",
+        example: {
+          data: {
+            terminals: [
+              {
+                id: "term-01",
+                name: "Counter 1 - Express Checkout",
+                code: "POS-01",
+                is_paired: true,
+                device_name: "Samsung Galaxy Tab A8",
+                customer_display_url: "https://retail.sirixo.com/customer-display?terminal=POS-01&store=bangalore",
+              },
+            ],
+            stats: { total: 1, paired: 1 },
+          },
+        },
+      },
+    ],
+  },
+  {
+    id: "terminals-create",
+    group: "Branches & POS Terminals",
+    method: "POST",
+    path: "/api/v1/stores/{store}/terminals",
+    title: "Register POS Counter",
+    description: "Creates a billing register counter and generates a pairing code for tablet or customer display sync.",
+    auth: "Session Cookie",
+    parameters: [
+      { name: "store", type: "string", required: true, description: "Store ID or slug", example: "bangalore" },
+    ],
+    requestBody: {
+      schema: [
+        { name: "name", type: "string", required: true, description: "Counter label (e.g. Register 1, Counter A)" },
+        { name: "code", type: "string", required: true, description: "Unique counter identifier" },
+      ],
+      example: { name: "Counter 2 - Express", code: "POS-02" },
+    },
+    responses: [
+      {
+        status: 201,
+        description: "Terminal registered with pairing code",
+        example: { data: { id: "term-02", name: "Counter 2 - Express", code: "POS-02", pairing_code: "849201" } },
+      },
+    ],
+  },
+  {
+    id: "terminals-pair",
+    group: "Branches & POS Terminals",
+    method: "POST",
+    path: "/api/v1/stores/{store}/terminals/{terminal}/pair",
+    title: "Pair Hardware Terminal Device",
+    description: "Completes device pairing handshake between the cloud backend and a physical Android/iOS tablet or Windows POS.",
+    auth: "Session Cookie",
+    parameters: [
+      { name: "store", type: "string", required: true, description: "Store ID or slug", example: "bangalore" },
+      { name: "terminal", type: "string", required: true, description: "Terminal UUID", example: "term-01" },
+    ],
+    requestBody: {
+      schema: [
+        { name: "code", type: "string", required: true, description: "6-digit pairing code displayed on screen" },
+        { name: "device_name", type: "string", required: true, description: "Hardware device label or model" },
+      ],
+      example: { code: "849201", device_name: "POS Counter 2 Tablet" },
+    },
+    responses: [
+      {
+        status: 200,
+        description: "Device paired successfully",
+        example: { data: { paired: true, terminal_id: "term-02", paired_at: "2026-10-22T10:00:00Z" } },
+      },
+    ],
+  },
+  {
+    id: "terminals-public-pair-status",
+    group: "Branches & POS Terminals",
+    method: "GET",
+    path: "/api/v1/public/terminals/check-pair-status",
+    title: "Poll Pairing Handshake Status",
+    description: "Used by customer display and secondary tablet apps to poll whether the pair code was verified by the cashier.",
+    auth: "Public",
+    queryParams: [
+      { name: "code", type: "string", required: true, description: "6-digit pairing code", example: "849201" },
+    ],
+    responses: [
+      {
+        status: 200,
+        description: "Pairing status",
+        example: { data: { paired: true, terminal: { code: "POS-02", name: "Counter 2 - Express", store_slug: "bangalore" } } },
+      },
+    ],
+  },
+
+  // 10. POS & Sales Operations Additional
+  {
+    id: "pos-barcode-lookup",
+    group: "POS & Sales Operations",
+    method: "GET",
+    path: "/api/v1/catalog/barcode/{code}",
+    title: "High-Speed Barcode Lookup",
+    description: "Sub-millisecond barcode lookup for laser and camera scanners on POS counters. Matches EAN-13, UPC, Code128, and internal SKUs.",
+    auth: "Session Cookie",
+    parameters: [
+      { name: "code", type: "string", required: true, description: "Scanned barcode string", example: "8901052003892" },
+    ],
+    responses: [
+      {
+        status: 200,
+        description: "Product record matching barcode",
+        example: {
+          data: {
+            id: "item-tea-01",
+            name: "Tata Tea Gold 500g",
+            sku: "TTG-500",
+            barcode: "8901052003892",
+            selling_price_paise: 32000,
+            mrp_paise: 35000,
+            hsn: "09024020",
+            gst_pct: 5,
+            current_stock: 48,
+          },
+        },
+      },
+      {
+        status: 404,
+        description: "Barcode not found in catalog",
+        example: { error: "Item not found for barcode." },
+      },
+    ],
+  },
+  {
+    id: "pos-shifts-open",
+    group: "POS & Sales Operations",
+    method: "POST",
+    path: "/api/v1/stores/{store}/shifts/open",
+    title: "Open Cash Register Shift",
+    description: "Opens a cashier shift with beginning cash float before transactions can be accepted at the counter.",
+    auth: "Session Cookie",
+    parameters: [{ name: "store", type: "string", required: true, description: "Store ID or slug", example: "bangalore" }],
+    requestBody: {
+      schema: [
+        { name: "opening_cash_paise", type: "integer", required: true, description: "Opening drawer float cash in paise (e.g. ₹2000 = 200000)" },
+        { name: "notes", type: "string", required: false, description: "Shift opening memo" },
+      ],
+      example: { opening_cash_paise: 200000, notes: "Morning Shift A" },
+    },
+    responses: [
+      {
+        status: 201,
+        description: "Shift opened successfully",
+        example: { data: { shift_id: "shift-5501", opened_at: "2026-10-22T08:00:00Z", opening_cash_paise: 200000 } },
+      },
+    ],
+  },
+  {
+    id: "pos-shifts-current",
+    group: "POS & Sales Operations",
+    method: "GET",
+    path: "/api/v1/stores/{store}/shifts/current",
+    title: "Get Active Shift Reading (X-Report)",
+    description: "Real-time mid-shift reading showing running cash, UPI totals, card tenders, and bill counts without closing the register.",
+    auth: "Session Cookie",
+    parameters: [{ name: "store", type: "string", required: true, description: "Store ID or slug", example: "bangalore" }],
+    responses: [
+      {
+        status: 200,
+        description: "Current shift metrics",
+        example: {
+          data: {
+            shift_id: "shift-5501",
+            opened_at: "2026-10-22T08:00:00Z",
+            staff_name: "Kiran Cashier",
+            opening_cash_paise: 200000,
+            cash_sales_paise: 1450000,
+            upi_sales_paise: 3200000,
+            card_sales_paise: 850000,
+            total_sales_paise: 5500000,
+            bills_count: 42,
+            expected_cash_paise: 1650000,
+          },
+        },
+      },
+    ],
+  },
+  {
+    id: "pos-quick-keys",
+    group: "POS & Sales Operations",
+    method: "GET",
+    path: "/api/v1/stores/{store}/quick-keys",
+    title: "Get Touch POS Quick-Key Tiles",
+    description: "Returns configured quick-access product tiles and category speed-keys for touch POS registers and kiosks.",
+    auth: "Session Cookie",
+    parameters: [{ name: "store", type: "string", required: true, description: "Store ID or slug", example: "bangalore" }],
+    responses: [
+      {
+        status: 200,
+        description: "Array of quick key tiles",
+        example: {
+          data: [
+            { id: "qk-1", title: "Cutting Chai", store_item_id: "item-tea-01", color: "#f59e0b", position: 1 },
+            { id: "qk-2", title: "Filter Coffee", store_item_id: "item-cof-02", color: "#8b5cf6", position: 2 },
+          ],
+        },
+      },
+    ],
+  },
+  {
+    id: "pos-sales-sync",
+    group: "POS & Sales Operations",
+    method: "POST",
+    path: "/api/v1/stores/{store}/sales/sync",
+    title: "Batch Sync Offline POS Sales",
+    description: "Enables offline-first POS apps to queue invoices locally during network outages and sync them reliably in batch mode with deduplication.",
+    auth: "Session Cookie",
+    parameters: [{ name: "store", type: "string", required: true, description: "Store ID or slug", example: "bangalore" }],
+    requestBody: {
+      schema: [
+        { name: "sales", type: "array", required: true, description: "Array of offline completed sales with client-side UUIDs" },
+      ],
+      example: {
+        sales: [
+          {
+            offline_id: "offline-uuid-9921",
+            invoice_number: "OFFLINE-001",
+            created_at: "2026-10-22T09:12:00Z",
+            lines: [{ store_item_id: "item-tea-01", qty: 1, unit_price_paise: 32000, discount_paise: 0 }],
+            payments: [{ method: "cash", amount_paise: 32000 }],
+          },
+        ],
+      },
+    },
+    responses: [
+      {
+        status: 200,
+        description: "Batch synchronized",
+        example: {
+          data: {
+            synced_count: 1,
+            failed_count: 0,
+            results: [{ offline_id: "offline-uuid-9921", server_sale_id: "sale-99890", status: "ok" }],
+          },
+        },
+      },
+    ],
+  },
+  {
+    id: "pos-sale-receipt",
+    group: "POS & Sales Operations",
+    method: "GET",
+    path: "/api/v1/sales/{sale}/receipt",
+    title: "Get Formatted Receipt Payload",
+    description: "Returns pre-computed thermal receipt printable lines, GST breakups (CGST, SGST, IGST), store header, QR code data, and footer.",
+    auth: "Session Cookie",
+    parameters: [{ name: "sale", type: "string", required: true, description: "Sale UUID or invoice number", example: "sale-99881" }],
+    responses: [
+      {
+        status: 200,
+        description: "Full receipt payload",
+        example: {
+          data: {
+            invoice_number: "INV-2026-0042",
+            date: "2026-10-20 14:15:00",
+            store_name: "MG Road Flagship",
+            gstin: "29AAAAA0000A1Z5",
+            address: "100 Feet Road, Indiranagar, Bengaluru",
+            lines: [
+              { name: "Tata Tea Gold 500g", qty: 2, rate: "320.00", total: "640.00", hsn: "09024020", gst_pct: 5 },
+            ],
+            subtotal: "609.52",
+            cgst: "15.24",
+            sgst: "15.24",
+            grand_total: "640.00",
+            payment_mode: "UPI (Ref: UPI/20261020/9981)",
+          },
+        },
+      },
+    ],
+  },
+  {
+    id: "pos-sale-returns",
+    group: "POS & Sales Operations",
+    method: "POST",
+    path: "/api/v1/sales/{sale}/returns",
+    title: "Process Sale Return & Refund",
+    description: "Handles item return, returns stock into store inventory, and issues cash, UPI reversal, or credit note.",
+    auth: "Session Cookie",
+    parameters: [{ name: "sale", type: "string", required: true, description: "Sale UUID", example: "sale-99881" }],
+    requestBody: {
+      schema: [
+        { name: "lines", type: "array", required: true, description: "Items to return with quantities" },
+        { name: "refund_mode", type: "string", required: true, description: "cash | store_credit | upi_reversal" },
+        { name: "reason", type: "string", required: false, description: "Customer return reason" },
+      ],
+      example: {
+        lines: [{ store_item_id: "item-tea-01", qty: 1 }],
+        refund_mode: "cash",
+        reason: "Customer changed mind",
+      },
+    },
+    responses: [
+      {
+        status: 200,
+        description: "Return processed",
+        example: { data: { return_id: "ret-1002", refund_amount_paise: 32000, credit_note: "CN-2026-0012" } },
+      },
+    ],
+  },
+  {
+    id: "pos-holds-list",
+    group: "POS & Sales Operations",
+    method: "GET",
+    path: "/api/v1/stores/{store}/holds",
+    title: "List Parked / Held Carts",
+    description: "Lists active parked carts at the checkout counter allowing cashiers to retrieve a customer's suspended order.",
+    auth: "Session Cookie",
+    parameters: [{ name: "store", type: "string", required: true, description: "Store ID or slug", example: "bangalore" }],
+    responses: [
+      {
+        status: 200,
+        description: "Parked carts",
+        example: {
+          data: [
+            {
+              id: "hold-01",
+              customer_name: "Walk-in Guest",
+              total_paise: 96000,
+              items_count: 3,
+              held_at: "2026-10-22T10:14:00Z",
+            },
+          ],
+        },
+      },
+    ],
+  },
+  {
+    id: "pos-holds-park",
+    group: "POS & Sales Operations",
+    method: "POST",
+    path: "/api/v1/stores/{store}/holds",
+    title: "Park / Hold Current Cart",
+    description: "Parks the current active cart to serve the next customer in queue without losing scanned items.",
+    auth: "Session Cookie",
+    parameters: [{ name: "store", type: "string", required: true, description: "Store ID or slug", example: "bangalore" }],
+    requestBody: {
+      schema: [
+        { name: "lines", type: "array", required: true, description: "Scanned cart line items" },
+        { name: "note", type: "string", required: false, description: "Hold identifier note or customer name" },
+      ],
+      example: {
+        lines: [{ store_item_id: "item-tea-01", qty: 3, unit_price_paise: 32000 }],
+        note: "Customer fetching ghee bottle",
+      },
+    },
+    responses: [
+      {
+        status: 201,
+        description: "Cart parked successfully",
+        example: { data: { hold_id: "hold-02", held_at: "2026-10-22T10:30:00Z" } },
+      },
+    ],
+  },
+
+  // 11. Customers & Khata Ledger
+  {
+    id: "customers-list",
+    group: "Customers & Khata Ledger",
+    method: "GET",
+    path: "/api/v1/customers",
+    title: "Search Customers & Ledger",
+    description: "Searches customer profiles by mobile number or name with balance and loyalty points.",
+    auth: "Session Cookie",
+    queryParams: [
+      { name: "q", type: "string", required: false, description: "Search by phone number or name", example: "98450" },
+    ],
+    responses: [
+      {
+        status: 200,
+        description: "Matching customer records",
+        example: {
+          data: [
+            {
+              id: "cust-101",
+              name: "Venkatesh Rao",
+              phone: "+91 98450 99887",
+              khata_balance_paise: -150000,
+              loyalty_points: 340,
+              total_purchases_count: 28,
+            },
+          ],
+        },
+      },
+    ],
+  },
+  {
+    id: "customers-create",
+    group: "Customers & Khata Ledger",
+    method: "POST",
+    path: "/api/v1/customers",
+    title: "Register New Customer",
+    description: "Quickly registers a customer at the checkout counter with phone, name, and credit limit.",
+    auth: "Session Cookie",
+    requestBody: {
+      schema: [
+        { name: "name", type: "string", required: true, description: "Customer full name" },
+        { name: "phone", type: "string", required: true, description: "Customer mobile number" },
+        { name: "email", type: "string", required: false, description: "Customer email address" },
+        { name: "credit_limit_paise", type: "integer", required: false, description: "Allowed Khata / Udhar limit" },
+      ],
+      example: { name: "Ananya Deshmukh", phone: "+91 98888 12345", credit_limit_paise: 500000 },
+    },
+    responses: [
+      {
+        status: 201,
+        description: "Customer created",
+        example: { data: { id: "cust-102", name: "Ananya Deshmukh", phone: "+91 98888 12345" } },
+      },
+    ],
+  },
+  {
+    id: "customers-khata-entry",
+    group: "Customers & Khata Ledger",
+    method: "POST",
+    path: "/api/v1/customers/{customer}/khata",
+    title: "Post Khata (Credit / Debit) Entry",
+    description: "Records an Udhar/Credit balance debit or a repayment credit in the customer's ledger.",
+    auth: "Session Cookie",
+    parameters: [{ name: "customer", type: "string", required: true, description: "Customer UUID", example: "cust-101" }],
+    requestBody: {
+      schema: [
+        { name: "type", type: "string", required: true, description: "'debit' (gave credit) or 'credit' (received repayment)" },
+        { name: "amount_paise", type: "integer", required: true, description: "Transaction amount in paise" },
+        { name: "payment_mode", type: "string", required: false, description: "cash | upi | bank_transfer" },
+        { name: "note", type: "string", required: false, description: "Ledger transaction reference" },
+      ],
+      example: { type: "credit", amount_paise: 150000, payment_mode: "upi", note: "Settled monthly groceries via GPay" },
+    },
+    responses: [
+      {
+        status: 200,
+        description: "Khata entry recorded",
+        example: { data: { entry_id: "khata-881", new_balance_paise: 0, updated_at: "2026-10-22T11:00:00Z" } },
+      },
+    ],
+  },
+
+  // 12. Delivery & Rider Dispatch
+  {
+    id: "delivery-orders-list",
+    group: "Delivery & Rider Dispatch",
+    method: "GET",
+    path: "/api/v1/delivery/orders",
+    title: "List Delivery Orders",
+    description: "Fetches live delivery queue for dispatch coordinators and delivery boy mobile apps.",
+    auth: "Session Cookie",
+    queryParams: [
+      { name: "status", type: "string", required: false, description: "Filter: 'packed', 'dispatched', 'out_for_delivery', 'delivered'" },
+    ],
+    responses: [
+      {
+        status: 200,
+        description: "Active delivery orders",
+        example: {
+          data: [
+            {
+              order_id: "ord-8891",
+              status: "packed",
+              customer_name: "Pooja Hegde",
+              customer_phone: "+91 97410 44321",
+              delivery_address: "Flat 402, Green Palms, Indiranagar",
+              net_total_paise: 79900,
+              assigned_rider: null,
+            },
+          ],
+        },
+      },
+    ],
+  },
+  {
+    id: "delivery-orders-assign",
+    group: "Delivery & Rider Dispatch",
+    method: "POST",
+    path: "/api/v1/delivery/orders/{order}/assign",
+    title: "Assign Rider to Delivery",
+    description: "Assigns a delivery partner or in-house delivery boy to an order ready for dispatch.",
+    auth: "Session Cookie",
+    parameters: [{ name: "order", type: "string", required: true, description: "Order UUID", example: "ord-8891" }],
+    requestBody: {
+      schema: [
+        { name: "staff_id", type: "string", required: true, description: "Delivery rider staff UUID" },
+      ],
+      example: { staff_id: "staff-rider-05" },
+    },
+    responses: [
+      {
+        status: 200,
+        description: "Order assigned to rider",
+        example: { data: { order_id: "ord-8891", assigned_to: "Ramesh Rider", status: "assigned" } },
+      },
+    ],
+  },
+  {
+    id: "delivery-orders-status",
+    group: "Delivery & Rider Dispatch",
+    method: "POST",
+    path: "/api/v1/delivery/orders/{order}/status",
+    title: "Update Rider Delivery Status",
+    description: "Rider mobile app updates delivery progress: out_for_delivery, arrived_at_doorstep, or delivered.",
+    auth: "Session Cookie",
+    parameters: [{ name: "order", type: "string", required: true, description: "Order UUID", example: "ord-8891" }],
+    requestBody: {
+      schema: [
+        { name: "status", type: "string", required: true, description: "Status: 'out_for_delivery' | 'arrived' | 'delivered' | 'failed'" },
+        { name: "latitude", type: "number", required: false, description: "GPS latitude" },
+        { name: "longitude", type: "number", required: false, description: "GPS longitude" },
+      ],
+      example: { status: "delivered", latitude: 12.9716, longitude: 77.5946 },
+    },
+    responses: [
+      {
+        status: 200,
+        description: "Delivery status updated",
+        example: { data: { order_id: "ord-8891", status: "delivered", completed_at: "2026-10-22T11:45:00Z" } },
+      },
+    ],
+  },
+  {
+    id: "delivery-scan-pickup",
+    group: "Delivery & Rider Dispatch",
+    method: "POST",
+    path: "/api/v1/public/orders/scan-pickup",
+    title: "Scan Package QR for Pickup",
+    description: "Rider or customer scans the bag QR code at the store dispatch counter to authenticate order pickup.",
+    auth: "Public",
+    requestBody: {
+      schema: [
+        { name: "qr_code", type: "string", required: true, description: "Scanned QR code data string from package" },
+      ],
+      example: { qr_code: "SELFX-PICKUP-ord-8891-9921" },
+    },
+    responses: [
+      {
+        status: 200,
+        description: "Pickup confirmed",
+        example: { data: { verified: true, order_id: "ord-8891", status: "out_for_delivery" } },
+      },
+    ],
+  },
+
+  // 13. Hardware & ESC/POS Printing
+  {
+    id: "print-jobs-list",
+    group: "Hardware & ESC/POS Printing",
+    method: "GET",
+    path: "/api/v1/print-jobs",
+    title: "Poll Pending Print Jobs",
+    description: "Used by the SelfX Desktop Print Agent (USB / Network ESC-POS / Bluetooth) to poll for waiting thermal receipts and KOTs.",
+    auth: "Session Cookie",
+    responses: [
+      {
+        status: 200,
+        description: "List of queued print jobs",
+        example: {
+          data: [
+            {
+              id: "pjob-01",
+              job_type: "receipt_80mm",
+              target_printer: "USB_POS80",
+              payload_base64: "G0BHSVMtSU5WLUhFQURFUg...",
+              created_at: "2026-10-22T10:14:02Z",
+            },
+          ],
+        },
+      },
+    ],
+  },
+  {
+    id: "print-jobs-create",
+    group: "Hardware & ESC/POS Printing",
+    method: "POST",
+    path: "/api/v1/print-jobs",
+    title: "Enqueue Thermal Print Job",
+    description: "Manually triggers or routes a receipt, kitchen order ticket (KOT), or barcode sticker to the hardware printing service.",
+    auth: "Session Cookie",
+    requestBody: {
+      schema: [
+        { name: "sale_id", type: "string", required: false, description: "Sale UUID for invoice receipt" },
+        { name: "printer_name", type: "string", required: false, description: "Target printer identifier" },
+        { name: "copies", type: "integer", required: false, description: "Number of copies (default 1)" },
+      ],
+      example: { sale_id: "sale-99881", printer_name: "Kitchen_KOT_Printer", copies: 1 },
+    },
+    responses: [
+      {
+        status: 201,
+        description: "Print job queued",
+        example: { data: { job_id: "pjob-02", status: "queued" } },
+      },
+    ],
+  },
+  {
+    id: "print-jobs-ack",
+    group: "Hardware & ESC/POS Printing",
+    method: "POST",
+    path: "/api/v1/print-jobs/{job}/ack",
+    title: "Acknowledge Print Completion",
+    description: "Desktop Print Agent reports back that the ESC/POS ticket was successfully printed or reports a paper jam/error.",
+    auth: "Session Cookie",
+    parameters: [{ name: "job", type: "string", required: true, description: "Print job UUID", example: "pjob-01" }],
+    requestBody: {
+      schema: [
+        { name: "status", type: "string", required: true, description: "'printed' or 'failed'" },
+        { name: "error_message", type: "string", required: false, description: "Printer error details if failed" },
+      ],
+      example: { status: "printed" },
+    },
+    responses: [
+      {
+        status: 200,
+        description: "Acknowledgement saved",
+        example: { data: { acknowledged: true } },
+      },
+    ],
+  },
+
+  // 14. Inventory & Warehousing
+  {
+    id: "inventory-suppliers",
+    group: "Inventory & Warehousing",
+    method: "GET",
+    path: "/api/v1/suppliers",
+    title: "List Suppliers & Vendors",
+    description: "Lists registered FMCG distributors, wholesale suppliers, and vendor ledger balances.",
+    auth: "Session Cookie",
+    responses: [
+      {
+        status: 200,
+        description: "Suppliers list",
+        example: {
+          data: [
+            {
+              id: "supp-01",
+              name: "Hindustan Unilever Distributor",
+              contact_person: "Sunil Jain",
+              phone: "+91 98440 22110",
+              gstin: "29AABCH1234D1ZP",
+              outstanding_balance_paise: 4500000,
+            },
+          ],
+        },
+      },
+    ],
+  },
+  {
+    id: "inventory-purchases-receive",
+    group: "Inventory & Warehousing",
+    method: "POST",
+    path: "/api/v1/stores/{store}/purchases",
+    title: "Record Goods Received Note (GRN)",
+    description: "Receives inventory shipment from supplier, logs invoice number, updates stock on hand, and adjusts weighted average cost price.",
+    auth: "Session Cookie",
+    parameters: [{ name: "store", type: "string", required: true, description: "Store ID or slug", example: "bangalore" }],
+    requestBody: {
+      schema: [
+        { name: "supplier_id", type: "string", required: true, description: "Supplier UUID" },
+        { name: "invoice_number", type: "string", required: true, description: "Vendor tax invoice number" },
+        { name: "invoice_date", type: "string", required: true, description: "Invoice date (YYYY-MM-DD)" },
+        { name: "items", type: "array", required: true, description: "Received line items with quantities, cost, and tax" },
+      ],
+      example: {
+        supplier_id: "supp-01",
+        invoice_number: "HUL-INV-8890",
+        invoice_date: "2026-10-22",
+        items: [
+          { store_item_id: "item-tea-01", qty: 24, cost_price_paise: 27500, tax_rate: 5 },
+        ],
+      },
+    },
+    responses: [
+      {
+        status: 201,
+        description: "Stock received into inventory",
+        example: { data: { grn_id: "grn-501", total_cost_paise: 660000, items_received: 1 } },
+      },
+    ],
+  },
+  {
+    id: "inventory-adjustments",
+    group: "Inventory & Warehousing",
+    method: "POST",
+    path: "/api/v1/stores/{store}/adjustments",
+    title: "Stock Adjustment / Correction",
+    description: "Adjusts current stock quantities for damage, expired items, shrinkage, or physical count variance.",
+    auth: "Session Cookie",
+    parameters: [{ name: "store", type: "string", required: true, description: "Store ID or slug", example: "bangalore" }],
+    requestBody: {
+      schema: [
+        { name: "store_item_id", type: "string", required: true, description: "Store item UUID" },
+        { name: "delta_qty", type: "number", required: true, description: "Positive or negative change in stock" },
+        { name: "reason", type: "string", required: true, description: "Reason: 'damaged' | 'expired' | 'shrinkage' | 'count_correction'" },
+      ],
+      example: { store_item_id: "item-tea-01", delta_qty: -2, reason: "damaged" },
+    },
+    responses: [
+      {
+        status: 200,
+        description: "Stock adjusted",
+        example: { data: { store_item_id: "item-tea-01", new_stock: 46 } },
+      },
+    ],
+  },
+  {
+    id: "inventory-transfers",
+    group: "Inventory & Warehousing",
+    method: "POST",
+    path: "/api/v1/stores/{store}/transfers",
+    title: "Create Inter-Branch Stock Transfer",
+    description: "Dispatches stock from one store/warehouse to another with delivery note and transit tracking.",
+    auth: "Session Cookie",
+    parameters: [{ name: "store", type: "string", required: true, description: "Source store ID or slug", example: "bangalore" }],
+    requestBody: {
+      schema: [
+        { name: "destination_store_id", type: "string", required: true, description: "Target store UUID" },
+        { name: "items", type: "array", required: true, description: "Items and quantities to transfer" },
+      ],
+      example: {
+        destination_store_id: "01a154f0-store-2",
+        items: [{ store_item_id: "item-tea-01", qty: 10 }],
+      },
+    },
+    responses: [
+      {
+        status: 201,
+        description: "Stock transfer dispatched",
+        example: { data: { transfer_id: "tr-901", status: "in_transit", items_count: 1 } },
+      },
+    ],
+  },
+  {
+    id: "inventory-stock-alerts",
+    group: "Inventory & Warehousing",
+    method: "GET",
+    path: "/api/v1/stores/{store}/stock/alerts",
+    title: "Get Low Stock & Reorder Alerts",
+    description: "Returns items whose stock on hand is at or below their configured minimum reorder threshold.",
+    auth: "Session Cookie",
+    parameters: [{ name: "store", type: "string", required: true, description: "Store ID or slug", example: "bangalore" }],
+    responses: [
+      {
+        status: 200,
+        description: "List of items needing replenishment",
+        example: {
+          data: [
+            {
+              store_item_id: "item-tea-01",
+              name: "Tata Tea Gold 500g",
+              current_stock: 4,
+              reorder_threshold: 12,
+              suggested_reorder_qty: 24,
+            },
+          ],
+        },
+      },
+    ],
+  },
+
+  // 15. Online Storefront Additional
+  {
+    id: "storefront-public-store",
+    group: "Online Storefront",
+    method: "GET",
+    path: "/api/v1/public/stores/{slug}",
+    title: "Get Public Store Details & Timings",
+    description: "Returns the public-facing storefront settings, logo, brand banner, operational hours, minimum order amount, and delivery zones.",
+    auth: "Public",
+    parameters: [{ name: "slug", type: "string", required: true, description: "Store public slug", example: "s-mart" }],
+    responses: [
+      {
+        status: 200,
+        description: "Store profile details",
+        example: {
+          data: {
+            id: "01a154f0-store",
+            name: "Coffee Cafe & Groceries",
+            slug: "s-mart",
+            phone: "+91 99882 23919",
+            address: "Koramangala 5th Block, Bengaluru",
+            is_open: true,
+            min_order_paise: 15000,
+            delivery_enabled: true,
+            dine_in_enabled: true,
+          },
+        },
+      },
+    ],
+  },
+  {
+    id: "storefront-public-gateways",
+    group: "Online Storefront",
+    method: "GET",
+    path: "/api/v1/public/stores/{slug}/gateways",
+    title: "Get Active Online Payment Gateways",
+    description: "Returns configured customer checkout payment methods (Razorpay key ID, Stripe publishable key, UPI QR, Cash on Delivery).",
+    auth: "Public",
+    parameters: [{ name: "slug", type: "string", required: true, description: "Store public slug", example: "s-mart" }],
+    responses: [
+      {
+        status: 200,
+        description: "Available gateways",
+        example: {
+          data: {
+            gateways: [
+              { provider: "razorpay", name: "UPI / Cards / NetBanking", key_id: "rzp_live_••••••••" },
+              { provider: "cod", name: "Cash on Delivery", key_id: null },
+            ],
+          },
+        },
+      },
+    ],
+  },
+  {
+    id: "storefront-track",
+    group: "Online Storefront",
+    method: "POST",
+    path: "/api/v1/public/orders/track",
+    title: "Track Online Order Status",
+    description: "Allows end customers to track real-time order status, rider dispatch progress, and estimated delivery time using order ID and phone.",
+    auth: "Public",
+    requestBody: {
+      schema: [
+        { name: "order_id", type: "string", required: true, description: "Order UUID or order number" },
+        { name: "phone", type: "string", required: true, description: "Customer mobile number" },
+      ],
+      example: { order_id: "ord-8891", phone: "+91 98450 11223" },
+    },
+    responses: [
+      {
+        status: 200,
+        description: "Live order tracking details",
+        example: {
+          data: {
+            order_id: "ord-8891",
+            status: "out_for_delivery",
+            placed_at: "2026-10-22T10:15:00Z",
+            rider: { name: "Ramesh R", phone: "+91 99000 11222" },
+            estimated_minutes: 15,
+          },
+        },
+      },
+    ],
+  },
+  {
+    id: "storefront-ai-chat",
+    group: "Online Storefront",
+    method: "POST",
+    path: "/api/v1/public/stores/{slug}/ai",
+    title: "AI Conversational Shopping Assistant",
+    description: "Storefront AI copilot that assists shoppers in finding recipes, dietary-compliant ingredients, and auto-filling carts.",
+    auth: "Public",
+    parameters: [{ name: "slug", type: "string", required: true, description: "Store public slug", example: "s-mart" }],
+    requestBody: {
+      schema: [
+        { name: "message", type: "string", required: true, description: "Shopper query in natural language" },
+      ],
+      example: { message: "I want to make Masala Chai. Add milk, tea powder and ginger to my cart." },
+    },
+    responses: [
+      {
+        status: 200,
+        description: "AI response with matched products",
+        example: {
+          data: {
+            reply: "I found 3 items for Masala Chai! Here is Tata Tea Gold 500g, Nandini GoodLife Milk 500ml, and Fresh Ginger 250g.",
+            suggested_items: [
+              { store_item_id: "item-tea-01", name: "Tata Tea Gold 500g", price_paise: 32000 },
+            ],
+          },
+        },
+      },
+    ],
+  },
+
+  // 16. Platform & Operations
+  {
+    id: "platform-health",
+    group: "Platform & System Operations",
+    method: "GET",
+    path: "/api/v1/platform/health",
+    title: "System Health & Database Readiness",
+    description: "Deep health check verifying SQLite / MySQL database connectivity, Redis cache latency, disk storage, and queue workers.",
+    auth: "Platform Admin",
+    responses: [
+      {
+        status: 200,
+        description: "All services operational",
+        example: {
+          status: "healthy",
+          timestamp: "2026-10-22T16:45:00Z",
+          database: "connected",
+          storage: "writable",
+          version: "2.4.0",
+        },
+      },
+    ],
+  },
+  {
+    id: "platform-queue-status",
+    group: "Platform & System Operations",
+    method: "GET",
+    path: "/api/v1/platform/queue-status",
+    title: "Background Queue & Worker Architecture",
+    description: "Real-time queue metrics: jobs waiting, jobs running, failed jobs, and worker heartbeat for receipt generation and email webhooks.",
+    auth: "Platform Admin",
+    responses: [
+      {
+        status: 200,
+        description: "Queue status",
+        example: {
+          data: {
+            status: "active",
+            pending_jobs: 0,
+            failed_jobs: 0,
+            processed_last_hour: 142,
+            workers_alive: 2,
+          },
+        },
+      },
+    ],
+  },
 ];
 
 function SyntaxHighlightedJson({ json }: { json: unknown }) {
@@ -629,16 +1692,28 @@ function getGroupIcon(group: string) {
       return <ShieldCheck className="h-3.5 w-3.5 text-slate-400 shrink-0" />;
     case "Tenants & Organizations":
       return <Building2 className="h-3.5 w-3.5 text-slate-400 shrink-0" />;
+    case "Branches & POS Terminals":
+      return <Store className="h-3.5 w-3.5 text-slate-400 shrink-0" />;
     case "Catalog & Inventory":
       return <Package className="h-3.5 w-3.5 text-slate-400 shrink-0" />;
     case "POS & Sales Operations":
       return <Receipt className="h-3.5 w-3.5 text-slate-400 shrink-0" />;
+    case "Customers & Khata Ledger":
+      return <Users className="h-3.5 w-3.5 text-slate-400 shrink-0" />;
+    case "Delivery & Rider Dispatch":
+      return <Truck className="h-3.5 w-3.5 text-slate-400 shrink-0" />;
+    case "Hardware & ESC/POS Printing":
+      return <Printer className="h-3.5 w-3.5 text-slate-400 shrink-0" />;
+    case "Inventory & Warehousing":
+      return <Layers className="h-3.5 w-3.5 text-slate-400 shrink-0" />;
     case "Online Storefront":
-      return <Store className="h-3.5 w-3.5 text-slate-400 shrink-0" />;
+      return <Globe className="h-3.5 w-3.5 text-slate-400 shrink-0" />;
     case "Reports & GST Analytics":
       return <BarChart3 className="h-3.5 w-3.5 text-slate-400 shrink-0" />;
     case "Payment Gateways & Webhooks":
       return <CreditCard className="h-3.5 w-3.5 text-slate-400 shrink-0" />;
+    case "Platform & System Operations":
+      return <Terminal className="h-3.5 w-3.5 text-slate-400 shrink-0" />;
     default:
       return <Terminal className="h-3.5 w-3.5 text-slate-400 shrink-0" />;
   }
@@ -648,7 +1723,9 @@ export default function ApiDocumentationPage() {
   const [selectedEndpoint, setSelectedEndpoint] = useState<ApiEndpoint>(API_ENDPOINTS[0]!);
   const [searchQuery, setSearchQuery] = useState("");
   const [activeLang, setActiveLang] = useState<"curl" | "javascript" | "python">("curl");
-  const [apiHost, setApiHost] = useState("http://127.0.0.1:8000");
+  const [apiHost, setApiHost] = useState(
+    typeof window !== "undefined" && window.location.origin ? window.location.origin : "https://retail.sirixo.com"
+  );
   const [apiKey, setApiKey] = useState("");
   const [liveReqBody, setLiveReqBody] = useState<string>(
     JSON.stringify(API_ENDPOINTS[0]?.requestBody?.example ?? {}, null, 2),
@@ -891,7 +1968,7 @@ print(response.json())`;
               value={apiHost}
               onChange={(e) => setApiHost(e.target.value)}
               className="w-44 bg-transparent font-mono text-xs text-slate-800 outline-none"
-              placeholder="http://127.0.0.1:8000"
+              placeholder="https://retail.sirixo.com"
             />
             <button
               type="button"

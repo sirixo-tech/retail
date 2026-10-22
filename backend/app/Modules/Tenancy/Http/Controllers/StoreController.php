@@ -53,7 +53,14 @@ class StoreController
                 'staff_count' => $staffCount,
                 'contact_phone' => $store->settings['contact_phone'] ?? null,
                 'contact_email' => $store->settings['contact_email'] ?? null,
-                'storefront_url' => "http://127.0.0.1:3003?store=" . ($store->public_slug ?: $store->code),
+                'storefront_url' => (function () use ($store) {
+                    $host = request()->header('x-forwarded-host') ?: request()->getHost();
+                    if ($host === '127.0.0.1' || $host === 'localhost' || empty($host) || str_starts_with($host, '127.0.0.1') || str_starts_with($host, 'localhost')) {
+                        $host = 'retail.sirixo.com';
+                    }
+                    $scheme = (request()->secure() || request()->header('x-forwarded-proto') === 'https' || !str_contains($host, ':')) ? 'https://' : 'http://';
+                    return "{$scheme}{$host}/store?store=" . ($store->public_slug ?: $store->code);
+                })(),
                 'created_at' => $store->created_at?->toIso8601String(),
             ];
         });

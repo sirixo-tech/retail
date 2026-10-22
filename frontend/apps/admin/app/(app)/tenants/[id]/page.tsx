@@ -234,7 +234,7 @@ export default function TenantDetailPage() {
         method: "POST",
         body: "{}",
       });
-      window.location.href = `http://127.0.0.1:3002/impersonate?ticket=${encodeURIComponent(body.data.ticket)}`;
+      window.location.href = `/impersonate?ticket=${encodeURIComponent(body.data.ticket)}`;
     } catch (err: any) {
       setError(err?.error?.message ?? "Could not initiate impersonation session.");
     }
@@ -765,7 +765,7 @@ export default function TenantDetailPage() {
               <div className="flex items-center justify-between text-[11px] text-slate-500">
                 <span>System Subdomain (SSL Managed)</span>
                 <a
-                  href={`http://127.0.0.1:3003?store=${tenant.slug}`}
+                  href={`/store?store=${tenant.slug}`}
                   target="_blank"
                   rel="noreferrer"
                   className="text-emerald-700 font-semibold hover:underline"
