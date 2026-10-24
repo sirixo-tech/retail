@@ -1,4 +1,5 @@
 import 'package:dio/dio.dart';
+import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'cookie_binder_web.dart' if (dart.library.io) 'cookie_binder_io.dart';
@@ -203,7 +204,14 @@ class Api {
       }
       if (error.type == DioExceptionType.connectionError ||
           error.type == DioExceptionType.connectionTimeout) {
-        throw ApiException('No connection to server', status: 0, code: 'offline');
+        if (kIsWeb) {
+          throw ApiException(
+            'Cannot connect to $baseUrl. If running on Chrome Web, ensure backend CORS is deployed or run natively.',
+            status: 0,
+            code: 'offline',
+          );
+        }
+        throw ApiException('No connection to server ($baseUrl)', status: 0, code: 'offline');
       }
       throw ApiException(
         error.message ?? 'Request failed',
