@@ -354,6 +354,8 @@ class LoginUser
                 'address' => $store->address_line,
                 'is_default' => (bool) $store->is_default,
             ] : null,
+            'token' => session()->getId(),
+            'session_id' => session()->getId(),
             'stores' => $allStores,
             'allStores' => $allStores,
         ];

@@ -29,6 +29,7 @@ return Application::configure(basePath: dirname(__DIR__))
             'password.changed' => \App\Http\Middleware\EnsurePasswordChanged::class,
             'tenant.enforce' => \App\Http\Middleware\EnforceTenantContext::class,
         ]);
+        $middleware->prependToGroup('web', \App\Http\Middleware\HydrateSessionFromHeader::class);
         $middleware->append(\App\Http\Middleware\CheckPlatformMaintenance::class);
         $middleware->append(\App\Http\Middleware\PerformanceMonitoring::class);
         $middleware->appendToGroup('web', \App\Http\Middleware\EnforceTenantContext::class);
