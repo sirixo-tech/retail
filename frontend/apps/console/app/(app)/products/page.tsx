@@ -1410,12 +1410,16 @@ export function ProductWorkspace({ view }: { view: View }) {
             const ids = Object.entries(picked)
               .filter(([, on]) => on)
               .map(([id]) => id);
-            void send(`/api/v1/stores/${storeId}/items/from-catalog`, {
+            void send(`/api/v1/stores/${storeId}/items/bulk-from-catalog`, {
               margin_bps: Math.round(Number(data.get("margin") || 0) * 100),
-              items: ids.map((id) => ({
-                master_product_id: id,
-                opening_qty: Number(data.get("qty") || 0),
-              })),
+              master_product_ids: ids,
+            }).then(() => {
+              setAddedMasters((prev) => {
+                const next = { ...prev };
+                for (const id of ids) next[id] = true;
+                return next;
+              });
+              setPicked({});
             });
           }}
         >

@@ -2,13 +2,14 @@
 
 namespace App\Modules\Tenancy\Models;
 
+use App\Support\Tenancy\BelongsToTenant;
 use Illuminate\Database\Eloquent\Concerns\HasUuids;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Str;
 
 class ProvisionStep extends Model
 {
-    use HasUuids;
+    use HasUuids, BelongsToTenant;
 
     protected $table = 'tenant_provision_steps';
 

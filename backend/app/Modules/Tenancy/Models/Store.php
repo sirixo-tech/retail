@@ -2,6 +2,8 @@
 
 namespace App\Modules\Tenancy\Models;
 
+use App\Support\Tenancy\BelongsToTenant;
+use App\Support\Tenancy\TenantContext;
 use Illuminate\Database\Eloquent\Concerns\HasUuids;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
@@ -10,7 +12,7 @@ use Illuminate\Support\Str;
 
 class Store extends Model
 {
-    use HasUuids, SoftDeletes;
+    use HasUuids, SoftDeletes, BelongsToTenant;
 
     public $incrementing = false;
 
@@ -41,17 +43,13 @@ class Store extends Model
         return ['id'];
     }
 
-    public function tenant(): BelongsTo
-    {
-        return $this->belongsTo(Tenant::class);
-    }
-
     public static function resolvePublic(string $slug): ?self
     {
-        $clean = trim($slug);
-        if ($clean === '') {
-            return null;
-        }
+        return app(TenantContext::class)->withoutTenantScope(function () use ($slug): ?self {
+            $clean = trim($slug);
+            if ($clean === '') {
+                return null;
+            }
 
         $exact = self::query()->where('public_slug', $clean)->where('status', 'active')->first();
         if ($exact) {
@@ -103,6 +101,7 @@ class Store extends Model
             })->first();
         }
 
-        return null;
+            return null;
+        });
     }
 }

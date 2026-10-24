@@ -87,6 +87,86 @@ class StoreItemController
         return ApiResponse::ok($this->items->fromCatalog($model, $data['items'], (int) $data['margin_bps']));
     }
 
+    public function bulkFromCatalog(Request $request, string $store): JsonResponse
+    {
+        $model = $this->store($request, $store);
+        if ($model instanceof JsonResponse) {
+            return $model;
+        }
+
+        $data = $request->validate([
+            'master_product_ids' => ['required', 'array', 'min:1'],
+            'master_product_ids.*' => ['required', 'uuid'],
+            'margin_bps' => ['nullable', 'integer', 'min:0', 'max:9000'],
+        ]);
+
+        $marginBps = (int) ($data['margin_bps'] ?? 0);
+        $items = array_map(fn ($id) => ['master_product_id' => $id], $data['master_product_ids']);
+
+        $result = $this->items->fromCatalog($model, $items, $marginBps);
+
+        return ApiResponse::ok([
+            'added' => count($result['added']),
+            'items' => $result['added'],
+            'skipped' => $result['skipped'],
+        ]);
+    }
+
+    public function getSubscription(Request $request, string $item): JsonResponse
+    {
+        $tenantId = (string) $request->session()->get('tenant_id');
+        $sub = DB::table('catalog_subscriptions')
+            ->where('tenant_id', $tenantId)
+            ->where('store_item_id', $item)
+            ->first();
+
+        if (! $sub) {
+            return ApiResponse::error('subscription.not_found', 'No global catalog subscription for this item.', 404);
+        }
+
+        $sub->auto_update_price = (bool) $sub->auto_update_price;
+        $sub->auto_update_name = (bool) $sub->auto_update_name;
+        $sub->auto_update_description = (bool) $sub->auto_update_description;
+        $sub->auto_update_tax = (bool) $sub->auto_update_tax;
+
+        return ApiResponse::ok($sub);
+    }
+
+    public function updateSubscription(Request $request, string $item): JsonResponse
+    {
+        $tenantId = (string) $request->session()->get('tenant_id');
+        $data = $request->validate([
+            'auto_update_price' => ['nullable', 'boolean'],
+            'auto_update_name' => ['nullable', 'boolean'],
+            'auto_update_description' => ['nullable', 'boolean'],
+            'auto_update_tax' => ['nullable', 'boolean'],
+        ]);
+
+        $existing = DB::table('catalog_subscriptions')
+            ->where('tenant_id', $tenantId)
+            ->where('store_item_id', $item)
+            ->first();
+
+        if (! $existing) {
+            return ApiResponse::error('subscription.not_found', 'No global catalog subscription for this item.', 404);
+        }
+
+        $update = array_filter($data, fn ($v) => $v !== null);
+        $update['updated_at'] = now();
+
+        DB::table('catalog_subscriptions')
+            ->where('id', $existing->id)
+            ->update($update);
+
+        $fresh = DB::table('catalog_subscriptions')->where('id', $existing->id)->first();
+        $fresh->auto_update_price = (bool) $fresh->auto_update_price;
+        $fresh->auto_update_name = (bool) $fresh->auto_update_name;
+        $fresh->auto_update_description = (bool) $fresh->auto_update_description;
+        $fresh->auto_update_tax = (bool) $fresh->auto_update_tax;
+
+        return ApiResponse::ok($fresh);
+    }
+
     public function lookup(Request $request, string $store): JsonResponse
     {
         $model = $this->store($request, $store);

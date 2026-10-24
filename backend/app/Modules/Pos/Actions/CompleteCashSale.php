@@ -172,8 +172,9 @@ class CompleteCashSale
             ]);
 
             foreach ($built as $row) {
+                $lineId = (string) Str::uuid7();
                 DB::table('sale_lines')->insert([
-                    'id' => (string) Str::uuid7(),
+                    'id' => $lineId,
                     'sale_id' => $saleId,
                     'store_item_id' => $row['item']->id,
                     'description_snapshot' => $row['name'],
@@ -193,6 +194,21 @@ class CompleteCashSale
                     'created_at' => now(),
                     'updated_at' => now(),
                 ]);
+
+                if (! empty($row['item']->enable_batch_tracking)) {
+                    $batches = app(\App\Services\BatchManagementService::class)->allocateBatch($row['item'], (float) $row['qty'], 'FEFO');
+                    foreach ($batches as $batch) {
+                        DB::table('sale_line_batches')->insert([
+                            'id' => (string) Str::uuid7(),
+                            'sale_line_id' => $lineId,
+                            'batch_id' => $batch['batch_id'],
+                            'qty' => $batch['qty'],
+                            'created_at' => now(),
+                            'updated_at' => now(),
+                        ]);
+                    }
+                }
+
                 $this->stock->post($row['item'], -1 * $row['qty'], 'sale', null, $oversell);
             }
 
@@ -270,6 +286,15 @@ class CompleteCashSale
 
             return $this->present(DB::table('sales')->where('id', $saleId)->first());
         });
+
+        event(new \App\Modules\Printing\Events\SaleCompleted($result['id'], $store->id, $store->tenant_id));
+
+        $saleModel = \App\Modules\Pos\Models\Sale::withoutTenancy()->find($result['id']);
+        if ($saleModel && app(\App\Services\EInvoiceService::class)->requiresEInvoice($saleModel)) {
+            dispatch(new \App\Jobs\GenerateEInvoiceJob((string) $saleModel->id));
+        }
+
+        return $result;
     }
 
     /**

@@ -27,8 +27,11 @@ return Application::configure(basePath: dirname(__DIR__))
         $middleware->alias([
             'kind' => \App\Http\Middleware\EnsureKind::class,
             'password.changed' => \App\Http\Middleware\EnsurePasswordChanged::class,
+            'tenant.enforce' => \App\Http\Middleware\EnforceTenantContext::class,
         ]);
         $middleware->append(\App\Http\Middleware\CheckPlatformMaintenance::class);
+        $middleware->append(\App\Http\Middleware\PerformanceMonitoring::class);
+        $middleware->appendToGroup('web', \App\Http\Middleware\EnforceTenantContext::class);
     })
     ->withExceptions(function (Exceptions $exceptions): void {
         $exceptions->report(function (\Throwable $e) {

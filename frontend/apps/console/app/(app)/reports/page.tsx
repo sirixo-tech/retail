@@ -566,6 +566,25 @@ function ReportsWorkspace() {
     setToast("GST CA Audit Pack (.zip) downloaded successfully.");
   }
 
+  async function downloadGstr1Json() {
+    const month = (fromDate || new Date().toISOString()).slice(0, 7);
+    const response = await fetch(`/api/v1/reports/gstr1/${month}`, {
+      credentials: "include",
+    });
+    if (!response.ok) {
+      setToast("Failed to generate GSTR-1 JSON.");
+      return;
+    }
+    const blob = await response.blob();
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `gstr1_${month}.json`;
+    link.click();
+    URL.revokeObjectURL(url);
+    setToast(`GSTR-1 JSON for ${month} downloaded successfully.`);
+  }
+
   async function handleScheduleReport(e: FormEvent) {
     e.preventDefault();
     const response = await fetch("/api/v1/reports/schedules", {
@@ -1585,14 +1604,24 @@ function ReportsWorkspace() {
                   Ready for direct Tally Prime import or GSTR return filing.
                 </p>
               </div>
-              <button
-                type="button"
-                onClick={() => void downloadGstAuditPack()}
-                className="inline-flex items-center gap-1.5 rounded-lg border border-purple-200 bg-purple-50 px-3 py-1.5 text-xs font-semibold text-purple-700 transition hover:bg-purple-100"
-              >
-                <ShieldCheck className="h-3.5 w-3.5 text-purple-600" />
-                <span>Export Complete CA Audit Pack (.zip)</span>
-              </button>
+              <div className="flex flex-wrap items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => void downloadGstr1Json()}
+                  className="inline-flex items-center gap-1.5 rounded-lg border border-blue-200 bg-blue-50 px-3 py-1.5 text-xs font-semibold text-blue-700 transition hover:bg-blue-100"
+                >
+                  <Download className="h-3.5 w-3.5 text-blue-600" />
+                  <span>Download GSTR-1 JSON (Govt Portal Format)</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void downloadGstAuditPack()}
+                  className="inline-flex items-center gap-1.5 rounded-lg border border-purple-200 bg-purple-50 px-3 py-1.5 text-xs font-semibold text-purple-700 transition hover:bg-purple-100"
+                >
+                  <ShieldCheck className="h-3.5 w-3.5 text-purple-600" />
+                  <span>Export Complete CA Audit Pack (.zip)</span>
+                </button>
+              </div>
             </div>
             <table className="w-full text-left text-xs">
               <thead>

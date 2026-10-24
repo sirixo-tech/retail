@@ -14,6 +14,7 @@ class Product extends CatalogModel
     protected $fillable = [
         'kind', 'parent_id', 'name', 'brand_id', 'category_id', 'tax_class_id',
         'description', 'status', 'quality_score', 'source', 'licence', 'reference_mrp_paise',
+        'image_url', 'thumbnail_url', 'image_source',
     ];
 
     public function identifiers(): HasMany

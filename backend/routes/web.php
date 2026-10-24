@@ -21,4 +21,5 @@ Route::get('/login', function () {
 
 Route::get('/health/live', [HealthController::class, 'live']);
 Route::get('/health/ready', [HealthController::class, 'ready']);
+Route::get('/health', [\App\Http\Controllers\HealthController::class, 'check']);
 

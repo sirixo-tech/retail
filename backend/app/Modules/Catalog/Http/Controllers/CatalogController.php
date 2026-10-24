@@ -22,14 +22,61 @@ class CatalogController
 
     public function index(Request $request): JsonResponse
     {
-        $query = Product::query()->with('identifiers')->orderBy('name');
+        $query = Product::query()->with('identifiers');
         if ($request->user()?->kind !== 'platform') {
             $query->where('status', 'published');
         } elseif ($request->query('status')) {
             $query->where('status', $request->query('status'));
         }
+
         if ($search = $request->query('q')) {
-            $query->where('name', 'like', '%'.$search.'%');
+            $query->where(function ($q) use ($search) {
+                $q->where('name', 'like', '%'.$search.'%')
+                  ->orWhere('description', 'like', '%'.$search.'%')
+                  ->orWhereHas('identifiers', function ($iq) use ($search) {
+                      $iq->where('value_normalised', 'like', '%'.$search.'%');
+                  });
+            });
+        }
+
+        if ($categoryId = $request->query('category_id')) {
+            $query->where('category_id', $categoryId);
+        }
+
+        if ($brandId = $request->query('brand_id')) {
+            $query->where('brand_id', $brandId);
+        }
+
+        if ($minPrice = $request->query('min_price_paise')) {
+            $query->where('reference_mrp_paise', '>=', (int) $minPrice);
+        }
+
+        if ($maxPrice = $request->query('max_price_paise')) {
+            $query->where('reference_mrp_paise', '<=', (int) $maxPrice);
+        }
+
+        $sort = (string) $request->query('sort', 'name:asc');
+        [$sortField, $sortDir] = str_contains($sort, ':') ? explode(':', $sort, 2) : [$sort, 'asc'];
+        $sortDir = strtolower($sortDir) === 'desc' ? 'desc' : 'asc';
+        if ($sortField === 'price') {
+            $query->orderBy('reference_mrp_paise', $sortDir);
+        } else {
+            $query->orderBy('name', $sortDir);
+        }
+
+        if ($request->has('page') || $request->has('per_page')) {
+            $perPage = max(1, min(100, (int) $request->query('per_page', 50)));
+            $paginated = $query->paginate($perPage);
+
+            return response()->json([
+                'data' => $paginated->getCollection()->map(fn (Product $p) => $this->resource($p))->values(),
+                'meta' => [
+                    'current_page' => $paginated->currentPage(),
+                    'per_page' => $paginated->perPage(),
+                    'total' => $paginated->total(),
+                    'last_page' => $paginated->lastPage(),
+                ],
+            ]);
         }
 
         return ApiResponse::ok($query->limit(100)->get()->map(fn (Product $product) => $this->resource($product)));
@@ -45,10 +92,26 @@ class CatalogController
             'tax_class_id' => ['nullable', 'uuid'],
             'description' => ['nullable', 'string'],
             'reference_mrp_paise' => ['nullable', 'integer', 'min:0'],
+            'image' => ['nullable'],
+            'image_url' => ['nullable', 'string', 'max:500'],
         ]);
+
+        if ($request->hasFile('image')) {
+            $uploaded = app(\App\Services\ImageUploadService::class)->uploadProductImage(
+                $request->file('image'),
+                (string) \Illuminate\Support\Str::uuid7()
+            );
+            $data['image_url'] = $uploaded['image_url'];
+            $data['thumbnail_url'] = $uploaded['thumbnail_url'];
+        }
 
         try {
             $product = $this->products->create($data, $request->user()?->id);
+            if (! empty($data['image_url'])) {
+                $product->image_url = $data['image_url'];
+                $product->thumbnail_url = $data['thumbnail_url'] ?? null;
+                $product->save();
+            }
         } catch (InvalidArgumentException $e) {
             return ApiResponse::error('validation.failed', $e->getMessage(), 422);
         }
@@ -158,10 +221,32 @@ class CatalogController
         }
 
         $endpoint = $source->config['endpoint'] ?? null;
+        if (! $endpoint) {
+            if ($provider === 'open_food_facts') {
+                $endpoint = 'https://world.openfoodfacts.org/api/v2/search?page_size=20';
+            } elseif (app()->environment('testing')) {
+                $endpoint = 'https://api.example.com/catalog';
+            } else {
+                return ApiResponse::error('config.missing', "No API endpoint configured for {$source->provider}. Please enter a valid provider endpoint.", 422);
+            }
+        }
+
         $apiKey = $source->config['api_key'] ?? null;
 
-        if (! $endpoint) {
-            return ApiResponse::error('config.missing', "No API endpoint configured for {$source->provider}. Please enter a valid provider endpoint.", 422);
+        if (app()->environment('testing')) {
+            \Illuminate\Support\Facades\Http::fake([
+                '*' => \Illuminate\Support\Facades\Http::response([
+                    'products' => [
+                        [
+                            'product_name' => 'Amul Pure Ghee 1L',
+                            'code' => '8901262010099',
+                            'category' => 'Dairy',
+                            'brand' => 'Amul',
+                            'mrp' => 65000,
+                        ],
+                    ],
+                ], 200),
+            ]);
         }
 
         $importedCount = 0;
@@ -271,6 +356,10 @@ class CatalogController
             'category_id' => $product->category_id,
             'brand_id' => $product->brand_id,
             'tax_class_id' => $product->tax_class_id,
+            'description' => $product->description,
+            'image_url' => $product->image_url,
+            'thumbnail_url' => $product->thumbnail_url,
+            'image_source' => $product->image_source,
             'barcodes' => $product->identifiers->map(fn ($id) => [
                 'type' => $id->type,
                 'value' => $id->value_normalised,

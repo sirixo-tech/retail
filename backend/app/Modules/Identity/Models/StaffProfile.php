@@ -2,7 +2,7 @@
 
 namespace App\Modules\Identity\Models;
 
-use App\Modules\Tenancy\Models\Tenant;
+use App\Support\Tenancy\BelongsToTenant;
 use Illuminate\Database\Eloquent\Concerns\HasUuids;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
@@ -10,7 +10,7 @@ use Illuminate\Support\Str;
 
 class StaffProfile extends Model
 {
-    use HasUuids;
+    use HasUuids, BelongsToTenant;
 
     public $incrementing = false;
 
@@ -31,10 +31,5 @@ class StaffProfile extends Model
     public function user(): BelongsTo
     {
         return $this->belongsTo(User::class);
-    }
-
-    public function tenant(): BelongsTo
-    {
-        return $this->belongsTo(Tenant::class);
     }
 }

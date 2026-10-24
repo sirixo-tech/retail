@@ -53,3 +53,6 @@ backend/storage/framework/views/*
 # Local SQLite databases
 backend/database/*.sqlite
 backend/database/*.sqlite-journal
+
+# TypeScript build info
+*.tsbuildinfo

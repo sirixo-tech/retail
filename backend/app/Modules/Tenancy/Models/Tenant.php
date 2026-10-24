@@ -67,4 +67,20 @@ class Tenant extends Model
     {
         return $this->hasMany(ProvisionStep::class);
     }
+
+    /**
+     * Run a callback under this tenant's context.
+     */
+    public static function acting(string $tenantId, callable $callback): mixed
+    {
+        return app(\App\Support\Tenancy\TenantContext::class)->actingAsTenant($tenantId, $callback);
+    }
+
+    /**
+     * Iterate safely through all active tenants.
+     */
+    public static function eachTenant(callable $callback): void
+    {
+        app(\App\Support\Tenancy\TenantContext::class)->eachTenant($callback);
+    }
 }

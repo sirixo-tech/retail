@@ -599,16 +599,17 @@ class SaleController
         ]);
 
         $method = $data['payment_method'] ?? ($data['fulfillment'] === 'delivery' ? 'cod' : 'pay_at_store');
-        $isStandardOffline = in_array($method, ['cod', 'pay_at_store', 'upi_qr'], true);
-        if (! $isStandardOffline) {
-            $enabled = DB::table('payment_gateways')
-                ->where('store_id', $store->id)
-                ->where('provider', $method)
-                ->where('status', 'active')
-                ->exists();
-            if (! $enabled) {
+        $gatewayRow = DB::table('payment_gateways')
+            ->where('store_id', $store->id)
+            ->where('provider', $method)
+            ->first();
+
+        if ($gatewayRow) {
+            if ($gatewayRow->status !== 'active') {
                 return ApiResponse::error('validation.failed', 'That payment method is not turned on for this store.', 422);
             }
+        } elseif (! in_array($method, ['cod', 'pay_at_store', 'upi_qr'], true)) {
+            return ApiResponse::error('validation.failed', 'That payment method is not turned on for this store.', 422);
         }
 
         $addressData = [

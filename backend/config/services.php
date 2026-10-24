@@ -35,4 +35,15 @@ return [
         ],
     ],
 
+    'gst_portal' => [
+        'sandbox_url' => env('GST_SANDBOX_URL', 'https://gsp.adaequare.com/test/enriched'),
+        'production_url' => env('GST_PRODUCTION_URL', 'https://gsp.adaequare.com/enriched'),
+        'client_id' => env('GST_CLIENT_ID', 'test_client_id'),
+        'client_secret' => env('GST_CLIENT_SECRET', 'test_client_secret'),
+        'gstin' => env('GSTIN', '29ABCDE1234F1Z5'),
+        'username' => env('GST_USERNAME', 'test_user'),
+        'password' => env('GST_PASSWORD', 'test_password'),
+        'environment' => env('GST_ENVIRONMENT', 'sandbox'),
+    ],
+
 ];

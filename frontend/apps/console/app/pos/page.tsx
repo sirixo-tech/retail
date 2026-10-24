@@ -42,6 +42,7 @@ import { useEffect, useMemo, useState } from "react";
 import { ReceiptData, ReceiptModal } from "../../components/receipt-modal";
 import { ToastContainer, useToast } from "../../components/pos-toast";
 import { PasswordGate } from "../password-gate";
+import { usePrintJobPoller } from "../lib/print-transport";
 
 export type SoundTone = "beep" | "click" | "chime" | "pop";
 
@@ -216,6 +217,8 @@ function PosScreen() {
   const [receipt, setReceipt] = useState<string | null>(null);
   const [receiptTone, setReceiptTone] = useState<"ok" | "error">("ok");
   const [lastSaleId, setLastSaleId] = useState<string | null>(null);
+  const [printStatus, setPrintStatus] = useState<{ type: "queued" | "success" | "error"; message: string } | null>(null);
+  const [printFallbackPrompt, setPrintFallbackPrompt] = useState<string | null>(null);
   const [returnNumber, setReturnNumber] = useState("");
   const [returnSale, setReturnSale] = useState<{ id: string; lines: { id: string; name: string; qty: string; line_total_paise?: number }[] } | null>(null);
   const [customer, setCustomer] = useState<{ id: string; name: string } | null>(null);
@@ -560,6 +563,39 @@ function PosScreen() {
     return decodeURIComponent(document.cookie.split("; ").find((row) => row.startsWith("XSRF-TOKEN="))?.slice("XSRF-TOKEN=".length) ?? "");
   }
 
+  usePrintJobPoller({
+    storeId,
+    enabled: Boolean(storeId),
+    intervalMs: 3000,
+    csrfToken: typeof document !== "undefined" ? csrf() : "",
+    onJobStarted: (job) => {
+      setPrintStatus({
+        type: "queued",
+        message: `Printing receipt #${job.id.slice(0, 8)}...`,
+      });
+    },
+    onJobProcessed: (job, transport) => {
+      setPrintStatus({
+        type: "success",
+        message: `Receipt printed successfully (#${job.id.slice(0, 8)}) via ${
+          transport === "agent" ? "Print Agent" : transport === "browser_raw" ? "WebUSB" : "Print Dialog"
+        }`,
+      });
+      showToast(
+        `Receipt #${job.id.slice(0, 8)} printed via ${
+          transport === "agent" ? "Print Agent" : transport === "browser_raw" ? "WebUSB" : "Print Dialog"
+        }`,
+        "ok",
+      );
+      setTimeout(() => {
+        setPrintStatus(null);
+      }, 6000);
+    },
+    onFallbackPrompt: (_job, reason) => {
+      setPrintFallbackPrompt(reason);
+    },
+  });
+
   async function openShift() {
     if (!storeId) return;
     const response = await fetch(`/api/v1/stores/${storeId}/shifts/open`, {
@@ -687,6 +723,10 @@ function PosScreen() {
     if (settings.tapSound) playPosSound("chime", settings.soundVolume);
     showNotice(`Order ${body.data?.number} placed.`, "ok");
     setLastSaleId(body.data?.id ?? null);
+    setPrintStatus({
+      type: "queued",
+      message: `Printing receipt for order ${body.data?.number ?? ""}...`,
+    });
     kickCashDrawer();
     setCatalog((prev) =>
       prev.map((item) => {
@@ -1657,6 +1697,7 @@ function PosScreen() {
             <label className="flex h-10 flex-1 items-center gap-2.5 rounded-[10px] border border-[#e2e8f0] bg-[#f8fafc] px-3.5 text-sm text-slate-400 transition focus-within:border-[#6366f1] focus-within:bg-white">
               <ScanLine size={16} className="text-slate-400" />
               <input
+                data-testid="barcode-search"
                 value={query}
                 onChange={(event) => {
                   setQuery(event.target.value);
@@ -1892,6 +1933,7 @@ function PosScreen() {
 
           <button
             type="button"
+            data-testid="pay-button"
             disabled={total === 0}
             onClick={() => {
               if (settings.tapSound) playPosSound(settings.soundTone, settings.soundVolume);
@@ -2195,6 +2237,7 @@ function PosScreen() {
                             <button
                               key={method}
                               type="button"
+                              data-testid={method === "cash" ? "cash-payment" : undefined}
                               onClick={() => {
                                 if (settings.tapSound) playPosSound("click", settings.soundVolume);
                                 setPayMethod(method);
@@ -2294,6 +2337,7 @@ function PosScreen() {
                       </button>
                       <button
                         type="button"
+                        data-testid="complete-sale"
                         onClick={() => void pay()}
                         className="h-10 cursor-pointer rounded-lg bg-emerald-600 px-5 text-xs font-semibold text-white shadow-xs hover:bg-emerald-700 transition"
                       >
@@ -2828,6 +2872,46 @@ function PosScreen() {
 
       {/* Top-Right Notification Toasts matching Image 3 */}
       <ToastContainer toasts={toasts} onDismiss={dismissToast} />
+
+      {/* Print Job Status Notifications & Fallback Dialog */}
+      {printStatus?.type === "queued" ? (
+        <div
+          data-testid="print-job-queued"
+          className="fixed bottom-5 left-5 z-50 flex items-center gap-2.5 rounded-[12px] border border-indigo-200 bg-white px-4 py-3 text-xs font-semibold text-indigo-900 shadow-xl"
+        >
+          <span className="size-2 rounded-full bg-indigo-500 animate-ping" />
+          <span>{printStatus.message}</span>
+        </div>
+      ) : null}
+
+      {printStatus?.type === "success" ? (
+        <div
+          data-testid="print-job-success"
+          className="fixed bottom-5 left-5 z-50 flex items-center gap-2.5 rounded-[12px] border border-emerald-200 bg-white px-4 py-3 text-xs font-semibold text-emerald-900 shadow-xl"
+        >
+          <span className="size-2 rounded-full bg-emerald-500" />
+          <span>{printStatus.message}</span>
+        </div>
+      ) : null}
+
+      {printFallbackPrompt ? (
+        <div
+          data-testid="print-fallback-dialog"
+          className="fixed bottom-5 right-5 z-50 flex max-w-sm items-center justify-between gap-3 rounded-[12px] border border-amber-300 bg-amber-50 px-4 py-3 text-xs font-medium text-amber-900 shadow-2xl"
+        >
+          <div>
+            <p className="font-semibold text-amber-950">Print Fallback Notice</p>
+            <p className="mt-0.5">{printFallbackPrompt}</p>
+          </div>
+          <button
+            type="button"
+            onClick={() => setPrintFallbackPrompt(null)}
+            className="rounded bg-amber-200/60 px-2 py-1 text-[11px] font-bold text-amber-900 hover:bg-amber-200"
+          >
+            Dismiss
+          </button>
+        </div>
+      ) : null}
 
       {/* On-Screen Receipt Modal matching Image 3 */}
       <ReceiptModal

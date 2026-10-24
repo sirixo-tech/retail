@@ -228,6 +228,20 @@ export default function InventoryPage() {
     await load();
   }
 
+  async function markBatchExpired(batchId: string) {
+    const response = await fetch(`/api/v1/inventory/batches/${batchId}/mark-expired`, {
+      method: "POST",
+      credentials: "include",
+      headers: {
+        Accept: "application/json",
+        "Content-Type": "application/json",
+        "X-XSRF-TOKEN": getCsrfToken(),
+      },
+    });
+    setMessage(response.ok ? "Batch marked as expired." : "Failed to mark batch as expired.");
+    await load();
+  }
+
   async function saveReorder(itemId: string) {
     if (!storeId) return;
     const response = await fetch(`/api/v1/stores/${storeId}/items/${itemId}/reorder`, {
@@ -678,6 +692,7 @@ export default function InventoryPage() {
                 <th className="px-5 py-3">Batch Code</th>
                 <th className="px-5 py-3">Expiry Date</th>
                 <th className="px-5 py-3 text-right">Remaining Batch Qty</th>
+                <th className="px-5 py-3 text-right">Action</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
@@ -691,11 +706,20 @@ export default function InventoryPage() {
                   <td className="num px-5 py-3 text-right font-semibold text-slate-900">
                     {b.qty_remaining}
                   </td>
+                  <td className="px-5 py-3 text-right">
+                    <button
+                      type="button"
+                      onClick={() => void markBatchExpired(b.id)}
+                      className="rounded-md border border-rose-200 bg-rose-50 px-2.5 py-1 text-[11px] font-semibold text-rose-700 transition hover:bg-rose-100"
+                    >
+                      Mark Expired
+                    </button>
+                  </td>
                 </tr>
               ))}
               {expiring.length === 0 ? (
                 <tr>
-                  <td colSpan={4} className="px-5 py-10 text-center text-xs text-slate-400">
+                  <td colSpan={5} className="px-5 py-10 text-center text-xs text-slate-400">
                     No batches expiring within the next 30 days.
                   </td>
                 </tr>

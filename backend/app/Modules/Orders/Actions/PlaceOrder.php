@@ -86,6 +86,8 @@ class PlaceOrder
                     ->first();
                 if ($zone) {
                     $fee = (int) $zone->charge_paise;
+                } elseif (empty($shippingSettings) && empty($shippingMethods)) {
+                    throw new RuntimeException('We do not deliver to that pincode.');
                 } else {
                     $freeThreshold = (int) (($shippingSettings['freeDeliveryAbove'] ?? ($firstShippingMethod['freeAboveAmount'] ?? ($checkoutSettings['freeDeliveryAbove'] ?? 499))) * 100);
                     $defaultDeliveryFee = (int) (($shippingSettings['standardDeliveryFee'] ?? ($firstShippingMethod['feeAmount'] ?? ($checkoutSettings['deliveryFee'] ?? 35))) * 100);

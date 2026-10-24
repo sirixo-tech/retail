@@ -29,8 +29,9 @@ class SendReportSchedules extends Command
         }
 
         foreach ($due as $row) {
-            $tenant = DB::table('tenants')->where('id', $row->tenant_id)->first();
-            $tenantName = $tenant->name ?? 'Retail Store';
+            \App\Modules\Tenancy\Models\Tenant::acting($row->tenant_id, function () use ($row) {
+                $tenant = DB::table('tenants')->where('id', $row->tenant_id)->first();
+                $tenantName = $tenant->name ?? 'Retail Store';
 
             // Calculate sales metrics for this store
             $todaySales = DB::table('sales')
@@ -107,7 +108,8 @@ class SendReportSchedules extends Command
                 'next_run_at' => $nextRun,
             ]);
 
-            $this->info("Report sent to {$row->email} for {$tenantName} (Status: {$sentStatus})");
+                $this->info("Report sent to {$row->email} for {$tenantName} (Status: {$sentStatus})");
+            });
         }
 
         return self::SUCCESS;

@@ -12,6 +12,9 @@ use App\Modules\Notifications\Http\Controllers\NotificationController;
 use App\Modules\Ai\Http\Controllers\AiAssistantController;
 use App\Modules\Ai\Http\Controllers\ReportAnswerController;
 use App\Modules\Printing\Http\Controllers\PrintJobController;
+use App\Modules\Printing\Http\Controllers\PrinterController;
+use App\Modules\Printing\Http\Controllers\PrintProfileController;
+use App\Modules\Printing\Http\Controllers\TemplateController;
 use App\Modules\Identity\Http\Controllers\ImpersonationController;
 use App\Modules\Identity\Http\Controllers\StaffController;
 use App\Modules\Inventory\Http\Controllers\PurchaseController;
@@ -29,9 +32,17 @@ use App\Modules\Platform\Http\Controllers\WebhookEndpointController;
 use App\Modules\Pos\Http\Controllers\SaleController;
 use App\Modules\Pos\Http\Controllers\TerminalController;
 use App\Modules\Reporting\Http\Controllers\SalesReportController;
+use App\Http\Controllers\FinancialReportController;
+use App\Http\Controllers\GSTRReportController;
+use App\Http\Controllers\InventoryReportController;
+use App\Modules\Inventory\Http\Controllers\BatchController;
+use App\Modules\Inventory\Http\Controllers\StockAlertController;
+use App\Modules\Pos\Http\Controllers\EInvoiceController;
 use App\Modules\Tenancy\Http\Controllers\StoreController;
 use App\Modules\Tenancy\Http\Controllers\TenantController;
 use Illuminate\Support\Facades\Route;
+
+Route::get('health', [\App\Http\Controllers\HealthController::class, 'check']);
 
 Route::get('public/stores', [PublicShopController::class, 'index']);
 Route::get('public/stores/{slug}/items', [SaleController::class, 'publicItems']);
@@ -152,7 +163,7 @@ Route::middleware(['auth', 'password.changed', 'kind:platform'])->group(function
 Route::get('public/apps', [PlatformAppController::class, 'index']);
 Route::get('public/apps/check-update', [PlatformAppController::class, 'checkUpdate']);
 
-Route::middleware(['auth', 'password.changed', 'kind:staff'])->group(function () {
+Route::middleware(['auth', 'password.changed', 'kind:staff', 'tenant.enforce'])->group(function () {
     Route::get('auth/staff/me', [AuthController::class, 'me']);
     Route::get('organization/overview', [TenantController::class, 'organizationOverview']);
     Route::get('catalog/products', [CatalogController::class, 'index']);
@@ -195,6 +206,9 @@ Route::middleware(['auth', 'password.changed', 'kind:staff'])->group(function ()
     Route::post('catalog/own/products/opening', [TenantCatalogController::class, 'openingStock']);
     Route::get('catalog/own/labels', [TenantCatalogController::class, 'labels']);
     Route::post('stores/{store}/items/from-catalog', [StoreItemController::class, 'fromCatalog']);
+    Route::post('stores/{store}/items/bulk-from-catalog', [StoreItemController::class, 'bulkFromCatalog']);
+    Route::get('catalog/own/products/{item}/subscription', [StoreItemController::class, 'getSubscription']);
+    Route::post('catalog/own/products/{item}/subscription', [StoreItemController::class, 'updateSubscription']);
     Route::get('stores/{store}/pos/lookup', [StoreItemController::class, 'lookup']);
     Route::post('stores/{store}/adjustments', [StoreItemController::class, 'adjust']);
     Route::patch('stores/{store}/items/{item}/reorder', [StoreItemController::class, 'reorder']);
@@ -217,6 +231,9 @@ Route::middleware(['auth', 'password.changed', 'kind:staff'])->group(function ()
     Route::post('stores/{store}/number-blocks', [SaleController::class, 'numberBlock']);
     Route::post('stores/{store}/sales/sync', [SaleController::class, 'sync']);
     Route::post('sales/{sale}/void', [SaleController::class, 'void']);
+    Route::get('stores/{store}/sales/{sale}/e-invoice', [EInvoiceController::class, 'show']);
+    Route::post('stores/{store}/sales/{sale}/e-invoice/regenerate', [EInvoiceController::class, 'regenerate']);
+    Route::post('stores/{store}/sales/{sale}/e-invoice/cancel', [EInvoiceController::class, 'cancel']);
     Route::get('customers', [CustomerController::class, 'index']);
     Route::post('customers', [CustomerController::class, 'store']);
     Route::post('customers/import', [CustomerController::class, 'import']);
@@ -249,10 +266,30 @@ Route::middleware(['auth', 'password.changed', 'kind:staff'])->group(function ()
     Route::post('ai/assistant', [AiAssistantController::class, 'tenantChat']);
     Route::get('ai/reports/saved', [ReportAnswerController::class, 'saved']);
     Route::post('ai/reports/saved', [ReportAnswerController::class, 'save']);
+    // Printing System Routes
     Route::post('print-jobs/preview', [PrintJobController::class, 'preview']);
     Route::get('print-jobs', [PrintJobController::class, 'index']);
     Route::post('print-jobs', [PrintJobController::class, 'store']);
-    Route::post('print-jobs/{job}/ack', [PrintJobController::class, 'ack']);
+    Route::match(['post', 'put'], 'print-jobs/{job}/ack', [PrintJobController::class, 'ack']);
+
+    Route::get('printers', [PrinterController::class, 'index']);
+    Route::post('printers', [PrinterController::class, 'store']);
+    Route::get('printers/discover', [PrinterController::class, 'discover']);
+    Route::post('printers/pair', [PrinterController::class, 'pairSubmit']);
+    Route::post('printers/pair-code', [PrinterController::class, 'pairInitiate']);
+    Route::put('printers/{printer}', [PrinterController::class, 'update']);
+    Route::delete('printers/{printer}', [PrinterController::class, 'destroy']);
+    Route::post('printers/{printer}/test-print', [PrinterController::class, 'testPrint']);
+    Route::post('printers/{printer}/heartbeat', [PrinterController::class, 'heartbeat']);
+
+    Route::get('print-profiles', [PrintProfileController::class, 'index']);
+    Route::match(['post', 'put'], 'print-profiles', [PrintProfileController::class, 'save']);
+
+    Route::post('templates/preview', [TemplateController::class, 'preview']);
+    Route::get('templates/{kind}', [TemplateController::class, 'show']);
+    Route::put('templates/{kind}', [TemplateController::class, 'update']);
+
+
     Route::get('orders/{order}', [SaleController::class, 'show']);
     Route::post('orders/{order}/transitions', [SaleController::class, 'transition']);
     Route::post('orders/{order}/proof', [SaleController::class, 'proof']);
@@ -273,6 +310,15 @@ Route::middleware(['auth', 'password.changed', 'kind:staff'])->group(function ()
     Route::get('stores/{store}/purchases/auto-po', [PurchaseController::class, 'autoPo']);
     Route::get('stores/{store}/stock/alerts', [PurchaseController::class, 'alerts']);
     Route::get('stores/{store}/stock/expiry', [PurchaseController::class, 'expiry']);
+
+    // Stock Alerts & Batches
+    Route::get('inventory/alerts', [StockAlertController::class, 'index']);
+    Route::post('inventory/alerts/{alert}/acknowledge', [StockAlertController::class, 'acknowledge']);
+    Route::post('inventory/alerts/{alert}/generate-po', [StockAlertController::class, 'generatePo']);
+    Route::get('inventory/items/{item}/batches', [BatchController::class, 'index']);
+    Route::post('inventory/items/{item}/batches', [BatchController::class, 'store']);
+    Route::get('inventory/batches/expiring', [BatchController::class, 'expiring']);
+    Route::post('inventory/batches/{batch}/mark-expired', [BatchController::class, 'markExpired']);
     Route::get('api-keys', [ApiKeyController::class, 'index']);
     Route::post('api-keys', [ApiKeyController::class, 'store']);
     Route::post('api-keys/{key}/rotate', [ApiKeyController::class, 'rotate']);
@@ -287,6 +333,16 @@ Route::middleware(['auth', 'password.changed', 'kind:staff'])->group(function ()
     Route::get('reports/hsn', [SalesReportController::class, 'hsn']);
     Route::get('reports/daybook', [SalesReportController::class, 'daybook']);
     Route::get('reports/gst-audit-pack', [SalesReportController::class, 'gstAuditPack']);
+    Route::get('reports/gstr1/{month}', [GSTRReportController::class, 'download']);
+    Route::get('reports/gstr1/{month}/preview', [GSTRReportController::class, 'preview']);
+    Route::get('reports/profit-loss', [FinancialReportController::class, 'profitAndLoss']);
+    Route::get('reports/cash-flow', [FinancialReportController::class, 'cashFlow']);
+    Route::get('reports/balance-sheet', [FinancialReportController::class, 'balanceSheet']);
+    Route::get('reports/inventory/dead-stock', [InventoryReportController::class, 'deadStock']);
+    Route::get('reports/inventory/aging', [InventoryReportController::class, 'aging']);
+    Route::get('reports/inventory/shrinkage', [InventoryReportController::class, 'shrinkage']);
+    Route::get('reports/inventory/fast-moving', [InventoryReportController::class, 'fastMoving']);
+    Route::get('reports/inventory/slow-moving', [InventoryReportController::class, 'slowMoving']);
     Route::get('reports/staff-sales', [SalesReportController::class, 'staffSales']);
     Route::get('reports/discounts', [SalesReportController::class, 'discounts']);
     Route::get('reports/category-sales', [SalesReportController::class, 'categorySales']);

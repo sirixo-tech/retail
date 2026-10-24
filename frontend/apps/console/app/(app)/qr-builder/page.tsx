@@ -457,7 +457,7 @@ export default function QrBuilderPage() {
           <div
             id="print-standee-card"
             ref={printAreaRef}
-            className="relative mx-auto flex w-full max-w-[340px] flex-col items-center rounded-2xl border-2 border-slate-900 bg-white p-5 sm:p-6 pb-6 text-center text-slate-900 shadow-xl"
+            className="relative mx-auto flex w-full max-w-[340px] flex-col items-center rounded-2xl border-0.9 border-slate-900 bg-white p-5 sm:p-6 pb-6 text-center text-slate-900 shadow-xl"
           >
             {/* Store Brand / Logo */}
             <div>

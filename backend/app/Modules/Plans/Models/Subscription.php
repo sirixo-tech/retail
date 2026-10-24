@@ -2,7 +2,7 @@
 
 namespace App\Modules\Plans\Models;
 
-use App\Modules\Tenancy\Models\Tenant;
+use App\Support\Tenancy\BelongsToTenant;
 use Illuminate\Database\Eloquent\Concerns\HasUuids;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
@@ -10,7 +10,7 @@ use Illuminate\Support\Str;
 
 class Subscription extends Model
 {
-    use HasUuids;
+    use HasUuids, BelongsToTenant;
 
     public $incrementing = false;
 
@@ -39,11 +39,6 @@ class Subscription extends Model
     public function uniqueIds(): array
     {
         return ['id'];
-    }
-
-    public function tenant(): BelongsTo
-    {
-        return $this->belongsTo(Tenant::class);
     }
 
     public function plan(): BelongsTo

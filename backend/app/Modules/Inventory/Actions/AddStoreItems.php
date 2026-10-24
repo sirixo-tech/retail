@@ -102,6 +102,26 @@ class AddStoreItems
                     $this->stock->post($item, $qty, 'opening', null);
                 }
 
+                if (! empty($master->image_url)) {
+                    $item->image_url = $master->image_url;
+                    $item->save();
+                }
+
+                DB::table('catalog_subscriptions')->updateOrInsert(
+                    ['store_item_id' => $item->id, 'master_product_id' => $master->id],
+                    [
+                        'id' => (string) Str::uuid7(),
+                        'tenant_id' => $store->tenant_id,
+                        'auto_update_name' => true,
+                        'auto_update_price' => false,
+                        'auto_update_tax' => true,
+                        'auto_update_description' => true,
+                        'subscribed_at' => now(),
+                        'updated_at' => now(),
+                        'created_at' => now(),
+                    ]
+                );
+
                 return $item;
             });
 

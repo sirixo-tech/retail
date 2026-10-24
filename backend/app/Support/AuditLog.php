@@ -18,4 +18,19 @@ class AuditLog
             'created_at' => now(),
         ]);
     }
+
+    /**
+     * Record privileged platform administrator cross-tenant access.
+     */
+    public static function privilegedAccess(string $platformAdminId, string $action, ?string $tenantId = null, ?string $subjectId = null): void
+    {
+        DB::table('audit_logs')->insert([
+            'id' => (string) Str::uuid7(),
+            'tenant_id' => $tenantId,
+            'actor_id' => $platformAdminId,
+            'action' => 'privileged.' . $action,
+            'subject_id' => $subjectId,
+            'created_at' => now(),
+        ]);
+    }
 }
