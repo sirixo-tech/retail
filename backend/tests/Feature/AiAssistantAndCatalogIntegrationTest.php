@@ -29,18 +29,37 @@ class AiAssistantAndCatalogIntegrationTest extends TestCase
         $this->postJson('/api/v1/platform/catalog/sources/open_food_facts', [
             'is_enabled' => true,
             'licence_note' => 'ODbL open license',
-            'config' => ['api_key' => 'test-key'],
+            'config' => [
+                'api_key' => 'test-key',
+                'endpoint' => 'https://world.openfoodfacts.org/api/v2/search',
+            ],
         ])->assertOk()
             ->assertJsonPath('data.is_enabled', true)
-            ->assertJsonPath('data.licence_note', 'ODbL open license');
+            ->assertJsonPath('data.has_api_key', true)
+            ->assertJsonMissingPath('data.config.api_key');
 
-        // 2. Pull from source
-        $beforeCount = Product::query()->count();
-        $this->postJson('/api/v1/platform/catalog/sources/open_food_facts/pull')
-            ->assertOk()
-            ->assertJsonPath('data.provider', 'open_food_facts');
+        \Illuminate\Support\Facades\Http::fake([
+            'https://world.openfoodfacts.org/*' => \Illuminate\Support\Facades\Http::response([
+                'products' => [[
+                    'product_name' => 'Amul Pure Ghee 1L',
+                    'code' => '8901001000018',
+                    'categories_tags' => ['en:dairy'],
+                    'brands' => 'Amul',
+                    'image_front_url' => 'https://images.openfoodfacts.org/example.jpg',
+                ]],
+            ], 200),
+        ]);
 
-        $this->assertGreaterThanOrEqual($beforeCount, Product::query()->count());
+        $this->postJson('/api/v1/platform/catalog/sources/open_food_facts/pull')->assertStatus(422);
+        $this->postJson('/api/v1/platform/catalog/sources/gs1/pull', ['confirm' => true])->assertStatus(422);
+        $pull = $this->postJson('/api/v1/platform/catalog/sources/open_food_facts/pull', ['confirm' => true])->assertStatus(202);
+        $this->assertSame('queued', $pull->json('data.status'));
+        $draft = Product::query()->where('name', 'Amul Pure Ghee 1L')->first();
+        $this->assertNotNull($draft);
+        $this->assertSame('draft', $draft->status);
+        $this->assertNull($draft->tax_class_id);
+        $this->postJson('/api/v1/platform/catalog/sources/open_food_facts/pull', ['confirm' => true])->assertStatus(202);
+        $this->assertSame(1, Product::query()->where('source', 'open_food_facts')->count());
     }
 
     public function test_tenant_ai_assistant_responds_with_store_sales_and_guidance(): void

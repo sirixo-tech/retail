@@ -4,14 +4,18 @@ namespace App\Modules\Catalog\Http\Controllers;
 
 use App\Modules\Catalog\Actions\ImportCatalog;
 use App\Modules\Catalog\Actions\SaveProduct;
+use App\Modules\Catalog\Jobs\IngestCatalogPage;
 use App\Modules\Catalog\Models\Brand;
 use App\Modules\Catalog\Models\Category;
 use App\Modules\Catalog\Models\ExternalSource;
 use App\Modules\Catalog\Models\Product;
 use App\Modules\Catalog\Models\TaxClass;
+use App\Modules\Catalog\Support\SourceEndpoint;
 use App\Support\ApiResponse;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Crypt;
+use Illuminate\Support\Facades\RateLimiter;
 use InvalidArgumentException;
 
 class CatalogController
@@ -173,7 +177,7 @@ class CatalogController
 
     public function sources(): JsonResponse
     {
-        return ApiResponse::ok(ExternalSource::query()->orderBy('provider')->get());
+        return ApiResponse::ok(ExternalSource::query()->orderBy('provider')->get()->map(fn (ExternalSource $source) => $this->presentSource($source)));
     }
 
     public function updateSource(Request $request, string $provider): JsonResponse
@@ -192,21 +196,35 @@ class CatalogController
 
         $enabled = (bool) ($data['enabled'] ?? $data['is_enabled'] ?? false);
 
-        if ($enabled && empty(trim((string) ($data['licence_note'] ?? '')))) {
+        if ($enabled && empty(trim((string) ($data['licence_note'] ?? $source->licence_note ?? '')))) {
             return ApiResponse::error('validation.failed', 'A licence note is required before enabling this catalog source.', 422);
         }
 
-        $source->update([
+        $config = $data['config'] ?? $source->config ?? [];
+        if (isset($data['config'])) {
+            $secret = $this->sealSecrets($config, $source->secret);
+            unset($config['api_key'], $config['api_secret']);
+            if ($secret !== null) {
+                $source->secret = $secret;
+            }
+            if (! empty($config['endpoint'])) {
+                try {
+                    SourceEndpoint::assertAllowed($provider, (string) $config['endpoint']);
+                } catch (InvalidArgumentException $e) {
+                    return ApiResponse::error('validation.failed', $e->getMessage(), 422);
+                }
+            }
+        }
+
+        $source->fill([
             'enabled' => $enabled,
             'licence_note' => $data['licence_note'] ?? $source->licence_note,
-            'config' => $data['config'] ?? $source->config,
+            'config' => $config,
             'enabled_by' => $request->user()?->id,
         ]);
+        $source->save();
 
-        $fresh = $source->fresh();
-        return ApiResponse::ok(array_merge($fresh->toArray(), [
-            'is_enabled' => (bool) $fresh->enabled,
-        ]));
+        return ApiResponse::ok($this->presentSource($source->fresh()));
     }
 
     public function pullSource(Request $request, string $provider): JsonResponse
@@ -215,118 +233,76 @@ class CatalogController
         if (! $source) {
             return ApiResponse::error('resource.not_found', 'Catalog provider not found.', 404);
         }
-
-        if (! $source->enabled && empty($source->licence_note)) {
-            return ApiResponse::error('validation.failed', 'Source must be enabled with a licence note before pulling.', 422);
+        if (! $source->enabled) {
+            return ApiResponse::error('validation.failed', 'Enable the source before pulling.', 422);
         }
-
-        $endpoint = $source->config['endpoint'] ?? null;
-        if (! $endpoint) {
-            if ($provider === 'open_food_facts') {
-                $endpoint = 'https://world.openfoodfacts.org/api/v2/search?page_size=20';
-            } elseif (app()->environment('testing')) {
-                $endpoint = 'https://api.example.com/catalog';
-            } else {
-                return ApiResponse::error('config.missing', "No API endpoint configured for {$source->provider}. Please enter a valid provider endpoint.", 422);
-            }
+        if (! $request->boolean('confirm')) {
+            return ApiResponse::error('validation.failed', 'Confirm the pull before it starts.', 422);
         }
-
-        $apiKey = $source->config['api_key'] ?? null;
-
-        if (app()->environment('testing')) {
-            \Illuminate\Support\Facades\Http::fake([
-                '*' => \Illuminate\Support\Facades\Http::response([
-                    'products' => [
-                        [
-                            'product_name' => 'Amul Pure Ghee 1L',
-                            'code' => '8901262010099',
-                            'category' => 'Dairy',
-                            'brand' => 'Amul',
-                            'mrp' => 65000,
-                        ],
-                    ],
-                ], 200),
-            ]);
+        if (! SourceEndpoint::supports($provider)) {
+            return ApiResponse::error('catalog.adapter_missing', 'This source does not have an ingest adapter.', 422);
         }
-
-        $importedCount = 0;
-        try {
-            $headers = [
-                'User-Agent' => $source->config['user_agent'] ?? 'SelfX-RetailIngest/2.0',
-            ];
-            if ($apiKey) {
-                $headers['Authorization'] = 'Bearer '.$apiKey;
-            }
-
-            $response = \Illuminate\Support\Facades\Http::timeout(10)->withHeaders($headers)->get($endpoint);
-
-            if ($response->successful()) {
-                $payload = $response->json();
-                $items = $payload['products'] ?? ($payload['data'] ?? []);
-                $taxClassId = TaxClass::query()->value('id');
-
-                foreach ($items as $item) {
-                    $name = $item['product_name'] ?? ($item['name'] ?? null);
-                    $gtin = $item['code'] ?? ($item['gtin'] ?? ($item['barcode'] ?? null));
-                    if (! $name || ! $gtin) {
-                        continue;
-                    }
-
-                    $exists = \App\Modules\Catalog\Models\Identifier::query()->where('value_normalised', $gtin)->exists();
-                    if ($exists) {
-                        continue;
-                    }
-
-                    $categoryName = $item['categories'] ?? ($item['category'] ?? 'General FMCG');
-                    $brandName = $item['brands'] ?? ($item['brand'] ?? 'General Brand');
-
-                    $category = Category::query()->firstOrCreate(
-                        ['slug' => \Illuminate\Support\Str::slug($categoryName)],
-                        ['id' => (string) \Illuminate\Support\Str::uuid7(), 'name' => $categoryName, 'path' => $categoryName]
-                    );
-
-                    $brand = Brand::query()->firstOrCreate(
-                        ['slug' => \Illuminate\Support\Str::slug($brandName)],
-                        ['id' => (string) \Illuminate\Support\Str::uuid7(), 'name' => $brandName]
-                    );
-
-                    $product = Product::query()->create([
-                        'name' => $name,
-                        'brand_id' => $brand->id,
-                        'category_id' => $category->id,
-                        'tax_class_id' => $taxClassId,
-                        'status' => 'published',
-                        'source' => $provider,
-                        'reference_mrp_paise' => isset($item['mrp']) ? (int) $item['mrp'] : 0,
-                        'quality_score' => 90,
-                    ]);
-
-                    \App\Modules\Catalog\Models\Identifier::query()->create([
-                        'product_id' => $product->id,
-                        'type' => 'gtin',
-                        'value_raw' => $gtin,
-                        'value_normalised' => $gtin,
-                        'is_primary' => true,
-                    ]);
-
-                    $importedCount++;
-                }
-            }
-        } catch (\Throwable $e) {
-            return ApiResponse::error('ingestion.failed', "Connection error to {$endpoint}: {$e->getMessage()}", 502);
+        if (RateLimiter::tooManyAttempts('catalog-pull:'.$request->user()?->id, 10)) {
+            return ApiResponse::error('rate.limited', 'Too many catalogue pulls. Wait a minute.', 429);
         }
+        RateLimiter::hit('catalog-pull:'.$request->user()?->id, 60);
 
-        $currentConfig = $source->config ?? [];
-        $currentConfig['last_pulled_at'] = now()->toIso8601String();
-        $currentConfig['total_ingested'] = ($currentConfig['total_ingested'] ?? 0) + $importedCount;
-        $source->update(['config' => $currentConfig]);
+        IngestCatalogPage::dispatch($provider, 1);
 
         return ApiResponse::ok([
-            'message' => "Successfully ingested {$importedCount} verified master catalog products from {$source->provider}.",
+            'status' => 'queued',
             'provider' => $provider,
-            'imported_count' => $importedCount,
-            'total_source_items' => $currentConfig['total_ingested'],
-        ]);
+            'imported_count' => (int) $source->fresh()->imported_count,
+            'last_error' => $source->fresh()->last_error,
+        ], 202);
+    }
+
+    /**
+     * @param  array<string, mixed>  $config
+     */
+    private function sealSecrets(array &$config, ?string $existing): ?string
+    {
+        $secrets = [];
+        if ($existing) {
+            $decoded = json_decode(Crypt::decryptString($existing), true);
+            if (is_array($decoded)) {
+                $secrets = $decoded;
+            }
+        }
+        foreach (['api_key', 'api_secret'] as $key) {
+            if (! array_key_exists($key, $config)) {
+                continue;
+            }
+            $value = trim((string) $config[$key]);
+            if ($value !== '') {
+                $secrets[$key] = $value;
+            }
+            unset($config[$key]);
+        }
+
+        return $secrets === [] ? null : Crypt::encryptString(json_encode($secrets));
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private function presentSource(ExternalSource $source): array
+    {
+        $config = $source->config ?? [];
+        unset($config['api_key'], $config['api_secret']);
+
+        return [
+            'id' => $source->id,
+            'provider' => $source->provider,
+            'enabled' => (bool) $source->enabled,
+            'is_enabled' => (bool) $source->enabled,
+            'licence_note' => $source->licence_note,
+            'config' => $config,
+            'has_api_key' => $source->apiKey() !== null,
+            'last_pulled_at' => optional($source->last_pulled_at)?->toIso8601String(),
+            'imported_count' => (int) $source->imported_count,
+            'last_error' => $source->last_error,
+        ];
     }
 
     public function import(Request $request): JsonResponse

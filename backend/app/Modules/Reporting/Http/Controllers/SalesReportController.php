@@ -48,6 +48,31 @@ class SalesReportController
             $ordersQuery->where('created_at', '<=', $to);
         }
 
+        if ($request->query('format') === 'gstr') {
+            $lines = DB::table('sale_lines')
+                ->join('sales', 'sales.id', '=', 'sale_lines.sale_id')
+                ->where('sales.tenant_id', $tenantId)
+                ->where('sales.status', '!=', 'voided')
+                ->when($from, fn ($inner) => $inner->where('sales.created_at', '>=', $from))
+                ->when($to, fn ($inner) => $inner->where('sales.created_at', '<=', $to))
+                ->orderBy('sales.created_at')
+                ->get(['sales.number', 'sales.created_at', 'sale_lines.hsn_snapshot', 'sale_lines.taxable_paise', 'sale_lines.cgst_paise', 'sale_lines.sgst_paise', 'sale_lines.igst_paise']);
+            $csv = "invoice_number,invoice_date,hsn,taxable_paise,cgst_paise,sgst_paise,igst_paise\n";
+            foreach ($lines as $line) {
+                $csv .= implode(',', [
+                    $line->number,
+                    substr((string) $line->created_at, 0, 10),
+                    $line->hsn_snapshot,
+                    (int) $line->taxable_paise,
+                    (int) $line->cgst_paise,
+                    (int) $line->sgst_paise,
+                    (int) $line->igst_paise,
+                ])."\n";
+            }
+
+            return response($csv, 200, ['Content-Type' => 'text/csv; charset=UTF-8']);
+        }
+
         if ($request->query('format') === 'csv') {
             $lines = (clone $query)->orderBy('created_at')->get(['number', 'total_paise', 'cgst_paise', 'sgst_paise', 'igst_paise', 'created_at']);
             $orderLines = (clone $ordersQuery)->orderBy('created_at')->get(['number', 'total_paise', 'created_at']);

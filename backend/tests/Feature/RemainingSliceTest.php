@@ -120,7 +120,7 @@ class RemainingSliceTest extends TestCase
         $this->assertStringNotContainsString('Other Shop', $export->getContent());
         $this->getJson('/api/v1/reports/customers')->assertOk()->assertJsonPath('data.0.name', 'Meera');
         $this->assertStringContainsString('cash', $this->get('/api/v1/reports/payments?format=csv')->assertOk()->getContent());
-        $this->assertStringStartsWith('%PDF', $this->get('/api/v1/reports/sales?format=pdf')->assertOk()->getContent());
+        $this->assertStringContainsString('hsn', $this->get('/api/v1/reports/sales?format=gstr')->assertOk()->getContent());
         $this->assertStringContainsString('Worksheet', $this->get('/api/v1/reports/sales?format=xlsx')->assertOk()->getContent());
         $flags = $this->getJson('/api/v1/billing/features')->assertOk()->json('data');
         $this->assertTrue($flags['module.offline_pos']);

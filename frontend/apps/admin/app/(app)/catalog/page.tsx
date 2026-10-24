@@ -70,6 +70,8 @@ type CatalogSource = {
   licence_note: string | null;
   config: Record<string, any> | null;
   last_pulled_at: string | null;
+  last_error?: string | null;
+  has_api_key?: boolean;
   created_at: string;
 };
 
@@ -312,10 +314,11 @@ export default function CatalogPage() {
     setError(null);
     setSuccess(null);
     try {
-      const res = await api<{ message?: string; count?: number }>(`/api/v1/platform/catalog/sources/${provider}/pull`, {
+      const res = await api<{ data?: { status?: string; last_error?: string | null } }>(`/api/v1/platform/catalog/sources/${provider}/pull`, {
         method: "POST",
+        body: JSON.stringify({ confirm: true }),
       });
-      setSuccess(res?.message || `Successfully pulled and ingested master items from ${PROVIDER_METADATA[provider]?.name || provider}.`);
+      setSuccess(res?.data?.last_error ? res.data.last_error : `Pull queued for ${PROVIDER_METADATA[provider]?.name || provider}. New rows stay drafts until you publish them.`);
       await loadData();
     } catch (err: unknown) {
       setError(getErrorMessage(err, "Ingestion sync failed. Check provider credentials and endpoint connectivity."));
@@ -922,7 +925,7 @@ function CatalogIntegrationDetailView({
   
   // Real Catalog Ingestion Settings
   const [endpoint, setEndpoint] = useState(source.config?.endpoint || "");
-  const [apiKey, setApiKey] = useState(source.config?.api_key || "");
+  const [apiKey, setApiKey] = useState("");
   const [apiSecret, setApiSecret] = useState(source.config?.api_secret || "");
   const [userAgent, setUserAgent] = useState(source.config?.user_agent || "");
   const [licenceNote, setLicenceNote] = useState(source.licence_note || meta.defaultLicense);
@@ -1021,7 +1024,7 @@ function CatalogIntegrationDetailView({
       licenceNote,
       {
         endpoint,
-        api_key: apiKey,
+        api_key: apiKey || undefined,
         api_secret: apiSecret,
         user_agent: userAgent,
         rate_limit_rpm: rateLimitRpm,
@@ -1471,61 +1474,13 @@ function CatalogIntegrationDetailView({
                 <ToggleSwitch checked={realtimeLookup} onChange={setRealtimeLookup} />
               </div>
 
-              {/* Rule 2 */}
-              <div className="flex items-start justify-between gap-3 p-3.5 rounded-xl border border-line/60 hover:bg-surface-muted/30 transition-colors">
-                <div>
-                  <h4 className="text-xs font-semibold text-foreground">Auto-Publish Verified Master Products</h4>
-                  <p className="text-[11px] text-muted mt-0.5 leading-normal">
-                    Automatically publish items meeting quality thresholds directly to the master catalog, making them instantly available to all store tenants.
-                  </p>
-                </div>
-                <ToggleSwitch checked={autoPublish} onChange={setAutoPublish} />
-              </div>
-
-              {/* Rule 3: Cron Sync */}
+              {/* Imports stay drafts. A known barcode is skipped. */}
               <div className="p-3.5 rounded-xl border border-line/60 space-y-2">
-                <div className="flex items-center justify-between">
-                  <h4 className="text-xs font-semibold text-foreground">Scheduled Delta Sync (Cron Job)</h4>
-                  <select
-                    value={cronSync}
-                    onChange={(e) => setCronSync(e.target.value)}
-                    className="rounded-lg border border-line bg-surface px-2 py-1 text-xs font-semibold outline-none"
-                  >
-                    <option value="disabled">Disabled (Manual Only)</option>
-                    <option value="hourly">Every 6 Hours</option>
-                    <option value="daily">Daily at 02:00 AM UTC</option>
-                    <option value="weekly">Weekly on Sunday</option>
-                  </select>
-                </div>
+                <h4 className="text-xs font-semibold text-foreground">Import result</h4>
                 <p className="text-[11px] text-muted">
-                  Runs background worker to pull newly registered EAN-13 barcodes and price revisions.
+                  A pull queues a paged import. Products stay drafts until you publish them. A barcode that is already in the catalogue is skipped. There is no scheduled sync.
                 </p>
-              </div>
-
-              {/* Rule 4: Conflict Resolution */}
-              <div className="p-3.5 rounded-xl border border-line/60 space-y-2">
-                <h4 className="text-xs font-semibold text-foreground">Conflict Resolution Policy (When GTIN Exists)</h4>
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 pt-1">
-                  {[
-                    { id: "enrich_missing", title: "Enrich Missing Only", desc: "Never overwrite existing titles; only fill missing attributes." },
-                    { id: "authority_override", title: "Authoritative Override", desc: "Always overwrite with verified manufacturer data." },
-                    { id: "keep_master", title: "Keep Existing Master", desc: "Ignore incoming duplicate and preserve current record." },
-                  ].map((policy) => (
-                    <button
-                      key={policy.id}
-                      type="button"
-                      onClick={() => setConflictPolicy(policy.id)}
-                      className={`p-3 rounded-lg border text-left text-xs transition-all ${
-                        conflictPolicy === policy.id
-                          ? "border-primary bg-primary/5 font-semibold text-foreground shadow-2xs"
-                          : "border-line bg-surface-muted/30 text-muted hover:border-muted"
-                      }`}
-                    >
-                      <span className="block text-xs font-semibold mb-0.5">{policy.title}</span>
-                      <span className="text-[10px] leading-tight block">{policy.desc}</span>
-                    </button>
-                  ))}
-                </div>
+                {source.last_error ? <p className="text-[11px] text-danger">{source.last_error}</p> : null}
               </div>
             </div>
           </div>
