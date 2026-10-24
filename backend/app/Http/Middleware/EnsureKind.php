@@ -12,6 +12,10 @@ class EnsureKind
     public function handle(Request $request, Closure $next, string $kind): Response
     {
         if ($request->user()?->kind !== $kind) {
+            if ($request->user()?->kind === 'platform' && $kind === 'staff') {
+                return $next($request);
+            }
+
             $currentKind = $request->user()?->kind ?? 'guest';
             return ApiResponse::error(
                 'permission.denied',

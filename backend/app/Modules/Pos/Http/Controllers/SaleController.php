@@ -1765,7 +1765,18 @@ class SaleController
     private function store(Request $request, string $storeId): Store|JsonResponse
     {
         $store = Store::query()->find($storeId);
-        if (! $store || $store->tenant_id !== $request->session()->get('tenant_id')) {
+        if (! $store) {
+            return ApiResponse::error('resource.not_found', 'Store not found.', 404);
+        }
+
+        if ($request->user()?->kind === 'platform') {
+            if ($request->hasSession() && $request->session()->get('tenant_id') !== $store->tenant_id) {
+                $request->session()->put('tenant_id', $store->tenant_id);
+            }
+            return $store;
+        }
+
+        if ($store->tenant_id !== $request->session()->get('tenant_id')) {
             return ApiResponse::error('resource.not_found', 'Store not found.', 404);
         }
 

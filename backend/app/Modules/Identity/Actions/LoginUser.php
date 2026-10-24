@@ -213,20 +213,25 @@ class LoginUser
 
     public function switchStore(string $storeId): JsonResponse
     {
-        $tenantId = session('tenant_id');
-        if (! $tenantId) {
-            return ApiResponse::error('auth.unauthorized', 'Not authenticated.', 401);
-        }
+        /** @var User|null $user */
+        $user = Auth::user();
 
-        $store = DB::table('stores')->where('id', $storeId)->where('tenant_id', $tenantId)->first();
+        $store = DB::table('stores')->where('id', $storeId)->first();
         if (! $store) {
             return ApiResponse::error('resource.not_found', 'Branch not found.', 404);
         }
 
-        session(['active_store_id' => $storeId]);
+        if ($user?->kind !== 'platform') {
+            $tenantId = session('tenant_id');
+            if (! $tenantId || $store->tenant_id !== $tenantId) {
+                return ApiResponse::error('auth.forbidden', 'Store does not belong to this tenant.', 403);
+            }
+        }
 
-        /** @var User $user */
-        $user = Auth::user();
+        session([
+            'tenant_id' => $store->tenant_id,
+            'active_store_id' => $storeId,
+        ]);
 
         return ApiResponse::ok($this->profile($user));
     }
@@ -236,14 +241,23 @@ class LoginUser
      */
     public function profile(User $user): array
     {
-        $tenant = null;
         $tenantId = session('tenant_id');
+        $activeStoreId = session('active_store_id');
+
+        if (! $tenantId && $user->kind === 'platform') {
+            $firstTenant = DB::table('tenants')->whereNull('deleted_at')->where('status', '!=', 'suspended')->first();
+            if ($firstTenant) {
+                $tenantId = $firstTenant->id;
+                session(['tenant_id' => $tenantId]);
+            }
+        }
+
+        $tenant = null;
         if ($tenantId) {
             $tenant = DB::table('tenants')->where('id', $tenantId)->first();
         }
 
         $store = null;
-        $activeStoreId = session('active_store_id');
         if ($tenantId) {
             if ($activeStoreId) {
                 $store = DB::table('stores')->where('id', $activeStoreId)->where('tenant_id', $tenantId)->first();
@@ -254,10 +268,37 @@ class LoginUser
             }
         }
 
+        if (! $store && $user->kind === 'platform') {
+            $store = DB::table('stores')->whereNull('deleted_at')->where('status', 'active')->first();
+            if ($store) {
+                $tenantId = $store->tenant_id;
+                $activeStoreId = $store->id;
+                session(['tenant_id' => $tenantId, 'active_store_id' => $activeStoreId]);
+                $tenant = DB::table('tenants')->where('id', $tenantId)->first();
+            }
+        }
+
         $allStores = [];
-        if ($tenantId) {
+        if ($tenantId && $user->kind !== 'platform') {
             $allStores = DB::table('stores')
                 ->where('tenant_id', $tenantId)
+                ->whereNull('deleted_at')
+                ->where('status', 'active')
+                ->orderByDesc('is_default')
+                ->orderBy('name')
+                ->get(['id', 'name', 'code', 'public_slug', 'city', 'address_line', 'is_default'])
+                ->map(fn ($s) => [
+                    'id' => $s->id,
+                    'name' => $s->name,
+                    'code' => $s->code,
+                    'public_slug' => $s->public_slug,
+                    'city' => $s->city,
+                    'address' => $s->address_line,
+                    'is_default' => (bool) $s->is_default,
+                ])
+                ->all();
+        } else {
+            $allStores = DB::table('stores')
                 ->whereNull('deleted_at')
                 ->where('status', 'active')
                 ->orderByDesc('is_default')
