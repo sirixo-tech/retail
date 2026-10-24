@@ -56,3 +56,7 @@ backend/database/*.sqlite-journal
 
 # TypeScript build info
 *.tsbuildinfo
+
+# Separate Flutter Mobile/POS app repository
+pos_app/
+
