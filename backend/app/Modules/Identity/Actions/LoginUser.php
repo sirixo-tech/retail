@@ -166,6 +166,18 @@ class LoginUser
             ]);
         }
 
+        if ($kind === 'platform' && ! session('tenant_id')) {
+            $firstTenant = DB::table('tenants')->whereNull('deleted_at')->where('status', '!=', 'suspended')->first();
+            if ($firstTenant) {
+                $firstStore = DB::table('stores')->where('tenant_id', $firstTenant->id)->where('is_default', true)->first()
+                    ?? DB::table('stores')->where('tenant_id', $firstTenant->id)->first();
+                session([
+                    'tenant_id' => $firstTenant->id,
+                    'active_store_id' => $firstStore?->id,
+                ]);
+            }
+        }
+
         if ($user->two_factor_confirmed_at) {
             session(['two_factor.pending_user_id' => $user->id]);
 
@@ -302,6 +314,7 @@ class LoginUser
                 'is_default' => (bool) $store->is_default,
             ] : null,
             'stores' => $allStores,
+            'allStores' => $allStores,
         ];
     }
 }
