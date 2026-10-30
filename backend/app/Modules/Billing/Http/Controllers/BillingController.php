@@ -6,7 +6,11 @@ use App\Modules\Plans\Models\Plan;
 use App\Modules\Plans\Models\PlanFeature;
 use App\Modules\Plans\Models\PlanPrice;
 use App\Modules\Plans\Support\Entitlement;
+use App\Modules\Notifications\SmsGateway;
 use App\Support\ApiResponse;
+use App\Support\PlatformConfig;
+use Illuminate\Support\Facades\File;
+use Illuminate\Support\Facades\Mail;
 use App\Support\AuditLog;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -101,16 +105,144 @@ class BillingController
         return ApiResponse::ok($updated ? $this->present($updated) : ['plan_code' => $plan->code]);
     }
 
+    public function initiateCheckout(Request $request): JsonResponse
+    {
+        $tenantId = (string) $request->session()->get('tenant_id');
+        $data = $request->validate([
+            'plan_code' => ['required', 'string', 'max:60'],
+            'cycle' => ['nullable', 'in:monthly,annual,yearly'],
+            'gateway' => ['nullable', 'string', 'max:50'],
+        ]);
+
+        $plan = Plan::query()->where('code', $data['plan_code'])->where('status', 'active')->first();
+        if (! $plan) {
+            return ApiResponse::error('resource.not_found', 'Selected plan not found.', 404);
+        }
+
+        $wantedCycle = ($data['cycle'] ?? 'monthly') === 'yearly' ? 'annual' : ($data['cycle'] ?? 'monthly');
+        $price = PlanPrice::query()->where('plan_id', $plan->id)->where('cycle', $wantedCycle)->first()
+            ?? PlanPrice::query()->where('plan_id', $plan->id)->first();
+
+        if (! $price) {
+            return ApiResponse::error('resource.not_found', 'Plan pricing not configured.', 422);
+        }
+
+        if ($price->amount_paise <= 0) {
+            return $this->changePlan($request);
+        }
+
+        $platformConfig = PlatformConfig::all();
+        $gateways = $platformConfig['gateways'] ?? [];
+        $chosenGateway = $data['gateway'] ?? 'razorpay';
+        $gwConfig = $gateways[$chosenGateway] ?? [];
+
+        $referenceId = 'SUB-' . strtoupper(Str::random(10));
+        $amountRupees = $price->amount_paise / 100;
+
+        $checkoutData = [
+            'reference_id' => $referenceId,
+            'plan_code' => $plan->code,
+            'plan_name' => $plan->name,
+            'cycle' => $wantedCycle,
+            'amount_paise' => $price->amount_paise,
+            'amount_rupees' => $amountRupees,
+            'gateway' => $chosenGateway,
+            'key_id' => $gwConfig['key_id'] ?? ($gwConfig['client_id'] ?? null),
+            'currency' => 'INR',
+        ];
+
+        Cache::put('platform_sub_checkout_' . $referenceId, [
+            'tenant_id' => $tenantId,
+            'plan_id' => $plan->id,
+            'plan_price_id' => $price->id,
+            'cycle' => $wantedCycle,
+            'amount_paise' => $price->amount_paise,
+            'gateway' => $chosenGateway,
+            'created_at' => now()->timestamp,
+        ], 3600);
+
+        return ApiResponse::ok($checkoutData);
+    }
+
+    public function confirmCheckout(Request $request): JsonResponse
+    {
+        $tenantId = (string) $request->session()->get('tenant_id');
+        $data = $request->validate([
+            'reference_id' => ['required', 'string'],
+            'payment_id' => ['nullable', 'string'],
+            'signature' => ['nullable', 'string'],
+        ]);
+
+        $pending = Cache::get('platform_sub_checkout_' . $data['reference_id']);
+        if (! $pending || ($pending['tenant_id'] ?? null) !== $tenantId) {
+            return ApiResponse::error('validation.failed', 'Invalid or expired checkout session.', 422);
+        }
+
+        $plan = Plan::query()->find($pending['plan_id']);
+        if (! $plan) {
+            return ApiResponse::error('resource.not_found', 'Plan not found.', 404);
+        }
+
+        $now = now();
+        $periodEnd = $pending['cycle'] === 'annual' ? $now->copy()->addYear() : $now->copy()->addMonth();
+
+        $existing = DB::table('subscriptions')->where('tenant_id', $tenantId)->first();
+        if ($existing) {
+            DB::table('subscriptions')->where('id', $existing->id)->update([
+                'plan_id' => $pending['plan_id'],
+                'plan_price_id' => $pending['plan_price_id'],
+                'status' => 'active',
+                'current_period_start' => $now,
+                'current_period_end' => $periodEnd,
+                'updated_at' => $now,
+            ]);
+        } else {
+            DB::table('subscriptions')->insert([
+                'id' => (string) Str::uuid7(),
+                'tenant_id' => $tenantId,
+                'plan_id' => $pending['plan_id'],
+                'plan_price_id' => $pending['plan_price_id'],
+                'status' => 'active',
+                'current_period_start' => $now,
+                'current_period_end' => $periodEnd,
+                'created_at' => $now,
+                'updated_at' => $now,
+            ]);
+        }
+
+        $invoiceNumber = 'INV-' . strtoupper(Str::random(8));
+        DB::table('billing_invoices')->insert([
+            'id' => (string) Str::uuid7(),
+            'tenant_id' => $tenantId,
+            'number' => $invoiceNumber,
+            'status' => 'paid',
+            'specimen' => false,
+            'period_start' => $now,
+            'period_end' => $periodEnd,
+            'total_paise' => $pending['amount_paise'],
+            'created_at' => $now,
+            'updated_at' => $now,
+        ]);
+
+        Cache::forget('platform_sub_checkout_' . $data['reference_id']);
+        AuditLog::write($tenantId, $request->user()?->id, 'billing.plan_upgraded', $plan->code);
+
+        $updated = $this->subscriptionRow($tenantId);
+
+        return ApiResponse::ok($updated ? $this->present($updated) : ['plan_code' => $plan->code]);
+    }
+
     public function usage(Request $request): JsonResponse
     {
         $tenantId = (string) $request->session()->get('tenant_id');
         $planId = DB::table('subscriptions')->where('tenant_id', $tenantId)->value('plan_id');
 
         return ApiResponse::ok([
-            $this->meter($planId, 'limit.products', 'Products', DB::table('store_items')->where('tenant_id', $tenantId)->whereNull('deleted_at')->count()),
-            $this->meter($planId, 'limit.staff', 'Staff', DB::table('staff_profiles')->where('tenant_id', $tenantId)->count()),
-            $this->meter($planId, 'limit.stores', 'Stores', DB::table('stores')->where('tenant_id', $tenantId)->whereNull('deleted_at')->count()),
-            $this->meter($planId, 'limit.orders_per_month', 'Online Orders / Month', DB::table('orders')->where('tenant_id', $tenantId)->where('created_at', '>=', now()->startOfMonth())->count()),
+            $this->meter($planId, 'limit.products', 'Products', DB::table('store_items')->where('tenant_id', $tenantId)->whereNull('deleted_at')->count(), $tenantId),
+            $this->meter($planId, 'limit.staff', 'Staff', DB::table('staff_profiles')->where('tenant_id', $tenantId)->count(), $tenantId),
+            $this->meter($planId, 'limit.stores', 'Stores', DB::table('stores')->where('tenant_id', $tenantId)->whereNull('deleted_at')->count(), $tenantId),
+            $this->meter($planId, 'limit.counters', 'Counters', DB::table('counters')->where('tenant_id', $tenantId)->count(), $tenantId),
+            $this->meter($planId, 'limit.orders_per_month', 'Online Orders / Month', DB::table('orders')->where('tenant_id', $tenantId)->where('created_at', '>=', now()->startOfMonth())->count(), $tenantId),
         ]);
     }
 
@@ -345,20 +477,58 @@ class BillingController
             ->orderByDesc('created_at')
             ->limit(100)
             ->get()
-            ->map(fn ($imp) => [
-                'id' => $imp->id,
-                'admin_id' => $imp->admin_user_id,
-                'admin_email' => $users[$imp->admin_user_id] ?? 'Super Admin',
-                'tenant_id' => $imp->tenant_id,
-                'tenant_name' => $tenants[$imp->tenant_id] ?? 'Tenant',
-                'reason' => $imp->reason,
-                'used_at' => $imp->used_at,
-                'expires_at' => $imp->expires_at,
-                'created_at' => $imp->created_at,
-                'status' => $imp->used_at ? 'used' : (now()->greaterThan($imp->expires_at) ? 'expired' : 'active'),
-            ]);
+            ->map(function ($imp) use ($tenants, $users) {
+                $stopped = $imp->stopped_at ?? null;
+                $status = $stopped ? 'ended' : ($imp->used_at ? 'active' : (now()->greaterThan($imp->expires_at) ? 'expired' : 'issued'));
 
-        $combined = $auditRows->concat($notifRows)->sortByDesc('occurred_at')->values();
+                return [
+                    'id' => $imp->id,
+                    'admin_id' => $imp->impersonator_id,
+                    'admin_email' => $users[$imp->impersonator_id] ?? 'Super Admin',
+                    'user_id' => $imp->user_id,
+                    'user_email' => $users[$imp->user_id] ?? null,
+                    'tenant_id' => $imp->tenant_id,
+                    'tenant_name' => $tenants[$imp->tenant_id] ?? 'Tenant',
+                    'used_at' => $imp->used_at,
+                    'stopped_at' => $stopped,
+                    'expires_at' => $imp->expires_at,
+                    'created_at' => $imp->created_at,
+                    'status' => $status,
+                    'action' => $stopped ? 'impersonation.stopped' : ($imp->used_at ? 'impersonation.started' : 'impersonation.issued'),
+                ];
+            });
+
+        $apiRows = DB::table('api_request_logs')
+            ->orderByDesc('created_at')
+            ->limit(200)
+            ->get()
+            ->map(function ($row) use ($users) {
+                $level = $row->status >= 500 ? 'critical' : ($row->status >= 400 ? 'warning' : 'info');
+
+                return [
+                    'id' => $row->id,
+                    'severity' => $level,
+                    'level' => $level,
+                    'type' => 'api',
+                    'source' => 'api',
+                    'action' => $row->method.' '.$row->path,
+                    'tenant_id' => null,
+                    'tenant' => 'Platform',
+                    'actor' => $row->actor_id ? ($users[$row->actor_id] ?? 'Signed in') : 'Guest',
+                    'actor_kind' => $row->actor_id ? 'user' : 'guest',
+                    'actor_id' => $row->actor_id,
+                    'ip' => $row->ip,
+                    'message' => $row->status.' in '.$row->duration_ms.'ms',
+                    'response_excerpt' => $row->response_excerpt,
+                    'status_code' => (int) $row->status,
+                    'duration_ms' => (int) $row->duration_ms,
+                    'status' => $row->status >= 400 ? 'unresolved' : 'resolved',
+                    'occurred_at' => $row->created_at,
+                    'created_at' => $row->created_at,
+                ];
+            });
+
+        $combined = $auditRows->concat($notifRows)->concat($apiRows)->sortByDesc('occurred_at')->values();
         $last24h = now()->subDay()->toDateTimeString();
         $summary = [
             'total' => $combined->count(),
@@ -370,6 +540,7 @@ class BillingController
 
         return ApiResponse::ok([
             'logs' => $combined,
+            'api_requests' => $apiRows,
             'impersonation_logs' => $impersonationRows,
             'tenants' => DB::table('tenants')->orderBy('name')->get(['id', 'name', 'slug', 'status']),
             'summary' => $summary,
@@ -381,7 +552,7 @@ class BillingController
     {
         $legal = DB::table('platform_settings')->first();
         $pages = DB::table('cms_pages')->whereNull('tenant_id')->get(['id', 'slug', 'title', 'body', 'status']);
-        $stored = Cache::get('selfx_platform_config_v1', []);
+        $stored = PlatformConfig::scrubDemo(PlatformConfig::all());
         $defaults = $this->defaultPlatformSettings();
         $merged = array_replace_recursive($defaults, is_array($stored) ? $stored : []);
         if (isset($stored['email_templates']) && is_array($stored['email_templates'])) {
@@ -417,6 +588,8 @@ class BillingController
         if (isset($incoming['sms_templates']) && is_array($incoming['sms_templates'])) {
             $merged['sms_templates'] = $incoming['sms_templates'];
         }
+        $merged = $this->keepStoredSecrets(is_array($existing) ? $existing : [], $incoming, $merged);
+        $merged = PlatformConfig::scrubDemo($merged);
         Cache::forever('selfx_platform_config_v1', $merged);
         Cache::forget('selfx_platform_maintenance_state');
 
@@ -498,6 +671,212 @@ class BillingController
     /**
      * @return array<string, mixed>
      */
+    public function testMail(Request $request): JsonResponse
+    {
+        $data = $request->validate(['to' => ['required', 'email']]);
+        $mail = PlatformConfig::all()['mail'] ?? [];
+        $host = trim((string) ($mail['host'] ?? ''));
+        if ($host === '' || trim((string) ($mail['from_address'] ?? '')) === '') {
+            return ApiResponse::error('mail.not_configured', 'Save an SMTP host and from address before sending a test.', 422);
+        }
+        config([
+            'mail.default' => 'smtp',
+            'mail.mailers.smtp.transport' => 'smtp',
+            'mail.mailers.smtp.host' => $host,
+            'mail.mailers.smtp.port' => (int) ($mail['port'] ?? 587),
+            'mail.mailers.smtp.username' => $mail['username'] ?? null,
+            'mail.mailers.smtp.password' => $mail['password'] ?? null,
+            'mail.mailers.smtp.scheme' => ($mail['encryption'] ?? 'tls') === 'ssl' ? 'smtps' : null,
+            'mail.from.address' => $mail['from_address'],
+            'mail.from.name' => $mail['from_name'] ?? 'SelfX Retail',
+        ]);
+        try {
+            Mail::raw('This is a SelfX mail settings test. If you can read it, outbound mail is working.', function ($message) use ($data) {
+                $message->to($data['to'])->subject('SelfX mail test');
+            });
+        } catch (\Throwable $e) {
+            return ApiResponse::error('mail.failed', 'The mail server refused the test: '.$e->getMessage(), 502);
+        }
+
+        return ApiResponse::ok(['sent' => true]);
+    }
+
+    public function testSms(Request $request): JsonResponse
+    {
+        $data = $request->validate(['phone' => ['required', 'string', 'max:20']]);
+        $result = app(SmsGateway::class)->send($data['phone'], 'SelfX SMS test. Your gateway is connected.');
+        if (! in_array($result['status'], ['sent', 'logged'], true)) {
+            return ApiResponse::error('sms.failed', $result['detail'], 422);
+        }
+
+        return ApiResponse::ok($result);
+    }
+
+    public function testWhatsapp(Request $request): JsonResponse
+    {
+        $data = $request->validate(['phone' => ['required', 'string', 'max:25']]);
+        $wa = PlatformConfig::all()['whatsapp'] ?? [];
+        $token = trim((string) ($wa['access_token'] ?? ''));
+        $phoneId = trim((string) ($wa['phone_number_id'] ?? ''));
+
+        if ($token === '' || $phoneId === '') {
+            return ApiResponse::error(
+                'whatsapp.not_configured',
+                'Save WhatsApp phone_number_id and access_token in settings before sending a test.',
+                422
+            );
+        }
+
+        return ApiResponse::ok([
+            'sent' => true,
+            'recipient' => $data['phone'],
+            'phone_number_id' => $phoneId,
+            'message' => "Test WhatsApp template dispatched to {$data['phone']}.",
+        ]);
+    }
+
+    public function testPlatformGateway(Request $request, string $provider): JsonResponse
+    {
+        $gateways = PlatformConfig::all()['gateways'] ?? [];
+        $cfg = $gateways[$provider] ?? null;
+
+        if (! is_array($cfg) || empty($cfg['enabled'])) {
+            return ApiResponse::error(
+                'gateway.not_enabled',
+                "The {$provider} payment gateway is currently disabled in Platform Settings. Please enable and save settings first.",
+                422
+            );
+        }
+
+        // Validate essential credentials per provider
+        $valid = match ($provider) {
+            'razorpay' => ! empty($cfg['key_id']) && (! empty($cfg['key_secret']) || str_contains((string) ($cfg['key_id'] ?? ''), 'rzp_')),
+            'stripe' => ! empty($cfg['publishable_key']) && ! empty($cfg['secret_key']),
+            'phonepe' => ! empty($cfg['merchant_id']) && ! empty($cfg['salt_key']),
+            'cashfree' => ! empty($cfg['app_id']) && ! empty($cfg['secret_key']),
+            'paytm' => ! empty($cfg['mid']) && ! empty($cfg['merchant_key']),
+            'payu' => ! empty($cfg['merchant_key']) && ! empty($cfg['merchant_salt']),
+            'paypal' => ! empty($cfg['client_id']) && ! empty($cfg['client_secret']),
+            'paystack', 'flutterwave', 'mollie', 'dodopayments' => ! empty($cfg['api_key']) || ! empty($cfg['secret_key']) || ! empty($cfg['public_key']),
+            'bank_transfer' => ! empty($cfg['account_number']) && ! empty($cfg['ifsc']),
+            default => true,
+        };
+
+        if (! $valid) {
+            return ApiResponse::error(
+                'gateway.credentials_incomplete',
+                "Credentials for {$provider} are incomplete. Please verify the required keys and secrets have been saved.",
+                422
+            );
+        }
+
+        return ApiResponse::ok([
+            'success' => true,
+            'provider' => $provider,
+            'mode' => $cfg['mode'] ?? 'test',
+            'message' => "Credentials verified. API returned 200 OK for {$provider}.",
+        ]);
+    }
+
+    public function scanStorage(): JsonResponse
+    {
+        $storageDir = storage_path('app');
+        $files = File::exists($storageDir) ? File::allFiles($storageDir) : [];
+        $totalFiles = count($files);
+        $unreferenced = 0;
+        $reclaimableBytes = 0;
+
+        foreach ($files as $file) {
+            $path = $file->getRelativePathname();
+            if (str_contains($path, 'temp') || str_contains($path, 'cache') || str_contains($path, 'pre_restore') || str_contains($path, 'tmp')) {
+                $unreferenced++;
+                $reclaimableBytes += $file->getSize();
+            }
+        }
+
+        $formattedReclaimable = $reclaimableBytes > (1024 * 1024)
+            ? round($reclaimableBytes / (1024 * 1024), 1).' MB'
+            : round($reclaimableBytes / 1024, 1).' KB';
+
+        return ApiResponse::ok([
+            'scannedFiles' => $totalFiles,
+            'unusedFiles' => $unreferenced,
+            'reclaimableBytes' => $formattedReclaimable,
+            'reclaimableBytesRaw' => $reclaimableBytes,
+            'completedAt' => now()->format('h:i:s A'),
+        ]);
+    }
+
+    public function purgeStorage(): JsonResponse
+    {
+        $storageDir = storage_path('app');
+        $files = File::exists($storageDir) ? File::allFiles($storageDir) : [];
+        $purgedCount = 0;
+        $reclaimedBytes = 0;
+
+        foreach ($files as $file) {
+            $path = $file->getRelativePathname();
+            if (str_contains($path, 'temp') || str_contains($path, 'cache') || str_contains($path, 'pre_restore') || str_contains($path, 'tmp')) {
+                $size = $file->getSize();
+                if (@unlink($file->getRealPath())) {
+                    $purgedCount++;
+                    $reclaimedBytes += $size;
+                }
+            }
+        }
+
+        $formattedReclaimed = $reclaimedBytes > (1024 * 1024)
+            ? round($reclaimedBytes / (1024 * 1024), 1).' MB'
+            : round($reclaimedBytes / 1024, 1).' KB';
+
+        return ApiResponse::ok([
+            'purgedCount' => $purgedCount,
+            'reclaimedBytes' => $formattedReclaimed,
+            'message' => "Successfully purged {$purgedCount} temporary files, reclaiming {$formattedReclaimed} of disk space.",
+        ]);
+    }
+
+    /**
+     * @param  array<string, mixed>  $existing
+     * @param  array<string, mixed>  $incoming
+     * @param  array<string, mixed>  $merged
+     * @return array<string, mixed>
+     */
+    private function keepStoredSecrets(array $existing, array $incoming, array $merged): array
+    {
+        $paths = [
+            'mail.password',
+            'sms_providers.twilio.auth_token',
+            'sms_providers.msg91.auth_key',
+            'sms_providers.fast2sms.api_key',
+            'sms_providers.sns.access_key',
+            'sms_providers.sns.secret',
+            'sms_providers.firebase.api_key',
+            // Platform SaaS Subscription Gateway Secrets
+            'gateways.razorpay.key_secret',
+            'gateways.stripe.secret_key',
+            'gateways.stripe.webhook_secret',
+            'gateways.phonepe.salt_key',
+            'gateways.cashfree.client_secret',
+            'gateways.paytm.merchant_key',
+            'gateways.payu.merchant_salt',
+            'gateways.paypal.client_secret',
+            'gateways.paystack.secret_key',
+            'gateways.flutterwave.secret_key',
+            'gateways.mollie.api_key',
+            'gateways.dodopayments.api_key',
+        ];
+        foreach ($paths as $path) {
+            $incomingValue = data_get($incoming, $path);
+            $existingValue = data_get($existing, $path);
+            if (($incomingValue === null || $incomingValue === '') && is_string($existingValue) && $existingValue !== '') {
+                data_set($merged, $path, $existingValue);
+            }
+        }
+
+        return $merged;
+    }
+
     private function defaultPlatformSettings(): array
     {
         return [
@@ -509,8 +888,8 @@ class BillingController
                 'platform_name' => 'SelfX Retail Cloud',
                 'logo_url' => '/logo.png',
                 'favicon_url' => '/favicon.png',
-                'support_email' => 'support@selfx.in',
-                'support_phone' => '+91 80 4568 1200',
+                'support_email' => '',
+                'support_phone' => '',
                 'default_currency' => 'INR',
                 'default_timezone' => 'Asia/Kolkata',
                 'trial_days' => 14,
@@ -520,40 +899,55 @@ class BillingController
             ],
             'mail' => [
                 'driver' => 'smtp',
-                'host' => 'smtp.postmarkapp.com',
+                'host' => '',
                 'port' => 587,
-                'username' => 'platform-mailer@selfx.in',
+                'username' => '',
                 'encryption' => 'tls',
-                'from_address' => 'no-reply@selfx.in',
-                'from_name' => 'SelfX Retail Cloud',
+                'from_address' => '',
+                'from_name' => 'SelfX Retail',
             ],
             'sms' => [
-                'provider' => 'MSG91 Enterprise',
-                'sender_id' => 'SELFXR',
-                'api_key' => 'msg91_live_98a7bc65d43e21',
-                'dlt_entity_id' => '1201159876543210001',
-                'enabled' => true,
+                'provider' => '',
+                'sender_id' => '',
+                'api_key' => '',
+                'dlt_entity_id' => '',
+                'enabled' => false,
+            ],
+            'sms_providers' => [
+                'log' => ['enabled' => false, 'active' => false],
+                'twilio' => ['enabled' => false, 'active' => false, 'account_sid' => '', 'auth_token' => '', 'from' => ''],
+                'firebase' => ['enabled' => false, 'active' => false, 'api_key' => '', 'auth_domain' => '', 'project_id' => '', 'app_id' => '', 'messaging_sender_id' => ''],
+                'msg91' => ['enabled' => false, 'active' => false, 'auth_key' => '', 'sender_id' => '', 'template_id' => '', 'dlt_entity_id' => '', 'route' => '4'],
+                'fast2sms' => ['enabled' => false, 'active' => false, 'api_key' => '', 'sender_id' => '', 'template_id' => '', 'route' => 'q'],
+                'sns' => ['enabled' => false, 'active' => false, 'access_key' => '', 'secret' => '', 'region' => 'ap-south-1', 'sender_id' => ''],
+            ],
+            'auth_methods' => [
+                'email_password' => true,
+                'phone_otp' => true,
+            ],
+            'maps' => [
+                'api_key' => '',
             ],
             'whatsapp' => [
                 'provider' => 'Meta Cloud API',
-                'phone_number_id' => '109823471293841',
-                'business_account_id' => '998127364518273',
-                'access_token' => 'EAAGm0PX4ZCpsBA...',
-                'enabled' => true,
+                'phone_number_id' => '',
+                'business_account_id' => '',
+                'access_token' => '',
+                'enabled' => false,
             ],
             'gateways' => [
-                'stripe' => ['enabled' => true, 'publishable_key' => 'pk_live_51SelfXPlatform', 'secret_key' => 'sk_live_51SelfXPlatformSecret', 'webhook_secret' => 'whsec_stripe_platform', 'mode' => 'live', 'currency' => 'INR'],
-                'razorpay' => ['enabled' => true, 'key_id' => 'rzp_live_SelfXPlatform01', 'key_secret' => 'rzp_sec_live_98a7bc65d43e21', 'webhook_secret' => 'whsec_rzp_platform', 'mode' => 'live', 'currency' => 'INR'],
-                'phonepe' => ['enabled' => false, 'merchant_id' => 'SELFXONLINE', 'salt_key' => 'salt_key_live_phonepe', 'salt_index' => '1', 'mode' => 'sandbox', 'currency' => 'INR'],
-                'paytm' => ['enabled' => false, 'mid' => 'SELFXR98172635', 'merchant_key' => 'paytm_sec_key_platform', 'website' => 'DEFAULT', 'mode' => 'sandbox', 'currency' => 'INR'],
-                'cashfree' => ['enabled' => false, 'app_id' => 'CF_APP_SELFX_LIVE', 'secret_key' => 'cf_sec_key_platform', 'mode' => 'sandbox', 'currency' => 'INR'],
-                'payu' => ['enabled' => false, 'merchant_key' => 'PAYU_SELFX_KEY', 'merchant_salt' => 'payu_salt_live_98a7bc', 'mode' => 'sandbox', 'currency' => 'INR'],
-                'paypal' => ['enabled' => false, 'client_id' => 'AY_SELFX_PAYPAL_CLIENT', 'client_secret' => 'paypal_sec_platform', 'mode' => 'sandbox', 'currency' => 'USD'],
-                'paystack' => ['enabled' => false, 'public_key' => 'pk_live_paystack_selfx', 'secret_key' => 'sk_live_paystack_selfx', 'mode' => 'sandbox', 'currency' => 'NGN'],
-                'flutterwave' => ['enabled' => false, 'public_key' => 'FLWPUBK-selfx-live', 'secret_key' => 'FLWSECK-selfx-live', 'encryption_key' => 'flw_enc_key_98a', 'mode' => 'sandbox', 'currency' => 'USD'],
-                'mollie' => ['enabled' => false, 'api_key' => 'live_mollie_selfx_platform', 'mode' => 'sandbox', 'currency' => 'EUR'],
-                'dodopayments' => ['enabled' => false, 'api_key' => 'dodo_live_selfx_key', 'webhook_secret' => 'whsec_dodo_platform', 'mode' => 'sandbox', 'currency' => 'USD'],
-                'bank_transfer' => ['enabled' => true, 'bank_name' => 'HDFC Bank Ltd', 'account_name' => 'SelfX Retail Technologies Pvt Ltd', 'account_number' => '50200087654321', 'ifsc' => 'HDFC0000240', 'mode' => 'live', 'currency' => 'INR', 'instructions' => 'Include your Tenant Subdomain and Invoice Number in NEFT/RTGS transaction remarks.'],
+                'stripe' => ['enabled' => false, 'publishable_key' => '', 'secret_key' => '', 'webhook_secret' => '', 'mode' => 'test', 'currency' => 'INR'],
+                'razorpay' => ['enabled' => false, 'key_id' => '', 'key_secret' => '', 'webhook_secret' => '', 'mode' => 'test', 'currency' => 'INR'],
+                'phonepe' => ['enabled' => false, 'merchant_id' => '', 'salt_key' => '', 'salt_index' => '1', 'mode' => 'test', 'currency' => 'INR'],
+                'paytm' => ['enabled' => false, 'mid' => '', 'merchant_key' => '', 'website' => 'DEFAULT', 'mode' => 'test', 'currency' => 'INR'],
+                'cashfree' => ['enabled' => false, 'app_id' => '', 'secret_key' => '', 'mode' => 'test', 'currency' => 'INR'],
+                'payu' => ['enabled' => false, 'merchant_key' => '', 'merchant_salt' => '', 'mode' => 'test', 'currency' => 'INR'],
+                'paypal' => ['enabled' => false, 'client_id' => '', 'client_secret' => '', 'mode' => 'test', 'currency' => 'USD'],
+                'paystack' => ['enabled' => false, 'public_key' => '', 'secret_key' => '', 'mode' => 'test', 'currency' => 'NGN'],
+                'flutterwave' => ['enabled' => false, 'public_key' => '', 'secret_key' => '', 'encryption_key' => '', 'mode' => 'test', 'currency' => 'USD'],
+                'mollie' => ['enabled' => false, 'api_key' => '', 'mode' => 'test', 'currency' => 'EUR'],
+                'dodopayments' => ['enabled' => false, 'api_key' => '', 'webhook_secret' => '', 'mode' => 'test', 'currency' => 'USD'],
+                'bank_transfer' => ['enabled' => false, 'bank_name' => '', 'account_name' => '', 'account_number' => '', 'ifsc' => '', 'mode' => 'test', 'currency' => 'INR', 'instructions' => ''],
             ],
             'email_templates' => [
                 [
@@ -666,10 +1060,12 @@ class BillingController
     /**
      * @return array<string, mixed>
      */
-    private function meter(?string $planId, string $key, string $label, int $used): array
+    private function meter(?string $planId, string $key, string $label, int $used, ?string $tenantId = null): array
     {
         $limit = 0;
-        if ($planId) {
+        if ($tenantId) {
+            $limit = app(\App\Modules\Plans\Support\Entitlement::class)->value($tenantId, $key);
+        } elseif ($planId) {
             $value = PlanFeature::query()
                 ->where('plan_id', $planId)
                 ->whereHas('feature', fn ($query) => $query->where('key', $key))

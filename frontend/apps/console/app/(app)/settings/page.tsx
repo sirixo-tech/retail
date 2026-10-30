@@ -392,6 +392,48 @@ const GATEWAY_CATALOG: GatewayMeta[] = [
       { name: "priority_packing", label: "Auto-send pickup orders to Pick List immediately", defaultChecked: true },
     ],
   },
+  {
+    provider: "upi_qr",
+    title: "Static UPI QR (Standee / Direct VPA)",
+    subtitle: "Customers scan your physical UPI QR standee or tap to pay via GPay, PhonePe, Paytm, BHIM.",
+    badgeText: "UPI",
+    badgeBg: "#0c831f",
+    badgeColor: "#ffffff",
+    isPrepaid: true,
+    modeLabel: "Direct Bank UPI",
+    fields: [
+      {
+        name: "upi_vpa",
+        label: "Merchant UPI ID / VPA Handle",
+        placeholder: "e.g. yourstore@okaxis, merchant@paytm, 9876543210@ybl",
+        required: true,
+        helper: "The VPA linked to your current account or printed on your physical counter QR standee.",
+      },
+      {
+        name: "payee_name",
+        label: "Merchant / Payee Name",
+        placeholder: "e.g. Sri Krishna Supermarket",
+        required: true,
+        helper: "Displayed as payee name inside the customer's UPI payment app.",
+      },
+      {
+        name: "standee_image_url",
+        label: "Standee QR Stand Image URL (Optional)",
+        placeholder: "https://assets.yourstore.com/qr-standee.png",
+        helper: "Optional photo of your printed counter QR standee to display on desktop checkout.",
+      },
+      {
+        name: "instructions",
+        label: "Customer Payment Instructions",
+        placeholder: "Scan QR or tap to pay via any UPI app, then submit the 12-digit UPI UTR reference number.",
+      },
+    ],
+    toggles: [
+      { name: "require_utr", label: "Require customer to enter 12-digit UPI UTR reference number", defaultChecked: true },
+      { name: "enable_mobile_intent", label: "Enable direct One-Click UPI Intent buttons (GPay, PhonePe, Paytm) on mobile", defaultChecked: true },
+      { name: "auto_accept_on_utr", label: "Auto-confirm order once valid 12-digit UTR is entered", defaultChecked: true },
+    ],
+  },
 ];
 
 type TenantSettings = {
@@ -658,14 +700,14 @@ export function PaymentGatewaysSection({
       return res.ok;
     }
     await fetch(`/api/v1/gateways/${provider}`, {
-      method: "PUT",
+      method: "PATCH",
       credentials: "include",
       headers: {
         Accept: "application/json",
         "Content-Type": "application/json",
         "X-XSRF-TOKEN": token(),
       },
-      body: JSON.stringify({ status: "active" }),
+      body: JSON.stringify({ status: "active", config }),
     });
     await loadInternal();
     return true;
@@ -1146,11 +1188,57 @@ export type TenantSettingsSectionId =
   | "pos"
   | "taxes"
   | "receipt"
+  | "loyalty"
   | "hours"
   | "gateways"
   | "theme"
   | "api"
   | "security";
+
+export type LoyaltyProgramSettings = {
+  enabled: boolean;
+  posEnabled: boolean;
+  onlineEnabled: boolean;
+  earnRupeesPerPoint: number;
+  minOrderToEarnRupees: number;
+  welcomeBonusPoints: number;
+  firstOrderBonusPoints: number;
+  excludeDiscountedItems: boolean;
+  redeemPaisePerPoint: number;
+  minRedeemPoints: number;
+  maxRedeemPercent: number;
+  maxRedeemRupeesCap: number;
+  expiryMonths: number;
+  tiers: {
+    id: string;
+    name: string;
+    minLifetimePoints: number;
+    multiplier: number;
+    perkDescription: string;
+  }[];
+};
+
+export const defaultLoyaltyProgram: LoyaltyProgramSettings = {
+  enabled: true,
+  posEnabled: true,
+  onlineEnabled: true,
+  earnRupeesPerPoint: 100,
+  minOrderToEarnRupees: 100,
+  welcomeBonusPoints: 25,
+  firstOrderBonusPoints: 50,
+  excludeDiscountedItems: false,
+  redeemPaisePerPoint: 100,
+  minRedeemPoints: 25,
+  maxRedeemPercent: 50,
+  maxRedeemRupeesCap: 500,
+  expiryMonths: 12,
+  tiers: [
+    { id: "bronze", name: "Bronze Member", minLifetimePoints: 0, multiplier: 1.0, perkDescription: "Base 1x reward points accrual on all eligible POS & Online bills" },
+    { id: "silver", name: "Silver Tier", minLifetimePoints: 250, multiplier: 1.25, perkDescription: "1.25x accelerated point earning + priority festival coupon access" },
+    { id: "gold", name: "Gold Tier", minLifetimePoints: 750, multiplier: 1.5, perkDescription: "1.5x point earning + priority doorstep slot reservation" },
+    { id: "platinum", name: "Platinum VIP", minLifetimePoints: 2000, multiplier: 2.0, perkDescription: "2x double reward points + dedicated VIP support & free express delivery" },
+  ],
+};
 
 const SECTION_META: Record<
   TenantSettingsSectionId,
@@ -1169,16 +1257,20 @@ const SECTION_META: Record<
     subtitle: "Manage GSTIN, PAN, FSSAI, Drug License, default GST slabs, inclusive/exclusive pricing, and e-Way bill rules.",
   },
   receipt: {
-    title: "Receipt, Invoice Series & Loyalty",
-    subtitle: "Customize sequential invoice numbering prefixes, thermal receipt footer, loyalty points accrual, and Khata limits.",
+    title: "Receipt, Invoice Series & Khata",
+    subtitle: "Customize sequential invoice numbering prefixes, thermal receipt footer, and default customer Khata limits.",
+  },
+  loyalty: {
+    title: "Loyalty Points & Customer Rewards Program",
+    subtitle: "Configure omnichannel points earning rules, redemption caps, rupee valuation, and VIP membership tiers across POS and Online Storefront.",
   },
   hours: {
     title: "Business Hours & Storefront Banner",
     subtitle: "Set daily store operating hours and manage the top announcement bar shown on your online storefront.",
   },
   gateways: {
-    title: "POS Payment Gateways (UPI QR & Counter)",
-    subtitle: "Configure UPI QR codes, card machines, and counter billing terminals for in-store POS orders.",
+    title: "Payment Gateways (POS & Online Store)",
+    subtitle: "Configure UPI QR codes, card machines, counter billing terminals, and online checkout payment gateways.",
   },
   theme: {
     title: "Theme & Brand Appearance",
@@ -1216,6 +1308,14 @@ export function SettingsWorkspace({ section = "profile" }: { section?: TenantSet
   const [closes, setCloses] = useState("21:30");
   const [announcement, setAnnouncement] = useState("");
   const [tenantCfg, setTenantCfg] = useState<TenantSettings>(defaultTenantSettings);
+  const [loyaltyCfg, setLoyaltyCfg] = useState<LoyaltyProgramSettings>(defaultLoyaltyProgram);
+  const [onlineStoreSettingsRaw, setOnlineStoreSettingsRaw] = useState<Record<string, unknown>>({});
+  const [loyaltyMetrics, setLoyaltyMetrics] = useState<{
+    enrolledMembers: number;
+    activePointsBalance: number;
+    vipMembers: number;
+  }>({ enrolledMembers: 0, activePointsBalance: 0, vipMembers: 0 });
+  const [simBillAmount, setSimBillAmount] = useState<number>(1000);
 
   // POS sound & terminal settings
   const [soundEnabled, setSoundEnabled] = useState(true);
@@ -1264,7 +1364,7 @@ export function SettingsWorkspace({ section = "profile" }: { section?: TenantSet
     if (!id) return;
     setStoreId(id);
 
-    const [receipt, hours] = await Promise.all([
+    const [receipt, hours, custRes] = await Promise.all([
       fetch(`/api/v1/stores/${id}/receipt`, {
         credentials: "include",
         headers: { Accept: "application/json" },
@@ -1273,18 +1373,47 @@ export function SettingsWorkspace({ section = "profile" }: { section?: TenantSet
         credentials: "include",
         headers: { Accept: "application/json" },
       }),
+      fetch("/api/v1/customers", {
+        credentials: "include",
+        headers: { Accept: "application/json" },
+      }),
     ]);
+
+    if (custRes.ok) {
+      try {
+        const cBody = (await custRes.json()) as { data?: { id: string; loyalty_points?: number }[] };
+        const list = cBody.data ?? [];
+        const enrolled = list.length;
+        const totalPts = list.reduce((sum, c) => sum + (Number(c.loyalty_points) || 0), 0);
+        const vips = list.filter((c) => (Number(c.loyalty_points) || 0) >= 250).length;
+        setLoyaltyMetrics({ enrolledMembers: enrolled, activePointsBalance: totalPts, vipMembers: vips });
+      } catch {
+        // ignore
+      }
+    }
 
     if (receipt.ok) {
       const rBody = (await receipt.json()) as {
         data: {
           receipt_footer?: string;
           pos_settings?: Record<string, unknown>;
+          online_store_settings?: Record<string, unknown>;
           tenant_settings?: Partial<TenantSettings>;
           gateway_configs?: Record<string, Record<string, unknown>>;
         };
       };
       if (rBody.data.receipt_footer) setFooter(rBody.data.receipt_footer);
+      if (rBody.data.online_store_settings) {
+        setOnlineStoreSettingsRaw(rBody.data.online_store_settings);
+        const savedLoyalty = rBody.data.online_store_settings.loyalty as Partial<LoyaltyProgramSettings> | undefined;
+        if (savedLoyalty && typeof savedLoyalty === "object") {
+          setLoyaltyCfg((prev) => ({
+            ...prev,
+            ...savedLoyalty,
+            tiers: Array.isArray(savedLoyalty.tiers) && savedLoyalty.tiers.length > 0 ? savedLoyalty.tiers : prev.tiers,
+          }));
+        }
+      }
       setTenantCfg((prev) => ({
         ...prev,
         ...(rBody.data.tenant_settings ?? {}),
@@ -1391,19 +1520,21 @@ export function SettingsWorkspace({ section = "profile" }: { section?: TenantSet
 
     const nextGw = { ...gatewayConfigs, [provider]: config };
     setGatewayConfigs(nextGw);
-    if (storeId) {
-      await fetch(`/api/v1/stores/${storeId}/receipt`, {
-        method: "PUT",
-        credentials: "include",
-        headers: {
-          Accept: "application/json",
-          "Content-Type": "application/json",
-          "X-XSRF-TOKEN": token(),
-        },
-        body: JSON.stringify({ gateway_configs: nextGw }),
-      });
+    const patchRes = await fetch(`/api/v1/gateways/${provider}`, {
+      method: "PATCH",
+      credentials: "include",
+      headers: {
+        Accept: "application/json",
+        "Content-Type": "application/json",
+        "X-XSRF-TOKEN": token(),
+      },
+      body: JSON.stringify({ status: "active", config }),
+    });
+    if (patchRes.ok) {
+      const pBody = (await patchRes.json()) as { data?: GatewayRow[] };
+      if (pBody.data) setRows(pBody.data);
     }
-    setNotice({ text: `${provider.replace("_", " ").toUpperCase()} rules saved.`, tone: "ok" });
+    setNotice({ text: `${provider.replace("_", " ").toUpperCase()} rules & credentials saved.`, tone: "ok" });
     return true;
   }
 
@@ -1425,6 +1556,20 @@ export function SettingsWorkspace({ section = "profile" }: { section?: TenantSet
       // ignore
     }
 
+    const nextOnlineStore = {
+      ...onlineStoreSettingsRaw,
+      loyalty: loyaltyCfg,
+    };
+    setOnlineStoreSettingsRaw(nextOnlineStore);
+
+    const syncedTenantCfg: TenantSettings = {
+      ...tenantCfg,
+      loyaltyEarnPer100: String(Math.max(1, Math.round(100 / Math.max(1, loyaltyCfg.earnRupeesPerPoint)))),
+      loyaltyPointValueRupees: String((loyaltyCfg.redeemPaisePerPoint / 100).toFixed(2)),
+      minRedeemPoints: String(loyaltyCfg.minRedeemPoints),
+    };
+    setTenantCfg(syncedTenantCfg);
+
     const res = await fetch(`/api/v1/stores/${storeId}/receipt`, {
       method: "PUT",
       credentials: "include",
@@ -1435,8 +1580,9 @@ export function SettingsWorkspace({ section = "profile" }: { section?: TenantSet
       },
       body: JSON.stringify({
         receipt_footer: footer,
-        tenant_settings: tenantCfg,
+        tenant_settings: syncedTenantCfg,
         pos_settings: posPatch,
+        online_store_settings: nextOnlineStore,
       }),
     });
     setNotice(
@@ -1940,35 +2086,7 @@ export function SettingsWorkspace({ section = "profile" }: { section?: TenantSet
             </label>
           </div>
 
-          <div className="grid gap-4 border-t border-line pt-5 sm:grid-cols-4">
-            <label className="block text-[12px] font-semibold">
-              Points Earned per ₹100 Spent
-              <input
-                type="number"
-                value={tenantCfg.loyaltyEarnPer100}
-                onChange={(e) => setTenantCfg({ ...tenantCfg, loyaltyEarnPer100: e.target.value })}
-                className="num mt-1 h-10 w-full rounded-[8px] border border-line bg-bg px-3 text-sm font-normal"
-              />
-            </label>
-            <label className="block text-[12px] font-semibold">
-              Value of 1 Loyalty Point (₹)
-              <input
-                type="number"
-                step="0.1"
-                value={tenantCfg.loyaltyPointValueRupees}
-                onChange={(e) => setTenantCfg({ ...tenantCfg, loyaltyPointValueRupees: e.target.value })}
-                className="num mt-1 h-10 w-full rounded-[8px] border border-line bg-bg px-3 text-sm font-normal"
-              />
-            </label>
-            <label className="block text-[12px] font-semibold">
-              Min Points Required to Redeem
-              <input
-                type="number"
-                value={tenantCfg.minRedeemPoints}
-                onChange={(e) => setTenantCfg({ ...tenantCfg, minRedeemPoints: e.target.value })}
-                className="num mt-1 h-10 w-full rounded-[8px] border border-line bg-bg px-3 text-sm font-normal"
-              />
-            </label>
+          <div className="grid gap-4 border-t border-line pt-5 sm:grid-cols-2">
             <label className="block text-[12px] font-semibold">
               Default Customer Khata Limit (₹)
               <input
@@ -1978,6 +2096,445 @@ export function SettingsWorkspace({ section = "profile" }: { section?: TenantSet
                 className="num mt-1 h-10 w-full rounded-[8px] border border-line bg-bg px-3 text-sm font-normal"
               />
             </label>
+            <div className="flex items-center justify-between rounded-[10px] border border-indigo-200/80 bg-indigo-50/40 p-3.5">
+              <div>
+                <div className="text-xs font-semibold text-slate-900">Loyalty Points &amp; Customer Rewards</div>
+                <div className="text-[11px] text-slate-500">Manage earning rates, redemption rules, and VIP tiers in dedicated settings</div>
+              </div>
+              <Link
+                href="/settings/loyalty"
+                className="inline-flex h-8 items-center gap-1 rounded-lg bg-[#6c47ff] px-3 text-xs font-semibold text-white hover:bg-[#5b3ae6]"
+              >
+                Configure Loyalty
+              </Link>
+            </div>
+          </div>
+        </form>
+      ) : null}
+
+      {/* 4B. DEDICATED LOYALTY POINTS & REWARDS PROGRAM (/settings/loyalty) */}
+      {activeSection === "loyalty" ? (
+        <form onSubmit={(e) => void saveTenantSettings(e)} className="space-y-6">
+          {/* Live Program Telemetry Cards */}
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+            <div className="rounded-[14px] border border-line bg-surface p-4 shadow-2xs">
+              <div className="flex items-center justify-between">
+                <span className="text-[11px] font-semibold uppercase tracking-wider text-muted">Program Status</span>
+                <span
+                  className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-[11px] font-semibold ${
+                    loyaltyCfg.enabled
+                      ? "bg-emerald-50 text-emerald-700 border border-emerald-200"
+                      : "bg-slate-100 text-slate-600 border border-slate-200"
+                  }`}
+                >
+                  <span className={`h-1.5 w-1.5 rounded-full ${loyaltyCfg.enabled ? "bg-emerald-500" : "bg-slate-400"}`} />
+                  {loyaltyCfg.enabled ? "Active Omnichannel" : "Paused"}
+                </span>
+              </div>
+              <div className="mt-2 text-lg font-bold text-ink">
+                1 Pt / ₹{loyaltyCfg.earnRupeesPerPoint} Spent
+              </div>
+              <div className="mt-0.5 text-[11px] text-muted">
+                1 Point = ₹{(loyaltyCfg.redeemPaisePerPoint / 100).toFixed(2)} redemption value
+              </div>
+            </div>
+
+            <div className="rounded-[14px] border border-line bg-surface p-4 shadow-2xs">
+              <span className="text-[11px] font-semibold uppercase tracking-wider text-muted">Enrolled Members</span>
+              <div className="mt-2 text-2xl font-bold text-ink num">{loyaltyMetrics.enrolledMembers}</div>
+              <div className="mt-0.5 text-[11px] text-muted">Verified POS &amp; Online Storefront profiles</div>
+            </div>
+
+            <div className="rounded-[14px] border border-line bg-surface p-4 shadow-2xs">
+              <span className="text-[11px] font-semibold uppercase tracking-wider text-muted">Active Points Liability</span>
+              <div className="mt-2 text-2xl font-bold text-indigo-600 num">
+                {loyaltyMetrics.activePointsBalance.toLocaleString("en-IN")} pts
+              </div>
+              <div className="mt-0.5 text-[11px] text-muted">
+                Worth ₹{((loyaltyMetrics.activePointsBalance * loyaltyCfg.redeemPaisePerPoint) / 100).toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+              </div>
+            </div>
+
+            <div className="rounded-[14px] border border-line bg-surface p-4 shadow-2xs">
+              <span className="text-[11px] font-semibold uppercase tracking-wider text-muted">Silver / Gold / VIP Members</span>
+              <div className="mt-2 text-2xl font-bold text-emerald-600 num">{loyaltyMetrics.vipMembers}</div>
+              <div className="mt-0.5 text-[11px] text-muted">Customers with 250+ lifetime points</div>
+            </div>
+          </div>
+
+          {/* Master Program Switch & Channel Controls */}
+          <div className="rounded-[14px] border border-line bg-surface p-6 shadow-2xs space-y-6">
+            <div className="flex flex-wrap items-center justify-between gap-4 border-b border-line pb-4">
+              <div className="flex items-center gap-3">
+                <span className="grid h-10 w-10 place-items-center rounded-[10px] bg-indigo-50 text-indigo-600 border border-indigo-100">
+                  <Zap size={18} />
+                </span>
+                <div>
+                  <h2 className="text-[15px] font-semibold text-ink">Omnichannel Loyalty &amp; Rewards Engine</h2>
+                  <p className="text-[12px] text-muted">
+                    Synchronized across POS Counter Billing and Online Storefront Checkout using customer mobile number
+                  </p>
+                </div>
+              </div>
+              <div className="flex items-center gap-3">
+                <label className="inline-flex items-center gap-2.5 rounded-xl border border-line bg-bg px-3.5 py-2 text-xs font-semibold text-ink cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={loyaltyCfg.enabled}
+                    onChange={(e) => setLoyaltyCfg((p) => ({ ...p, enabled: e.target.checked }))}
+                    className="h-4 w-4 rounded accent-[#6c47ff]"
+                  />
+                  <span>Enable Loyalty Program</span>
+                </label>
+                <Button type="submit" variant="primary">
+                  <Save size={15} className="mr-1.5" />
+                  Save Loyalty Settings
+                </Button>
+              </div>
+            </div>
+
+            {/* Channel Enablement Pills */}
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+              <label className="flex items-start justify-between gap-3 rounded-xl border border-line bg-bg/50 p-4 cursor-pointer">
+                <div>
+                  <div className="text-xs font-semibold text-ink">POS Counter Terminal Accrual &amp; Burn</div>
+                  <div className="mt-0.5 text-[11px] text-muted">
+                    Cashiers can view customer balance and redeem points on counter bills
+                  </div>
+                </div>
+                <input
+                  type="checkbox"
+                  checked={loyaltyCfg.posEnabled}
+                  onChange={(e) => setLoyaltyCfg((p) => ({ ...p, posEnabled: e.target.checked }))}
+                  className="mt-0.5 h-4 w-4 rounded accent-[#6c47ff]"
+                />
+              </label>
+
+              <label className="flex items-start justify-between gap-3 rounded-xl border border-line bg-bg/50 p-4 cursor-pointer">
+                <div>
+                  <div className="text-xs font-semibold text-ink">Online Storefront Self-Redemption</div>
+                  <div className="mt-0.5 text-[11px] text-muted">
+                    Signed-in shoppers can apply their available loyalty points during checkout
+                  </div>
+                </div>
+                <input
+                  type="checkbox"
+                  checked={loyaltyCfg.onlineEnabled}
+                  onChange={(e) => setLoyaltyCfg((p) => ({ ...p, onlineEnabled: e.target.checked }))}
+                  className="mt-0.5 h-4 w-4 rounded accent-[#6c47ff]"
+                />
+              </label>
+
+              <label className="flex items-start justify-between gap-3 rounded-xl border border-line bg-bg/50 p-4 cursor-pointer">
+                <div>
+                  <div className="text-xs font-semibold text-ink">Exclude Promo-Discounted Orders</div>
+                  <div className="mt-0.5 text-[11px] text-muted">
+                    Prevent double-discounting when a coupon code is already applied
+                  </div>
+                </div>
+                <input
+                  type="checkbox"
+                  checked={loyaltyCfg.excludeDiscountedItems}
+                  onChange={(e) => setLoyaltyCfg((p) => ({ ...p, excludeDiscountedItems: e.target.checked }))}
+                  className="mt-0.5 h-4 w-4 rounded accent-[#6c47ff]"
+                />
+              </label>
+            </div>
+
+            {/* Earning Rules vs Redemption Rules */}
+            <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
+              {/* Left: Accrual / Earning Rules */}
+              <div className="rounded-xl border border-line bg-bg/30 p-5 space-y-4">
+                <div className="border-b border-line pb-3">
+                  <h3 className="text-sm font-semibold text-ink">1. Points Accrual (Earning) Rules</h3>
+                  <p className="text-[11px] text-muted">Define how customers earn points on completed purchases</p>
+                </div>
+
+                <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                  <div>
+                    <label className="block text-xs font-semibold text-ink">Spend Required per 1 Point (₹)</label>
+                    <input
+                      type="number"
+                      min={1}
+                      value={loyaltyCfg.earnRupeesPerPoint}
+                      onChange={(e) =>
+                        setLoyaltyCfg((p) => ({ ...p, earnRupeesPerPoint: Math.max(1, Number(e.target.value) || 1) }))
+                      }
+                      className="num mt-1.5 h-10 w-full rounded-[8px] border border-line bg-surface px-3 text-sm"
+                    />
+                    <span className="mt-1 block text-[11px] text-muted">
+                      Example: ₹{loyaltyCfg.earnRupeesPerPoint} spent = 1 Loyalty Point
+                    </span>
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-semibold text-ink">Minimum Order Value to Earn (₹)</label>
+                    <input
+                      type="number"
+                      min={0}
+                      value={loyaltyCfg.minOrderToEarnRupees}
+                      onChange={(e) =>
+                        setLoyaltyCfg((p) => ({ ...p, minOrderToEarnRupees: Math.max(0, Number(e.target.value) || 0) }))
+                      }
+                      className="num mt-1.5 h-10 w-full rounded-[8px] border border-line bg-surface px-3 text-sm"
+                    />
+                    <span className="mt-1 block text-[11px] text-muted">
+                      Bills below ₹{loyaltyCfg.minOrderToEarnRupees} do not accrue points
+                    </span>
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-semibold text-ink">New Member Welcome Bonus (Pts)</label>
+                    <input
+                      type="number"
+                      min={0}
+                      value={loyaltyCfg.welcomeBonusPoints}
+                      onChange={(e) =>
+                        setLoyaltyCfg((p) => ({ ...p, welcomeBonusPoints: Math.max(0, Number(e.target.value) || 0) }))
+                      }
+                      className="num mt-1.5 h-10 w-full rounded-[8px] border border-line bg-surface px-3 text-sm"
+                    />
+                    <span className="mt-1 block text-[11px] text-muted">Credited on first verified customer sign-up</span>
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-semibold text-ink">First Online Order Bonus (Pts)</label>
+                    <input
+                      type="number"
+                      min={0}
+                      value={loyaltyCfg.firstOrderBonusPoints}
+                      onChange={(e) =>
+                        setLoyaltyCfg((p) => ({ ...p, firstOrderBonusPoints: Math.max(0, Number(e.target.value) || 0) }))
+                      }
+                      className="num mt-1.5 h-10 w-full rounded-[8px] border border-line bg-surface px-3 text-sm"
+                    />
+                    <span className="mt-1 block text-[11px] text-muted">Extra reward for first storefront checkout</span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Right: Redemption & Valuation Rules */}
+              <div className="rounded-xl border border-line bg-bg/30 p-5 space-y-4">
+                <div className="border-b border-line pb-3">
+                  <h3 className="text-sm font-semibold text-ink">2. Points Redemption &amp; Valuation Rules</h3>
+                  <p className="text-[11px] text-muted">Control point-to-rupee conversion and bill discount ceilings</p>
+                </div>
+
+                <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                  <div>
+                    <label className="block text-xs font-semibold text-ink">Redemption Value per 1 Point (Paise)</label>
+                    <input
+                      type="number"
+                      min={1}
+                      value={loyaltyCfg.redeemPaisePerPoint}
+                      onChange={(e) =>
+                        setLoyaltyCfg((p) => ({ ...p, redeemPaisePerPoint: Math.max(1, Number(e.target.value) || 100) }))
+                      }
+                      className="num mt-1.5 h-10 w-full rounded-[8px] border border-line bg-surface px-3 text-sm"
+                    />
+                    <span className="mt-1 block text-[11px] text-muted">
+                      100 paise = ₹1.00 discount per redeemed point (Currently ₹{(loyaltyCfg.redeemPaisePerPoint / 100).toFixed(2)})
+                    </span>
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-semibold text-ink">Minimum Points Balance to Redeem</label>
+                    <input
+                      type="number"
+                      min={1}
+                      value={loyaltyCfg.minRedeemPoints}
+                      onChange={(e) =>
+                        setLoyaltyCfg((p) => ({ ...p, minRedeemPoints: Math.max(1, Number(e.target.value) || 1) }))
+                      }
+                      className="num mt-1.5 h-10 w-full rounded-[8px] border border-line bg-surface px-3 text-sm"
+                    />
+                    <span className="mt-1 block text-[11px] text-muted">
+                      Customer needs at least {loyaltyCfg.minRedeemPoints} pts to unlock redemption
+                    </span>
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-semibold text-ink">Max Bill Payable via Points (%)</label>
+                    <input
+                      type="number"
+                      min={1}
+                      max={100}
+                      value={loyaltyCfg.maxRedeemPercent}
+                      onChange={(e) =>
+                        setLoyaltyCfg((p) => ({
+                          ...p,
+                          maxRedeemPercent: Math.min(100, Math.max(1, Number(e.target.value) || 50)),
+                        }))
+                      }
+                      className="num mt-1.5 h-10 w-full rounded-[8px] border border-line bg-surface px-3 text-sm"
+                    />
+                    <span className="mt-1 block text-[11px] text-muted">
+                      Up to {loyaltyCfg.maxRedeemPercent}% of cart subtotal can be paid with points
+                    </span>
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-semibold text-ink">Max Discount Cap per Bill (₹)</label>
+                    <input
+                      type="number"
+                      min={10}
+                      value={loyaltyCfg.maxRedeemRupeesCap}
+                      onChange={(e) =>
+                        setLoyaltyCfg((p) => ({ ...p, maxRedeemRupeesCap: Math.max(10, Number(e.target.value) || 500) }))
+                      }
+                      className="num mt-1.5 h-10 w-full rounded-[8px] border border-line bg-surface px-3 text-sm"
+                    />
+                    <span className="mt-1 block text-[11px] text-muted">
+                      Maximum ₹{loyaltyCfg.maxRedeemRupeesCap} loyalty discount per single invoice
+                    </span>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* Membership Tiers Configuration */}
+            <div className="space-y-3 pt-2">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div>
+                  <h3 className="text-sm font-semibold text-ink">3. Customer Loyalty Tiers &amp; Earning Multipliers</h3>
+                  <p className="text-[11px] text-muted">
+                    Customers automatically graduate to higher tiers based on cumulative lifetime points earned
+                  </p>
+                </div>
+                <span className="rounded-full bg-indigo-50 border border-indigo-200 px-3 py-1 text-[11px] font-semibold text-indigo-700">
+                  Auto-Upgraded on POS &amp; Storefront
+                </span>
+              </div>
+
+              <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-4">
+                {loyaltyCfg.tiers.map((tier, idx) => (
+                  <div
+                    key={tier.id}
+                    className="rounded-xl border border-line bg-bg/40 p-4 space-y-3 flex flex-col justify-between"
+                  >
+                    <div className="space-y-2.5">
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs font-bold uppercase tracking-wider text-indigo-600">
+                          Tier {idx + 1}
+                        </span>
+                        <span className="rounded-md bg-emerald-50 border border-emerald-200 px-2 py-0.5 text-[11px] font-bold text-emerald-700">
+                          {tier.multiplier}x Points
+                        </span>
+                      </div>
+                      <div>
+                        <label className="block text-[11px] font-semibold text-muted">Tier Title</label>
+                        <input
+                          type="text"
+                          value={tier.name}
+                          onChange={(e) =>
+                            setLoyaltyCfg((p) => ({
+                              ...p,
+                              tiers: p.tiers.map((t, i) => (i === idx ? { ...t, name: e.target.value } : t)),
+                            }))
+                          }
+                          className="mt-1 h-8 w-full rounded-lg border border-line bg-surface px-2.5 text-xs font-semibold text-ink"
+                        />
+                      </div>
+                      <div className="grid grid-cols-2 gap-2">
+                        <div>
+                          <label className="block text-[10.5px] font-semibold text-muted">Min Lifetime Pts</label>
+                          <input
+                            type="number"
+                            min={0}
+                            value={tier.minLifetimePoints}
+                            onChange={(e) =>
+                              setLoyaltyCfg((p) => ({
+                                ...p,
+                                tiers: p.tiers.map((t, i) =>
+                                  i === idx ? { ...t, minLifetimePoints: Math.max(0, Number(e.target.value) || 0) } : t,
+                                ),
+                              }))
+                            }
+                            className="num mt-1 h-8 w-full rounded-lg border border-line bg-surface px-2 text-xs"
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-[10.5px] font-semibold text-muted">Earn Multiplier</label>
+                          <input
+                            type="number"
+                            step="0.25"
+                            min={1}
+                            max={10}
+                            value={tier.multiplier}
+                            onChange={(e) =>
+                              setLoyaltyCfg((p) => ({
+                                ...p,
+                                tiers: p.tiers.map((t, i) =>
+                                  i === idx ? { ...t, multiplier: Math.max(1, Number(e.target.value) || 1) } : t,
+                                ),
+                              }))
+                            }
+                            className="num mt-1 h-8 w-full rounded-lg border border-line bg-surface px-2 text-xs"
+                          />
+                        </div>
+                      </div>
+                      <div>
+                        <label className="block text-[10.5px] font-semibold text-muted">Member Perks</label>
+                        <input
+                          type="text"
+                          value={tier.perkDescription}
+                          onChange={(e) =>
+                            setLoyaltyCfg((p) => ({
+                              ...p,
+                              tiers: p.tiers.map((t, i) => (i === idx ? { ...t, perkDescription: e.target.value } : t)),
+                            }))
+                          }
+                          className="mt-1 h-8 w-full rounded-lg border border-line bg-surface px-2.5 text-[11px] text-muted"
+                        />
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {/* Interactive Live Rewards Simulator */}
+            <div className="rounded-xl border border-indigo-200/80 bg-indigo-50/40 p-4 flex flex-wrap items-center justify-between gap-4">
+              <div className="space-y-1">
+                <div className="text-xs font-bold uppercase tracking-wider text-indigo-700">
+                  Interactive Bill Accrual &amp; Redemption Simulator
+                </div>
+                <p className="text-xs text-slate-600">
+                  Test how your configured rules apply to a sample customer bill of{" "}
+                  <span className="font-bold text-slate-900">₹{simBillAmount}</span>:
+                </p>
+              </div>
+              <div className="flex flex-wrap items-center gap-4">
+                <div>
+                  <label className="block text-[10.5px] font-semibold text-slate-600">Sample Bill (₹)</label>
+                  <input
+                    type="number"
+                    min={50}
+                    step={50}
+                    value={simBillAmount}
+                    onChange={(e) => setSimBillAmount(Math.max(0, Number(e.target.value) || 0))}
+                    className="num mt-1 h-8 w-28 rounded-lg border border-indigo-200 bg-white px-2.5 text-xs font-bold text-slate-900"
+                  />
+                </div>
+                <div className="rounded-lg bg-white border border-indigo-100 px-3.5 py-2 text-xs">
+                  <span className="text-slate-500 block text-[10px]">Points Earned</span>
+                  <span className="font-bold text-emerald-700">
+                    +{simBillAmount >= loyaltyCfg.minOrderToEarnRupees ? Math.floor(simBillAmount / Math.max(1, loyaltyCfg.earnRupeesPerPoint)) : 0} pts
+                  </span>
+                </div>
+                <div className="rounded-lg bg-white border border-indigo-100 px-3.5 py-2 text-xs">
+                  <span className="text-slate-500 block text-[10px]">Max Redeemable Discount</span>
+                  <span className="font-bold text-indigo-700">
+                    ₹{Math.min(loyaltyCfg.maxRedeemRupeesCap, Math.floor((simBillAmount * loyaltyCfg.maxRedeemPercent) / 100))} (
+                    {Math.floor(
+                      (Math.min(loyaltyCfg.maxRedeemRupeesCap, Math.floor((simBillAmount * loyaltyCfg.maxRedeemPercent) / 100)) * 100) /
+                        Math.max(1, loyaltyCfg.redeemPaisePerPoint),
+                    )}{" "}
+                    pts)
+                  </span>
+                </div>
+              </div>
+            </div>
           </div>
         </form>
       ) : null}

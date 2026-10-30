@@ -4,12 +4,17 @@ namespace App\Modules\Identity\Http\Controllers;
 
 use App\Modules\Identity\Actions\LoginUser;
 use App\Modules\Identity\Models\User;
+use App\Modules\Notifications\SmsGateway;
 use App\Support\ApiResponse;
+use App\Support\PhoneNumber;
+use App\Support\PlatformConfig;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
+use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Facades\RateLimiter;
 use Illuminate\Support\Str;
 use Illuminate\Validation\Rules\Password;
 
@@ -27,9 +32,26 @@ class AuthController
             'email' => ['required', 'email', 'max:180'],
             'password' => ['required', 'string', 'min:8'],
             'phone' => ['nullable', 'string', 'max:20'],
+            'otp' => ['nullable', 'digits:6'],
             'slug' => ['nullable', 'string', 'regex:/^[a-z0-9]+(?:-[a-z0-9]+)*$/', 'max:40'],
             'store_type' => ['nullable', 'string', 'max:60'],
         ]);
+
+        if (! empty($data['otp'])) {
+            $phone = PhoneNumber::digits((string) ($data['phone'] ?? ''));
+            $row = DB::table('phone_otps')
+                ->where('phone', $phone)
+                ->where('purpose', 'register')
+                ->whereNull('verified_at')
+                ->orderByDesc('created_at')
+                ->first();
+            $expected = $row ? hash_hmac('sha256', (string) $data['otp'], (string) config('app.key')) : '';
+            if (! $row || now()->greaterThan($row->expires_at) || ! hash_equals((string) $row->code_hash, $expected)) {
+                return ApiResponse::error('auth.invalid_code', 'That mobile code is not valid.', 422);
+            }
+            DB::table('phone_otps')->where('id', $row->id)->update(['verified_at' => now()]);
+            $data['phone'] = $phone;
+        }
 
         $businessName = trim($data['business_name']);
         $slug = ! empty($data['slug'])
@@ -73,25 +95,46 @@ class AuthController
             ->with('user')
             ->first();
 
+        $primaryStore = $tenant->stores()->first();
+        $primaryCounter = $primaryStore
+            ? DB::table('counters')->where('store_id', $primaryStore->id)->orderBy('code')->first()
+            : null;
+
         if ($ownerProfile && $ownerProfile->user) {
             Auth::login($ownerProfile->user);
             $request->session()->regenerate();
             $request->session()->put('tenant_id', $tenant->id);
-            $primaryStore = $tenant->stores()->first();
             if ($primaryStore) {
                 $request->session()->put('store_id', $primaryStore->id);
+                $request->session()->put('active_store_id', $primaryStore->id);
+            }
+            if ($primaryCounter) {
+                $request->session()->put('active_terminal_id', $primaryCounter->id);
             }
         }
 
-        return ApiResponse::ok([
+        $profile = ($ownerProfile && $ownerProfile->user) ? $this->login->profile($ownerProfile->user) : [];
+
+        return ApiResponse::ok(array_merge($profile, [
+            'store_id' => $tenant->id,
+            'branch_id' => $primaryStore?->id,
+            'terminal_id' => $primaryCounter?->id,
             'tenant' => [
                 'id' => $tenant->id,
+                'store_id' => $tenant->id,
                 'name' => $tenant->name,
                 'slug' => $tenant->slug,
                 'email' => $tenant->email,
             ],
+            'branch' => $primaryStore ? [
+                'id' => $primaryStore->id,
+                'branch_id' => $primaryStore->id,
+                'store_id' => $tenant->id,
+                'name' => $primaryStore->name,
+                'code' => $primaryStore->code,
+            ] : null,
             'message' => 'Workspace created successfully! Welcome to your SelfX retail store.',
-        ], 201);
+        ]), 201);
     }
 
     public function platformLogin(Request $request): JsonResponse
@@ -111,6 +154,9 @@ class AuthController
             'password' => ['required', 'string'],
             'slug' => ['nullable', 'string'],
             'store_id' => ['nullable', 'string'],
+            'branch_id' => ['nullable', 'string'],
+            'terminal_id' => ['nullable', 'string'],
+            'terminal_pin' => ['nullable', 'digits_between:4,6'],
         ]);
 
         return $this->login->staff(
@@ -118,17 +164,44 @@ class AuthController
             $data['password'],
             (string) $request->ip(),
             ! empty($data['slug']) ? strtolower($data['slug']) : null,
-            $data['store_id'] ?? null
+            $data['store_id'] ?? null,
+            $data['branch_id'] ?? null,
+            $data['terminal_id'] ?? null,
+            $data['terminal_pin'] ?? null,
         );
     }
 
     public function switchStore(Request $request): JsonResponse
     {
         $data = $request->validate([
-            'store_id' => ['required', 'string'],
+            'store_id' => ['nullable', 'string'],
+            'branch_id' => ['nullable', 'string'],
+            'terminal_id' => ['nullable', 'string'],
+            'pin' => ['nullable', 'digits_between:4,6'],
         ]);
 
-        return $this->login->switchStore($data['store_id']);
+        $targetId = $data['branch_id'] ?? $data['store_id'] ?? null;
+        if (! $targetId) {
+            return ApiResponse::error('validation.failed', 'Select a branch.', 422);
+        }
+
+        return $this->login->switchStore($targetId, $data['terminal_id'] ?? null, $data['pin'] ?? null);
+    }
+
+    public function selectTerminal(Request $request): JsonResponse
+    {
+        $data = $request->validate([
+            'terminal_id' => ['nullable', 'string'],
+            'counter_id' => ['nullable', 'string'],
+            'pin' => ['nullable', 'digits_between:4,6'],
+        ]);
+
+        $terminalId = $data['terminal_id'] ?? $data['counter_id'] ?? null;
+        if (! $terminalId) {
+            return ApiResponse::error('validation.failed', 'Select a terminal.', 422);
+        }
+
+        return $this->login->selectTerminal($terminalId, $data['pin'] ?? null);
     }
 
     public function challenge(Request $request): JsonResponse
@@ -195,5 +268,208 @@ class AuthController
         ]);
 
         return ApiResponse::ok($this->login->profile($user->fresh()));
+    }
+
+    public function methods(): JsonResponse
+    {
+        $methods = PlatformConfig::authMethods();
+
+        return ApiResponse::ok([
+            'email_password' => $methods['email_password'],
+            'phone_otp' => $methods['phone_otp'],
+            'firebase' => app(SmsGateway::class)->publicFirebase(),
+        ]);
+    }
+
+    public function maps(): JsonResponse
+    {
+        return ApiResponse::ok(['api_key' => PlatformConfig::mapsKey()]);
+    }
+
+    public function requestPhoneOtp(Request $request): JsonResponse
+    {
+        if (! PlatformConfig::authMethods()['phone_otp']) {
+            return ApiResponse::error('auth.method_disabled', 'Mobile sign-in is turned off by the platform.', 403);
+        }
+        $data = $request->validate([
+            'phone' => ['required', 'string', 'max:20'],
+            'purpose' => ['required', 'in:staff,platform,register,customer'],
+            'slug' => ['nullable', 'string', 'max:80'],
+        ]);
+        $phone = PhoneNumber::digits($data['phone']);
+        if (strlen($phone) !== 10) {
+            return ApiResponse::error('validation.failed', 'Enter a 10-digit mobile number.', 422);
+        }
+        if (RateLimiter::tooManyAttempts('phone-otp:'.$phone, 5)) {
+            return ApiResponse::error('auth.locked', 'Too many codes were requested. Wait a few minutes.', 423);
+        }
+        RateLimiter::hit('phone-otp:'.$phone, 600);
+
+        $user = $this->userByPhone($phone, $data['purpose']);
+        if (in_array($data['purpose'], ['staff', 'platform'], true) && ! $user) {
+            return ApiResponse::error('auth.invalid_credentials', 'No account uses that mobile number.', 404);
+        }
+
+        $gateway = app(SmsGateway::class);
+        $active = $gateway->active();
+        if ($active && $active['key'] === 'firebase' && $gateway->credentialsReady('firebase', $active['config'])) {
+            return ApiResponse::ok([
+                'status' => 'firebase',
+                'firebase' => $gateway->publicFirebase(),
+            ]);
+        }
+
+        $code = str_pad((string) random_int(0, 999999), 6, '0', STR_PAD_LEFT);
+        DB::table('phone_otps')->insert([
+            'id' => (string) Str::uuid7(),
+            'phone' => $phone,
+            'purpose' => $data['purpose'],
+            'tenant_id' => $user ? $this->tenantIdFor($user) : null,
+            'code_hash' => hash_hmac('sha256', $code, (string) config('app.key')),
+            'attempts' => 0,
+            'expires_at' => now()->addMinutes(10),
+            'created_at' => now(),
+        ]);
+        $sent = $gateway->send($phone, 'Your SelfX sign-in code is '.$code.'. It expires in 10 minutes.');
+        $payload = ['status' => $sent['status']];
+        if (app()->environment('local', 'testing') && in_array($sent['status'], ['not_configured', 'logged'], true)) {
+            $payload['code'] = $code;
+        }
+        if ($sent['status'] === 'failed') {
+            return ApiResponse::error('sms.failed', $sent['detail'], 502);
+        }
+
+        return ApiResponse::ok($payload);
+    }
+
+    public function verifyPhoneOtp(Request $request): JsonResponse
+    {
+        if (! PlatformConfig::authMethods()['phone_otp']) {
+            return ApiResponse::error('auth.method_disabled', 'Mobile sign-in is turned off by the platform.', 403);
+        }
+        $data = $request->validate([
+            'phone' => ['required', 'string', 'max:20'],
+            'code' => ['required', 'digits:6'],
+            'purpose' => ['required', 'in:staff,platform,register,customer'],
+            'slug' => ['nullable', 'string', 'max:80'],
+            'store_id' => ['nullable', 'string'],
+            'branch_id' => ['nullable', 'string'],
+            'terminal_id' => ['nullable', 'string'],
+            'terminal_pin' => ['nullable', 'digits_between:4,6'],
+        ]);
+        $phone = PhoneNumber::digits($data['phone']);
+        $row = $this->latestOtp($phone, $data['purpose']);
+        if (! $row || ! $this->otpMatches($row, $data['code'])) {
+            return ApiResponse::error('auth.invalid_code', 'That code is not valid.', 422);
+        }
+        DB::table('phone_otps')->where('id', $row->id)->update(['verified_at' => now()]);
+        if ($data['purpose'] === 'register' || $data['purpose'] === 'customer') {
+            return ApiResponse::ok(['verified' => true]);
+        }
+        $user = $this->userByPhone($phone, $data['purpose']);
+        if (! $user) {
+            return ApiResponse::error('auth.invalid_credentials', 'No account uses that mobile number.', 404);
+        }
+
+        return $this->login->loginVerified(
+            $user,
+            (string) $request->ip(),
+            $data['slug'] ?? null,
+            $data['store_id'] ?? null,
+            $data['branch_id'] ?? null,
+            $data['terminal_id'] ?? null,
+            $data['terminal_pin'] ?? null,
+        );
+    }
+
+    public function firebasePhone(Request $request): JsonResponse
+    {
+        if (! PlatformConfig::authMethods()['phone_otp']) {
+            return ApiResponse::error('auth.method_disabled', 'Mobile sign-in is turned off by the platform.', 403);
+        }
+        $data = $request->validate([
+            'id_token' => ['required', 'string', 'max:4000'],
+            'purpose' => ['required', 'in:staff,platform,register,customer'],
+            'slug' => ['nullable', 'string', 'max:80'],
+            'store_id' => ['nullable', 'string'],
+            'branch_id' => ['nullable', 'string'],
+            'terminal_id' => ['nullable', 'string'],
+            'terminal_pin' => ['nullable', 'digits_between:4,6'],
+        ]);
+        $firebase = app(SmsGateway::class)->publicFirebase();
+        if (empty($firebase['active'])) {
+            return ApiResponse::error('sms.not_configured', 'Firebase Phone Auth is not the active provider.', 422);
+        }
+        $lookup = Http::timeout(12)->post(
+            'https://identitytoolkit.googleapis.com/v1/accounts:lookup?key='.urlencode((string) $firebase['api_key']),
+            ['idToken' => $data['id_token']],
+        );
+        $phone = PhoneNumber::digits((string) $lookup->json('users.0.phoneNumber'));
+        if (! $lookup->successful() || strlen($phone) !== 10) {
+            return ApiResponse::error('auth.invalid_code', 'That Firebase sign-in could not be checked.', 401);
+        }
+        if ($data['purpose'] === 'register' || $data['purpose'] === 'customer') {
+            return ApiResponse::ok(['verified' => true, 'phone' => $phone]);
+        }
+        $user = $this->userByPhone($phone, $data['purpose']);
+        if (! $user) {
+            return ApiResponse::error('auth.invalid_credentials', 'No account uses that mobile number.', 404);
+        }
+
+        return $this->login->loginVerified(
+            $user,
+            (string) $request->ip(),
+            $data['slug'] ?? null,
+            $data['store_id'] ?? null,
+            $data['branch_id'] ?? null,
+            $data['terminal_id'] ?? null,
+            $data['terminal_pin'] ?? null,
+        );
+    }
+
+    private function userByPhone(string $phone, string $purpose): ?User
+    {
+        if (! in_array($purpose, ['staff', 'platform'], true)) {
+            return null;
+        }
+        $kind = $purpose === 'platform' ? 'platform' : 'staff';
+
+        return User::query()
+            ->where('kind', $kind)
+            ->where('status', 'active')
+            ->get()
+            ->first(fn (User $user) => PhoneNumber::digits((string) $user->phone_e164) === $phone);
+    }
+
+    private function tenantIdFor(User $user): ?string
+    {
+        $tenantId = DB::table('staff_profiles')->where('user_id', $user->id)->value('tenant_id');
+
+        return $tenantId ? (string) $tenantId : null;
+    }
+
+    private function latestOtp(string $phone, string $purpose): ?object
+    {
+        return DB::table('phone_otps')
+            ->where('phone', $phone)
+            ->where('purpose', $purpose)
+            ->whereNull('verified_at')
+            ->orderByDesc('created_at')
+            ->first();
+    }
+
+    private function otpMatches(object $row, string $code): bool
+    {
+        if (now()->greaterThan($row->expires_at) || (int) $row->attempts >= 5) {
+            return false;
+        }
+        $expected = hash_hmac('sha256', $code, (string) config('app.key'));
+        if (! hash_equals((string) $row->code_hash, $expected)) {
+            DB::table('phone_otps')->where('id', $row->id)->update(['attempts' => (int) $row->attempts + 1]);
+
+            return false;
+        }
+
+        return true;
     }
 }

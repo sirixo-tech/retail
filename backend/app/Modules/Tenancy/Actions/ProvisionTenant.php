@@ -86,6 +86,7 @@ class ProvisionTenant
             'kind' => 'staff',
             'name' => $ownerName,
             'email' => $ownerEmail,
+            'phone_e164' => $tenant->phone_e164,
             'password' => $password ?? Str::password(20),
             'must_change_password' => true,
             'status' => 'active',

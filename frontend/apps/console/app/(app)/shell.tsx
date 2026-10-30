@@ -14,6 +14,7 @@ import {
   MapPin,
   Monitor,
   Printer,
+  Plug,
   QrCode,
   RefreshCw,
   Server,
@@ -21,14 +22,17 @@ import {
   ShieldCheck,
   ShoppingBag,
   Store,
+  Tablet,
   Tag,
   Truck,
   Users,
   Wallet,
   Download,
+  Megaphone,
+  Cpu,
 } from "lucide-react";
 import { usePathname } from "next/navigation";
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { TenantAiAssistantWidget } from "./ai-assistant-widget";
 
 const groups: NavGroup[] = [
@@ -64,8 +68,9 @@ const groups: NavGroup[] = [
         children: [
           { href: "/store", label: "Visit Online Store" },
           { href: "/online-store/settings", label: "Settings" },
-          { href: "/online-store/payments", label: "Payment Gateway" },
+          { href: "/online-store/loyalty", label: "Loyalty Points" },
           { href: "/online-store/orders", label: "Online Orders" },
+          { href: "/online-store/coupons", label: "Coupons & Discounts" },
           { href: "/online-store/collections", label: "Collections" },
           { href: "/online-store/banners", label: "Banners" },
           { href: "/online-store/subscribers", label: "Subscribers" },
@@ -76,6 +81,21 @@ const groups: NavGroup[] = [
           { href: "/online-store/registered-customers", label: "Customers with Login" },
           { href: "/online-store/shipping", label: "Shipping Methods" },
           { href: "/online-store/taxes", label: "Tax Rates" },
+        ],
+      },
+      {
+        href: "/marketing",
+        label: "Marketing",
+        icon: Megaphone,
+        children: [
+          { href: "/marketing", label: "Dashboard" },
+          { href: "/marketing/campaigns", label: "Campaigns" },
+          { href: "/marketing/segments", label: "Customer Segments" },
+          { href: "/marketing/sms-templates", label: "SMS Templates" },
+          { href: "/marketing/whatsapp-templates", label: "WhatsApp Templates" },
+          { href: "/marketing/email-templates", label: "Email Templates" },
+          { href: "/marketing/reports", label: "Reports" },
+          { href: "/marketing/settings", label: "Marketing Settings" },
         ],
       },
     ],
@@ -90,11 +110,27 @@ const groups: NavGroup[] = [
   {
     label: "Devices & channels",
     items: [
+      { href: "/hardware-store", label: "SelfX Hardware Store", icon: Cpu },
       { href: "/pos-terminals", label: "POS terminals", icon: Monitor },
+      { href: "/kiosks", label: "Self-Ordering Kiosks", icon: Tablet },
       { href: "/apps", label: "Apps & Downloads", icon: Download },
       { href: "/qr-builder", label: "QR Builder", icon: QrCode },
       { href: "/printer-setup", label: "Printer Setup", icon: Printer },
       { href: "/barcode-generator", label: "Barcode Generator", icon: QrCode },
+      {
+        href: "/integrations",
+        label: "Integrations",
+        icon: Plug,
+        children: [
+          { href: "/integrations", label: "All Integrations" },
+          { href: "/integrations/woocommerce", label: "WooCommerce" },
+          { href: "/integrations/shopify", label: "Shopify" },
+          { href: "/integrations/telegram", label: "Telegram" },
+          { href: "/integrations/whatsapp", label: "WhatsApp Business" },
+          { href: "/integrations/webhooks", label: "Webhooks" },
+          { href: "/integrations/google_sheets", label: "Google Sheets" },
+        ],
+      },
     ],
   },
   {
@@ -115,6 +151,7 @@ const groups: NavGroup[] = [
         label: "Reports",
         icon: BarChart3,
         children: [
+          { href: "/reports?tab=users", label: "Users Report" },
           { href: "/reports?tab=sales", label: "Sales Summary" },
           { href: "/reports?tab=products", label: "Product-Wise Sales" },
           { href: "/reports?tab=profit", label: "Profit & Margin" },
@@ -147,6 +184,7 @@ const groups: NavGroup[] = [
           { href: "/settings/pos", label: "POS & Terminal" },
           { href: "/settings/taxes", label: "GST & Tax Slabs" },
           { href: "/settings/receipt", label: "Receipt & Invoice" },
+          { href: "/settings/loyalty", label: "Loyalty Points" },
           { href: "/settings/hours", label: "Business Hours" },
           { href: "/settings/gateways", label: "Payment Gateways" },
           { href: "/settings/theme", label: "Theme & Appearance" },
@@ -200,11 +238,65 @@ function formatInrPaise(paise: number): string {
   return `₹${rupees.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 }
 
+const ROUTE_PERMISSIONS: Record<string, string[]> = {
+  "/": ["*"],
+  "/orders": ["orders.manage", "orders.view"],
+  "/delivery": ["orders.delivery", "orders.manage"],
+  "/customers": ["customers.view", "customers.khata", "customers.edit"],
+  "/products": ["catalog.view", "catalog.manage", "products.view", "products.create"],
+  "/online-store": ["storefront.manage", "settings.manage"],
+  "/marketing": ["settings.manage", "storefront.manage", "*"],
+  "/hardware-store": ["settings.manage", "*"],
+  "/inventory": ["inventory.view", "inventory.adjust", "inventory.manage"],
+  "/purchases": ["purchases.manage", "purchases.view"],
+  "/pos-terminals": ["settings.manage", "pos.shift", "pos.access"],
+  "/kiosks": ["settings.manage", "kiosk.manage"],
+  "/apps": ["*"],
+  "/qr-builder": ["catalog.view", "settings.manage"],
+  "/printer-setup": ["settings.manage", "pos.access"],
+  "/barcode-generator": ["catalog.view", "catalog.manage"],
+  "/integrations": ["settings.manage"],
+  "/branches": ["settings.manage"],
+  "/staff": ["staff.manage"],
+  "/attendance": ["*"],
+  "/reports": ["reports.view", "reports.sales"],
+  "/notifications": ["*"],
+  "/coupons": ["catalog.manage", "settings.manage"],
+  "/online-store/coupons": ["catalog.manage", "settings.manage", "storefront.manage"],
+  "/billing": ["settings.manage"],
+  "/settings": ["settings.manage"],
+};
+
+function canAccessRoute(href: string, perms: string[], isOwner: boolean): boolean {
+  if (isOwner || perms.includes("*")) return true;
+  const cleanPath = href.split("?")[0];
+  const matchedRoute = Object.keys(ROUTE_PERMISSIONS).find(
+    (k) => k !== "/" && (cleanPath === k || cleanPath.startsWith(k + "/")),
+  );
+  if (!matchedRoute) {
+    if (cleanPath === "/") return true;
+    return true;
+  }
+  const required = ROUTE_PERMISSIONS[matchedRoute];
+  if (!required || required.includes("*")) return true;
+  return required.some((req) => perms.includes(req));
+}
+
 export function ConsoleShell({ children }: { children: ReactNode }) {
   const pathname = usePathname();
   const [brand, setBrand] = useState("Store");
   const [storeSlug, setStoreSlug] = useState<string | null>(null);
-  const [user, setUser] = useState({ name: "Staff", role: "Staff" });
+  const [user, setUser] = useState<{
+    name: string;
+    role: string;
+    permissions: string[];
+    isOwner: boolean;
+  }>({
+    name: "Staff",
+    role: "Staff",
+    permissions: [],
+    isOwner: true,
+  });
   const [viewing, setViewing] = useState<string | null>(null);
   const [features, setFeatures] = useState<Record<string, boolean>>({});
   const [summaryOpen, setSummaryOpen] = useState(false);
@@ -261,6 +353,8 @@ export function ConsoleShell({ children }: { children: ReactNode }) {
           data?: {
             name?: string;
             role?: string | null;
+            permissions?: string[];
+            is_super_admin?: boolean;
             tenant?: { slug?: string; name?: string; kind?: string };
             store?: { id: string; name: string; code: string; slug?: string };
             stores?: { id: string; name: string; code: string; is_default?: boolean }[];
@@ -269,11 +363,25 @@ export function ConsoleShell({ children }: { children: ReactNode }) {
         };
 
         const isOrg = body.data?.tenant?.kind === "organization";
+        const perms = body.data?.permissions ?? [];
+        const rawRole = body.data?.role ?? (isOrg ? "Organization Owner" : "Staff");
+        const isOwner =
+          rawRole?.toLowerCase() === "owner" ||
+          rawRole?.toLowerCase() === "platform" ||
+          rawRole?.toLowerCase() === "organization owner" ||
+          perms.includes("*") ||
+          body.data?.is_super_admin === true;
+
         setIsOrganization(isOrg);
         setOrgSlug(body.data?.tenant?.slug ?? null);
         setBrand(body.data?.tenant?.name ?? body.data?.store?.name ?? "Store");
         setStoreSlug(body.data?.store?.slug ?? body.data?.tenant?.slug ?? null);
-        setUser({ name: body.data?.name ?? "Staff", role: body.data?.role ?? (isOrg ? "Organization Owner" : "Staff") });
+        setUser({
+          name: body.data?.name ?? "Staff",
+          role: rawRole,
+          permissions: perms,
+          isOwner,
+        });
         setViewing(body.data?.impersonation?.tenant_name ?? null);
         if (body.data?.store) {
           setCurrentStore({ id: body.data.store.id, name: body.data.store.name, code: body.data.store.code });
@@ -549,21 +657,39 @@ export function ConsoleShell({ children }: { children: ReactNode }) {
       groups={
         isOrganization
           ? organizationNavGroups
-          : groups.map((group) => ({
-              ...group,
-              items: group.items
-                .filter((item) => item.href !== "/customers" || features["module.customers"] !== false)
-                .map((item) =>
-                  item.href === "/online-store" && item.children
-                    ? {
-                        ...item,
-                        children: item.children.map((child) =>
-                          child.label === "Visit Online Store" ? { ...child, href: visitStoreHref } : child,
-                        ),
-                      }
-                    : item,
-                ),
-            }))
+          : groups
+              .map((group) => ({
+                ...group,
+                items: group.items
+                  .filter((item) => {
+                    if (item.href === "/customers" && features["module.customers"] === false) return false;
+                    return canAccessRoute(item.href, user.permissions, user.isOwner);
+                  })
+                  .map((item) => {
+                    const withDynamicHrefs =
+                      item.href === "/online-store" && item.children
+                        ? {
+                            ...item,
+                            children: item.children.map((child) =>
+                              child.label === "Visit Online Store" ? { ...child, href: visitStoreHref } : child,
+                            ),
+                          }
+                        : item;
+
+                    if (withDynamicHrefs.children) {
+                      const allowedChildren = withDynamicHrefs.children.filter((child) =>
+                        canAccessRoute(child.href, user.permissions, user.isOwner),
+                      );
+                      return {
+                        ...withDynamicHrefs,
+                        children: allowedChildren.length > 0 ? allowedChildren : undefined,
+                      };
+                    }
+
+                    return withDynamicHrefs;
+                  }),
+              }))
+              .filter((group) => group.items.length > 0)
       }
       pathname={pathname}
       user={user}
@@ -646,12 +772,17 @@ export function ConsoleShell({ children }: { children: ReactNode }) {
               ) : null}
             </div>
 
-            <a
-              href="/pos"
-              className="inline-flex h-9 items-center gap-1.5 rounded-[8px] bg-accent px-3.5 text-[13px] font-semibold text-accent-ink shadow-2xs transition hover:opacity-95"
-            >
-              POS
-            </a>
+            {(user.isOwner ||
+              user.permissions.includes("pos.sell") ||
+              user.permissions.includes("pos.access") ||
+              user.permissions.includes("*")) && (
+              <a
+                href="/pos"
+                className="inline-flex h-9 items-center gap-1.5 rounded-[8px] bg-accent px-3.5 text-[13px] font-semibold text-accent-ink shadow-2xs transition hover:opacity-95"
+              >
+                POS
+              </a>
+            )}
 
             {/* Today's Summary Trigger Button in Top Header (Matches Image 1 & 2) */}
             <button
@@ -717,7 +848,38 @@ export function ConsoleShell({ children }: { children: ReactNode }) {
           </div>
         )
       ) : null}
-      {children}
+      {authState === "authenticated" && !canAccessRoute(pathname, user.permissions, user.isOwner) ? (
+        <div className="flex min-h-[50vh] flex-col items-center justify-center p-6 text-center">
+          <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-amber-500/10 text-amber-600 mb-4 border border-amber-500/20">
+            <ShieldCheck className="h-7 w-7" />
+          </div>
+          <h2 className="text-lg font-bold text-ink mb-1">Access Restricted</h2>
+          <p className="max-w-md text-xs text-muted mb-6">
+            Your assigned role (<span className="font-semibold text-ink capitalize">{user.role}</span>) does not have permission to view this module. Please contact your store administrator to adjust role privileges in <span className="font-mono text-[11px]">Team &gt; Staff</span>.
+          </p>
+          <div className="flex items-center gap-2">
+            <a
+              href="/"
+              className="inline-flex h-9 items-center justify-center rounded-[8px] border border-line bg-surface px-4 text-xs font-semibold text-ink shadow-2xs hover:bg-bg"
+            >
+              Return to Dashboard
+            </a>
+            {(user.isOwner ||
+              user.permissions.includes("pos.sell") ||
+              user.permissions.includes("pos.access") ||
+              user.permissions.includes("*")) && (
+              <a
+                href="/pos"
+                className="inline-flex h-9 items-center justify-center rounded-[8px] bg-accent px-4 text-xs font-semibold text-accent-ink shadow-2xs hover:opacity-95"
+              >
+                Open POS Register
+              </a>
+            )}
+          </div>
+        </div>
+      ) : (
+        children
+      )}
 
       {/* TODAY'S SUMMARY SLIDE-OVER DRAWER (Matches Image 2 Day Ledger UI) */}
       {summaryOpen ? (

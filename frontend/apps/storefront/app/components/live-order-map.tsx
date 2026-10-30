@@ -33,6 +33,7 @@ export interface LiveOrderMapProps {
   brandPrimaryColor?: string;
   heightClass?: string;
   showDetails?: boolean;
+  allowWhatsapp?: boolean;
 }
 
 // Calculate straight-line distance in km via Haversine formula
@@ -68,6 +69,7 @@ export function LiveOrderMap({
   brandPrimaryColor = "#0c831f",
   heightClass = "h-72 sm:h-80",
   showDetails = true,
+  allowWhatsapp = false,
 }: LiveOrderMapProps) {
   const mapRef = useRef<HTMLDivElement>(null);
   const [googleMapLoaded, setGoogleMapLoaded] = useState(false);
@@ -365,7 +367,7 @@ export function LiveOrderMap({
               </div>
             </div>
 
-            {deliveryStaffPhone && (
+            {deliveryStaffPhone && allowWhatsapp && (
               <div className="flex items-center gap-2">
                 <a
                   href={`tel:${deliveryStaffPhone}`}

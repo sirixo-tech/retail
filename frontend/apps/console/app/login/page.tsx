@@ -16,17 +16,36 @@ import {
   Phone,
   ShoppingBag,
   CheckCircle2,
+  Monitor,
+  Tablet,
+  KeyRound,
 } from "lucide-react";
 import { useState, useEffect, type FormEvent } from "react";
 
+type TerminalOption = {
+  id: string;
+  terminal_id?: string;
+  branch_id?: string;
+  store_id?: string;
+  name: string;
+  code: string;
+  kind?: "pos" | "kiosk" | string;
+  status?: string;
+  is_paired?: boolean;
+  has_pin?: boolean;
+};
+
 type BranchOption = {
   id: string;
+  branch_id?: string;
+  store_id?: string;
   name: string;
   code: string;
   public_slug?: string;
   city?: string;
   address?: string;
   is_default?: boolean;
+  terminals?: TerminalOption[];
 };
 
 export default function LoginPage() {
@@ -37,6 +56,7 @@ export default function LoginPage() {
   const [passwordValue, setPasswordValue] = useState("");
   const [showDirectSlug, setShowDirectSlug] = useState(false);
   const [slugValue, setSlugValue] = useState("");
+  const [branchIdValue, setBranchIdValue] = useState("");
 
   useEffect(() => {
     // Invalidate any stale service worker caches on login mount
@@ -65,11 +85,16 @@ export default function LoginPage() {
     };
   }, []);
 
-  // Step 2 State for Branch / Location Selection
+  // Step 2 & Step 3 State for Branch (branch_id) & Terminal (terminal_id + PIN) Selection
   const [branches, setBranches] = useState<BranchOption[]>([]);
   const [selectedBranchId, setSelectedBranchId] = useState<string | null>(null);
+  const [activeBranchForTerminals, setActiveBranchForTerminals] = useState<BranchOption | null>(null);
+  const [terminals, setTerminals] = useState<TerminalOption[]>([]);
+  const [selectedTerminal, setSelectedTerminal] = useState<TerminalOption | null>(null);
+  const [terminalPinInput, setTerminalPinInput] = useState("");
   const [switchingBranch, setSwitchingBranch] = useState(false);
   const [userName, setUserName] = useState<string | null>(null);
+  const [activeStoreIdDisplay, setActiveStoreIdDisplay] = useState<string | null>(null);
 
   // Tab Mode & Registration State
   const [mode, setMode] = useState<"signin" | "register">("signin");
@@ -82,6 +107,26 @@ export default function LoginPage() {
   const [regPassword, setRegPassword] = useState("");
   const [storeType, setStoreType] = useState("Supermarket & Grocery");
   const [regSubmitting, setRegSubmitting] = useState(false);
+  const [methods, setMethods] = useState({ email_password: true, phone_otp: true });
+  const [signMethod, setSignMethod] = useState<"email" | "phone">("email");
+  const [loginPhone, setLoginPhone] = useState("");
+  const [loginOtp, setLoginOtp] = useState("");
+  const [loginOtpSent, setLoginOtpSent] = useState(false);
+  const [devCode, setDevCode] = useState<string | null>(null);
+  const [regOtp, setRegOtp] = useState("");
+
+  useEffect(() => {
+    fetch("/api/v1/public/auth/methods", { headers: { Accept: "application/json" } })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((body: { data?: { email_password?: boolean; phone_otp?: boolean } } | null) => {
+        if (!body?.data) return;
+        const emailOn = body.data.email_password !== false;
+        const phoneOn = body.data.phone_otp !== false;
+        setMethods({ email_password: emailOn, phone_otp: phoneOn });
+        if (!emailOn && phoneOn) setSignMethod("phone");
+      })
+      .catch(() => {});
+  }, []);
 
   function handleBusinessNameChange(name: string) {
     setBusinessName(name);
@@ -123,6 +168,7 @@ export default function LoginPage() {
           owner_name: ownerName,
           email: regEmail,
           phone: phone || undefined,
+          otp: regOtp || undefined,
           password: regPassword,
           store_type: storeType,
         }),
@@ -170,6 +216,8 @@ export default function LoginPage() {
         body: JSON.stringify({
           email: emailValue,
           password: passwordValue,
+          store_id: slugValue ? slugValue.trim() : undefined,
+          branch_id: branchIdValue ? branchIdValue.trim() : undefined,
           slug: slugValue ? slugValue.trim() : undefined,
         }),
       });
@@ -182,9 +230,14 @@ export default function LoginPage() {
       const body = (await response.json()) as {
         data?: {
           kind?: string;
+          name?: string;
+          store_id?: string;
+          branch_id?: string;
           require_branch_selection?: boolean;
           branches?: BranchOption[];
-          profile?: { name?: string; kind?: string };
+          stores?: BranchOption[];
+          terminals?: TerminalOption[];
+          profile?: { name?: string; kind?: string; branches?: BranchOption[]; stores?: BranchOption[] };
         };
       };
 
@@ -192,7 +245,7 @@ export default function LoginPage() {
       if (userKind === "platform") {
         const isLocal = window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1";
         const adminUrl = isLocal
-          ? `${window.location.protocol}//${window.location.hostname}:3001/`
+          ? `${window.location.protocol}//${window.location.hostname}:3001/superadmin/`
           : window.location.origin.includes("app.")
             ? window.location.origin.replace("app.", "admin.") + "/"
             : "/superadmin/";
@@ -200,9 +253,17 @@ export default function LoginPage() {
         return;
       }
 
-      if (body.data?.require_branch_selection && body.data.branches && body.data.branches.length > 1) {
-        setBranches(body.data.branches);
-        setUserName(body.data.profile?.name ?? "Retailer");
+      const returnedBranches =
+        body.data?.branches ??
+        body.data?.stores ??
+        body.data?.profile?.branches ??
+        body.data?.profile?.stores ??
+        [];
+
+      if (returnedBranches.length > 0) {
+        setBranches(returnedBranches);
+        setUserName(body.data?.name ?? body.data?.profile?.name ?? "Retailer");
+        setActiveStoreIdDisplay(body.data?.store_id ?? returnedBranches[0]?.store_id ?? null);
         return;
       }
 
@@ -217,6 +278,7 @@ export default function LoginPage() {
   async function handleSelectBranch(branch: BranchOption) {
     setSelectedBranchId(branch.id);
     setSwitchingBranch(true);
+    setError(null);
 
     try {
       const token = decodeURIComponent(
@@ -226,7 +288,7 @@ export default function LoginPage() {
           ?.slice("XSRF-TOKEN=".length) ?? "",
       );
 
-      await fetch("/api/v1/auth/switch-store", {
+      const res = await fetch("/api/v1/auth/select-branch", {
         method: "POST",
         credentials: "include",
         headers: {
@@ -234,14 +296,137 @@ export default function LoginPage() {
           "Content-Type": "application/json",
           "X-XSRF-TOKEN": token,
         },
-        body: JSON.stringify({ store_id: branch.id }),
+        body: JSON.stringify({
+          store_id: branch.store_id ?? branch.id,
+          branch_id: branch.branch_id ?? branch.id,
+        }),
       });
 
-      window.location.href = "/";
+      const body = (await res.json()) as { data?: { terminals?: TerminalOption[] } };
+      const branchTerminals = body.data?.terminals ?? branch.terminals ?? [];
+      setActiveBranchForTerminals(branch);
+      setTerminals(branchTerminals);
+      setSelectedTerminal(null);
+      setTerminalPinInput("");
     } catch {
-      window.location.href = "/";
+      setActiveBranchForTerminals(branch);
+      setTerminals(branch.terminals ?? []);
     } finally {
       setSwitchingBranch(false);
+    }
+  }
+
+  async function handleSelectTerminal(terminal: TerminalOption, pin?: string) {
+    if (terminal.has_pin && !pin) {
+      setSelectedTerminal(terminal);
+      setTerminalPinInput("");
+      setError(null);
+      return;
+    }
+
+    setSwitchingBranch(true);
+    setError(null);
+    try {
+      const token = decodeURIComponent(
+        document.cookie
+          .split("; ")
+          .find((row) => row.startsWith("XSRF-TOKEN="))
+          ?.slice("XSRF-TOKEN=".length) ?? "",
+      );
+
+      const res = await fetch("/api/v1/auth/select-terminal", {
+        method: "POST",
+        credentials: "include",
+        headers: {
+          Accept: "application/json",
+          "Content-Type": "application/json",
+          "X-XSRF-TOKEN": token,
+        },
+        body: JSON.stringify({
+          terminal_id: terminal.id,
+          pin: pin || undefined,
+        }),
+      });
+
+      const body = await res.json();
+      if (!res.ok) {
+        setError(body?.error?.message ?? "Invalid terminal PIN.");
+        return;
+      }
+
+      if (terminal.kind === "kiosk") {
+        window.location.href = "/kiosks";
+      } else {
+        window.location.href = "/pos";
+      }
+    } catch {
+      setError("Could not verify terminal.");
+    } finally {
+      setSwitchingBranch(false);
+    }
+  }
+
+  async function sendLoginCode(event: FormEvent) {
+    event.preventDefault();
+    setError(null);
+    setLoading(true);
+    setDevCode(null);
+    try {
+      const response = await fetch("/api/v1/auth/phone/request", {
+        method: "POST",
+        credentials: "include",
+        headers: { Accept: "application/json", "Content-Type": "application/json" },
+        body: JSON.stringify({ phone: loginPhone, purpose: "staff", slug: slugValue || undefined }),
+      });
+      const body = await response.json();
+      if (!response.ok) {
+        setError(body?.error?.message ?? "The code could not be sent.");
+        return;
+      }
+      setLoginOtpSent(true);
+      setDevCode(body?.data?.code ?? null);
+    } catch {
+      setError("Unable to connect to the login server.");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function verifyLoginCode(event: FormEvent) {
+    event.preventDefault();
+    setError(null);
+    setLoading(true);
+    try {
+      const response = await fetch("/api/v1/auth/phone/verify", {
+        method: "POST",
+        credentials: "include",
+        headers: { Accept: "application/json", "Content-Type": "application/json" },
+        body: JSON.stringify({
+          phone: loginPhone,
+          code: loginOtp,
+          purpose: "staff",
+          store_id: slugValue ? slugValue.trim() : undefined,
+          branch_id: branchIdValue ? branchIdValue.trim() : undefined,
+          slug: slugValue ? slugValue.trim() : undefined,
+        }),
+      });
+      const body = await response.json();
+      if (!response.ok) {
+        setError(body?.error?.message ?? "That code is not valid.");
+        return;
+      }
+      const returnedBranches = body.data?.branches ?? body.data?.stores ?? body.data?.profile?.branches ?? [];
+      if (returnedBranches.length > 0) {
+        setBranches(returnedBranches);
+        setUserName(body.data?.name ?? body.data?.profile?.name ?? "Retailer");
+        setActiveStoreIdDisplay(body.data?.store_id ?? returnedBranches[0]?.store_id ?? null);
+        return;
+      }
+      window.location.href = "/";
+    } catch {
+      setError("Unable to connect to the login server.");
+    } finally {
+      setLoading(false);
     }
   }
 
@@ -285,17 +470,163 @@ export default function LoginPage() {
           </div>
 
           <div className="rounded-2xl border border-slate-200 bg-white p-8 shadow-xs">
-            {/* Step 2: Branch Selection */}
-            {branches.length > 0 ? (
+            {/* Step 3: Terminal Selection (POS Counter / Kiosk / Console) + PIN Verification */}
+            {activeBranchForTerminals ? (
+              <div className="space-y-4">
+                <div>
+                  <div className="inline-flex size-9 items-center justify-center rounded-xl bg-purple-100 text-purple-700 mb-3">
+                    <Monitor size={18} />
+                  </div>
+                  <h1 className="text-xl font-semibold tracking-tight text-slate-900">Select Terminal</h1>
+                  <p className="mt-1 text-xs text-slate-500">
+                    Branch <span className="font-semibold text-slate-800">{activeBranchForTerminals.name}</span>{" "}
+                    <span className="font-mono text-[10px] text-slate-400">
+                      (Branch ID: {(activeBranchForTerminals.branch_id ?? activeBranchForTerminals.id).slice(0, 12)}…)
+                    </span>
+                  </p>
+                </div>
+
+                {error ? (
+                  <div className="rounded-xl border border-red-200 bg-red-50 p-3 text-xs font-semibold text-red-700">
+                    {error}
+                  </div>
+                ) : null}
+
+                {selectedTerminal ? (
+                  <div className="rounded-xl border border-purple-200 bg-purple-50/40 p-4 space-y-3">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <KeyRound size={15} className="text-purple-700" />
+                        <span className="text-xs font-semibold text-slate-900">
+                          Enter PIN for {selectedTerminal.name} ({selectedTerminal.code})
+                        </span>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setSelectedTerminal(null);
+                          setError(null);
+                        }}
+                        className="text-[11px] font-semibold text-slate-500 hover:text-slate-800"
+                      >
+                        Change terminal
+                      </button>
+                    </div>
+                    <input
+                      type="password"
+                      inputMode="numeric"
+                      maxLength={6}
+                      value={terminalPinInput}
+                      onChange={(e) => setTerminalPinInput(e.target.value.replace(/\D/g, "").slice(0, 6))}
+                      placeholder="4 to 6 digit Terminal PIN"
+                      className="num h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-center font-mono text-base tracking-widest text-slate-900"
+                    />
+                    <button
+                      type="button"
+                      disabled={switchingBranch || terminalPinInput.length < 4}
+                      onClick={() => void handleSelectTerminal(selectedTerminal, terminalPinInput)}
+                      className="flex h-10 w-full items-center justify-center rounded-xl bg-slate-900 text-xs font-semibold text-white disabled:opacity-60"
+                    >
+                      {switchingBranch ? "Verifying PIN..." : "Unlock & Launch Terminal"}
+                    </button>
+                  </div>
+                ) : (
+                  <div className="space-y-2.5 max-h-[340px] overflow-y-auto pr-1">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        window.location.href = "/";
+                      }}
+                      className="w-full text-left rounded-xl border border-slate-200 bg-white p-3.5 hover:border-purple-500 hover:bg-purple-50/30 flex items-center justify-between"
+                    >
+                      <div className="flex items-center gap-3">
+                        <div className="flex size-8 items-center justify-center rounded-lg bg-slate-100 text-slate-700">
+                          <Store size={15} />
+                        </div>
+                        <div>
+                          <div className="text-xs font-semibold text-slate-900">Store Management Console</div>
+                          <div className="text-[11px] text-slate-500">Inventory, purchases, reports &amp; settings</div>
+                        </div>
+                      </div>
+                      <ChevronRight size={16} className="text-slate-400" />
+                    </button>
+
+                    {terminals.map((t) => (
+                      <button
+                        key={t.id}
+                        type="button"
+                        disabled={switchingBranch}
+                        onClick={() => void handleSelectTerminal(t)}
+                        className="w-full text-left rounded-xl border border-slate-200 bg-white p-3.5 hover:border-purple-500 hover:bg-purple-50/30 flex items-center justify-between"
+                      >
+                        <div className="flex items-center gap-3 min-w-0 pr-2">
+                          <div
+                            className={`flex size-8 shrink-0 items-center justify-center rounded-lg ${
+                              t.kind === "kiosk"
+                                ? "bg-orange-50 text-[#ea580c]"
+                                : "bg-purple-50 text-purple-700"
+                            }`}
+                          >
+                            {t.kind === "kiosk" ? <Tablet size={15} /> : <Monitor size={15} />}
+                          </div>
+                          <div className="min-w-0">
+                            <div className="flex items-center gap-1.5">
+                              <span className="text-xs font-semibold text-slate-900 truncate">{t.name}</span>
+                              <span className="rounded bg-slate-100 px-1.5 py-0.5 font-mono text-[10px] font-semibold text-slate-700">
+                                {t.code}
+                              </span>
+                              <span className="rounded bg-slate-100 px-1.5 py-0.5 text-[9.5px] font-semibold uppercase text-slate-600">
+                                {t.kind === "kiosk" ? "Kiosk" : "POS"}
+                              </span>
+                              {t.has_pin ? (
+                                <span className="inline-flex items-center gap-0.5 rounded bg-indigo-50 px-1.5 py-0.5 text-[9.5px] font-semibold text-indigo-700">
+                                  <Lock size={9} /> PIN
+                                </span>
+                              ) : null}
+                            </div>
+                            <div className="mt-0.5 font-mono text-[10px] text-slate-400 truncate">
+                              Terminal ID: {(t.terminal_id ?? t.id).slice(0, 14)}…
+                            </div>
+                          </div>
+                        </div>
+                        <ChevronRight size={16} className="text-slate-400 shrink-0" />
+                      </button>
+                    ))}
+                  </div>
+                )}
+
+                <div className="pt-2 border-t border-slate-100 flex items-center justify-between">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setActiveBranchForTerminals(null);
+                      setSelectedTerminal(null);
+                      setError(null);
+                    }}
+                    className="text-xs font-semibold text-slate-500 hover:text-slate-800 cursor-pointer"
+                  >
+                    ← Back to branches
+                  </button>
+                  <a href="/" className="text-xs font-semibold text-purple-600 hover:underline">
+                    Open Dashboard →
+                  </a>
+                </div>
+              </div>
+            ) : branches.length > 0 ? (
               <div className="space-y-5">
                 <div>
                   <div className="inline-flex size-9 items-center justify-center rounded-xl bg-purple-100 text-purple-700 mb-3">
                     <Building2 size={18} />
                   </div>
-                  <h1 className="text-xl font-semibold tracking-tight text-slate-900">Select Branch / Location</h1>
+                  <h1 className="text-xl font-semibold tracking-tight text-slate-900">Select Branch</h1>
                   <p className="mt-1 text-xs text-slate-500">
-                    {userName ? `Welcome back, ${userName}! ` : ""}Choose the store branch you want to operate today:
+                    {userName ? `Welcome, ${userName}. ` : ""}Select a registered branch to pick your POS or Kiosk terminal:
                   </p>
+                  {activeStoreIdDisplay ? (
+                    <div className="mt-1.5 font-mono text-[10px] text-slate-400">
+                      Store ID: {activeStoreIdDisplay}
+                    </div>
+                  ) : null}
                 </div>
 
                 <div className="space-y-2.5 max-h-[340px] overflow-y-auto pr-1">
@@ -323,8 +654,11 @@ export default function LoginPage() {
                             {b.code}
                           </span>
                         </div>
+                        <div className="mt-1 font-mono text-[10px] text-slate-400 truncate">
+                          Branch ID: {(b.branch_id ?? b.id).slice(0, 18)}…
+                        </div>
                         {b.address || b.city ? (
-                          <div className="mt-1 flex items-center gap-1 text-[11px] text-slate-500 truncate">
+                          <div className="mt-0.5 flex items-center gap-1 text-[11px] text-slate-500 truncate">
                             <MapPin size={11} className="shrink-0 text-slate-400" />
                             <span>{[b.address, b.city].filter(Boolean).join(", ")}</span>
                           </div>
@@ -358,7 +692,7 @@ export default function LoginPage() {
                     href="/"
                     className="text-xs font-semibold text-purple-600 hover:underline cursor-pointer"
                   >
-                    Continue with default →
+                    Continue to Console →
                   </a>
                 </div>
               </div>
@@ -420,7 +754,31 @@ export default function LoginPage() {
                         Enter your staff credentials. Your registered store &amp; branch will load automatically.
                       </p>
                     </div>
+                    {methods.email_password && methods.phone_otp ? (
+                      <div className="mt-4 flex rounded-lg bg-slate-100 p-1">
+                        <button type="button" onClick={() => setSignMethod("email")} className={`flex-1 rounded-md py-1.5 text-xs font-semibold ${signMethod === "email" ? "bg-white text-slate-900" : "text-slate-500"}`}>Email</button>
+                        <button type="button" onClick={() => setSignMethod("phone")} className={`flex-1 rounded-md py-1.5 text-xs font-semibold ${signMethod === "phone" ? "bg-white text-slate-900" : "text-slate-500"}`}>Mobile</button>
+                      </div>
+                    ) : null}
 
+                    {signMethod === "phone" && methods.phone_otp ? (
+                      <form onSubmit={loginOtpSent ? verifyLoginCode : sendLoginCode} className="mt-6 space-y-4">
+                        <label className="block text-xs font-semibold text-slate-700">
+                          Mobile number
+                          <input value={loginPhone} onChange={(e) => setLoginPhone(e.target.value)} autoComplete="off" inputMode="tel" className="mt-1.5 h-11 w-full rounded-xl border border-slate-200 px-3 text-sm" placeholder="9876543210" />
+                        </label>
+                        {loginOtpSent ? (
+                          <label className="block text-xs font-semibold text-slate-700">
+                            Code
+                            <input value={loginOtp} onChange={(e) => setLoginOtp(e.target.value)} autoComplete="one-time-code" inputMode="numeric" className="mt-1.5 h-11 w-full rounded-xl border border-slate-200 px-3 text-sm" placeholder="6 digit code" />
+                          </label>
+                        ) : null}
+                        {devCode ? <p className="text-xs text-slate-500">SMS is not connected on this machine. The code is {devCode}.</p> : null}
+                        <button type="submit" disabled={loading} className="flex h-11 w-full items-center justify-center rounded-xl bg-slate-900 text-xs font-semibold text-white disabled:opacity-70">
+                          {loading ? "Please wait" : loginOtpSent ? "Sign in" : "Send code"}
+                        </button>
+                      </form>
+                    ) : (
                     <form onSubmit={onSubmit} className="mt-6 space-y-4">
                       <div>
                         <label className="block text-xs font-semibold text-slate-700" htmlFor="email">
@@ -469,7 +827,7 @@ export default function LoginPage() {
                         </div>
                       </div>
 
-                      {/* Optional Direct Store Slug Override */}
+                      {/* Optional Store ID & Branch ID Override */}
                       <div className="pt-1">
                         {!showDirectSlug ? (
                           <button
@@ -477,36 +835,42 @@ export default function LoginPage() {
                             onClick={() => setShowDirectSlug(true)}
                             className="text-[11px] font-semibold text-slate-500 hover:text-purple-600 cursor-pointer"
                           >
-                            + Have a specific store address?
+                            + Specify Store ID or Branch ID (Optional)
                           </button>
                         ) : (
-                          <div className="rounded-xl border border-slate-200 bg-slate-50/50 p-3 space-y-1.5">
+                          <div className="rounded-xl border border-slate-200 bg-slate-50/50 p-3 space-y-2">
                             <div className="flex items-center justify-between">
                               <label className="text-[11px] font-semibold text-slate-600" htmlFor="slug">
-                                Store workspace address (Optional)
+                                Store ID &amp; Branch ID (Optional)
                               </label>
                               <button
                                 type="button"
                                 onClick={() => {
                                   setShowDirectSlug(false);
                                   setSlugValue("");
+                                  setBranchIdValue("");
                                 }}
                                 className="text-[10px] text-slate-400 hover:text-slate-600 cursor-pointer"
                               >
                                 Clear
                               </button>
                             </div>
-                            <div className="flex h-9 items-center overflow-hidden rounded-lg border border-slate-200 bg-white">
-                              <span className="flex h-full items-center border-r border-slate-200 bg-slate-100/70 px-2.5 text-[11px] font-semibold text-slate-500">
-                                store /
-                              </span>
+                            <div className="grid grid-cols-2 gap-2">
                               <input
                                 id="slug"
-                                name="slug"
+                                name="store_id"
                                 value={slugValue}
                                 onChange={(e) => setSlugValue(e.target.value)}
-                                placeholder="annapurna"
-                                className="h-full w-full bg-transparent px-2.5 text-xs font-medium text-slate-900 outline-none"
+                                placeholder="Store ID (UUID)"
+                                className="h-9 w-full rounded-lg border border-slate-200 bg-white px-2.5 font-mono text-xs text-slate-900 outline-none"
+                              />
+                              <input
+                                id="branch_id"
+                                name="branch_id"
+                                value={branchIdValue}
+                                onChange={(e) => setBranchIdValue(e.target.value)}
+                                placeholder="Branch ID / Code"
+                                className="h-9 w-full rounded-lg border border-slate-200 bg-white px-2.5 font-mono text-xs text-slate-900 outline-none"
                               />
                             </div>
                           </div>
@@ -541,6 +905,7 @@ export default function LoginPage() {
                         </button>
                       </div>
                     </form>
+                    )}
                   </div>
                 ) : (
                   /* Step 2: Create Account / Registration Flow */
@@ -621,6 +986,39 @@ export default function LoginPage() {
                               className="h-full w-full bg-transparent pl-2 text-xs font-medium text-slate-900 outline-none placeholder:text-slate-400"
                             />
                           </div>
+                          {methods.phone_otp ? (
+                            <div className="mt-2 space-y-2">
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setError(null);
+                                  void fetch("/api/v1/auth/phone/request", {
+                                    method: "POST",
+                                    headers: { Accept: "application/json", "Content-Type": "application/json" },
+                                    body: JSON.stringify({ phone, purpose: "register" }),
+                                  }).then(async (response) => {
+                                    const body = await response.json();
+                                    if (!response.ok) {
+                                      setError(body?.error?.message ?? "The code could not be sent.");
+                                      return;
+                                    }
+                                    setDevCode(body?.data?.code ?? null);
+                                    setRegSuccess("Enter the code sent to that mobile number.");
+                                  }).catch(() => setError("Unable to send the code."));
+                                }}
+                                className="text-[11px] font-semibold text-purple-700"
+                              >
+                                Send code to this number
+                              </button>
+                              <input
+                                value={regOtp}
+                                onChange={(e) => setRegOtp(e.target.value)}
+                                inputMode="numeric"
+                                placeholder="Code, if you requested one"
+                                className="h-9 w-full rounded-lg border border-slate-200 px-2 text-xs"
+                              />
+                            </div>
+                          ) : null}
                         </div>
                       </div>
 

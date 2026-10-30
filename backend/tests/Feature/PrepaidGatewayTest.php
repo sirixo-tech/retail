@@ -74,7 +74,9 @@ class PrepaidGatewayTest extends TestCase
             'mode' => 'test',
         ])->assertOk();
         $this->assertStringNotContainsString($this->secret, $saved->getContent());
-        $this->assertTrue($saved->json('data.2.has_credentials'));
+        $rzp = collect($saved->json('data'))->firstWhere('provider', 'razorpay');
+        $this->assertNotNull($rzp);
+        $this->assertTrue((bool) ($rzp['has_credentials'] ?? false));
         $cipher = (string) DB::table('payment_gateways')->where('provider', 'razorpay')->value('credentials_ciphertext');
         $this->assertStringNotContainsString($this->secret, $cipher);
         $this->assertSame($this->secret, json_decode(Crypt::decryptString($cipher), true)['key_secret']);

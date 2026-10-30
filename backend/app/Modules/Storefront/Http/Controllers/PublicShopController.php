@@ -99,6 +99,19 @@ class PublicShopController
         if (strlen($phone) < 10) {
             return ApiResponse::error('validation.failed', 'Enter a mobile number.', 422);
         }
+        $gateway = app(\App\Modules\Notifications\SmsGateway::class);
+        $activeSms = $gateway->active();
+        if (! $activeSms && ! app()->environment('local', 'testing')) {
+            return ApiResponse::error(
+                'sms.not_configured',
+                'SMS OTP sign-in is unavailable until Super Admin integrates an active SMS gateway. Please continue with Guest Checkout.',
+                422
+            );
+        }
+        $firebase = $gateway->publicFirebase();
+        if (! empty($firebase['active'])) {
+            return ApiResponse::ok(['status' => 'firebase', 'firebase' => $firebase, 'sms_gateway_active' => true]);
+        }
         $code = str_pad((string) random_int(0, 999999), 6, '0', STR_PAD_LEFT);
         DB::table('customer_otps')->insert([
             'id' => (string) Str::uuid7(),
@@ -109,18 +122,20 @@ class PublicShopController
             'expires_at' => now()->addMinutes(10),
             'created_at' => now(),
         ]);
-        DB::table('notification_logs')->insert([
-            'id' => (string) Str::uuid7(),
-            'tenant_id' => $store->tenant_id,
-            'channel' => 'sms',
-            'template' => 'customer.otp',
-            'status' => 'not_configured',
-            'detail' => 'SMS is not configured. The code was not sent.',
-            'created_at' => now(),
-        ]);
-        $payload = ['status' => 'not_configured'];
-        if (app()->environment('local', 'testing')) {
+        $sent = $gateway->record(
+            $store->tenant_id,
+            'customer.otp',
+            'SMS is not configured. The code was not sent.',
+            $phone,
+            'Your SelfX code is '.$code.'. It expires in 10 minutes.',
+        );
+        $payload = [
+            'status' => $sent,
+            'sms_gateway_active' => $activeSms !== null,
+        ];
+        if (app()->environment('local', 'testing') || ! $activeSms) {
             $payload['code'] = $code;
+            $payload['dev_otp'] = $code;
         }
 
         return ApiResponse::ok($payload);
@@ -134,9 +149,14 @@ class PublicShopController
         }
         $data = $request->validate([
             'phone' => ['required', 'string', 'max:20'],
-            'code' => ['required', 'string', 'size:6'],
+            'code' => ['nullable', 'string', 'size:6'],
+            'otp' => ['nullable', 'string', 'size:6'],
         ]);
         $phone = preg_replace('/\D+/', '', $data['phone']) ?? '';
+        $rawCode = (string) ($request->input('code') ?? $request->input('otp') ?? '');
+        if (strlen($rawCode) !== 6) {
+            return ApiResponse::error('validation.failed', 'Enter a 6-digit OTP code.', 422);
+        }
         $row = DB::table('customer_otps')
             ->where('store_id', $store->id)
             ->where('phone', $phone)
@@ -149,7 +169,7 @@ class PublicShopController
         if ((int) $row->attempts >= 5) {
             return ApiResponse::error('auth.locked', 'Too many attempts.', 423);
         }
-        $expected = hash_hmac('sha256', $data['code'], (string) config('app.key'));
+        $expected = hash_hmac('sha256', $rawCode, (string) config('app.key'));
         if (! hash_equals($row->code_hash, $expected)) {
             DB::table('customer_otps')->where('id', $row->id)->update(['attempts' => (int) $row->attempts + 1]);
 
@@ -157,7 +177,41 @@ class PublicShopController
         }
         DB::table('customer_otps')->where('id', $row->id)->update(['verified_at' => now()]);
 
-        return ApiResponse::ok(['verified' => true]);
+        $tenDigits = substr($phone, -10);
+        $customer = DB::table('customers')
+            ->where('tenant_id', $store->tenant_id)
+            ->where(function ($q) use ($phone, $tenDigits) {
+                $q->where('phone_e164', $phone)->orWhere('phone_e164', 'LIKE', "%{$tenDigits}");
+            })
+            ->whereNull('deleted_at')
+            ->first();
+
+        $lastOrder = DB::table('orders')
+            ->where('store_id', $store->id)
+            ->where(function ($q) use ($phone, $tenDigits) {
+                $q->where('customer_phone', $phone)->orWhere('customer_phone', 'LIKE', "%{$tenDigits}");
+            })
+            ->orderByDesc('created_at')
+            ->first();
+
+        $lastAddress = null;
+        $lastPincode = null;
+        if ($lastOrder && $lastOrder->address_snapshot) {
+            $snap = is_string($lastOrder->address_snapshot)
+                ? json_decode($lastOrder->address_snapshot, true)
+                : (array) $lastOrder->address_snapshot;
+            $lastAddress = $snap['address'] ?? null;
+            $lastPincode = $snap['pincode'] ?? null;
+        }
+
+        return ApiResponse::ok([
+            'verified' => true,
+            'phone' => $tenDigits,
+            'customer_name' => $customer?->name ?? ($lastOrder?->customer_name ?? null),
+            'loyalty_points' => $customer ? (int) $customer->loyalty_points : 0,
+            'address' => $lastAddress,
+            'pincode' => $lastPincode,
+        ]);
     }
 
     public function organizationHub(string $slug): JsonResponse
@@ -264,5 +318,83 @@ class PublicShopController
         });
 
         return ApiResponse::ok($rows);
+    }
+
+    public function subscribe(Request $request, string $slug): JsonResponse
+    {
+        $store = Store::resolvePublic($slug);
+        if (! $store) {
+            return ApiResponse::error('resource.not_found', 'Store not found.', 404);
+        }
+
+        $data = $request->validate([
+            'email' => ['nullable', 'email', 'max:180'],
+            'phone' => ['nullable', 'string', 'max:24'],
+            'source' => ['nullable', 'string', 'max:80'],
+        ]);
+
+        if (empty($data['email']) && empty($data['phone'])) {
+            return ApiResponse::error('validation.failed', 'Provide an email or phone number to subscribe.', 422);
+        }
+
+        $settings = is_array($store->settings) ? $store->settings : [];
+        $onlineStore = is_array($settings['online_store'] ?? null) ? $settings['online_store'] : [];
+        $subscribers = is_array($onlineStore['subscribers'] ?? null) ? $onlineStore['subscribers'] : [];
+
+        $newSubscriber = [
+            'id' => 'sub-' . Str::lower(Str::random(8)),
+            'email' => trim((string) ($data['email'] ?? '—')),
+            'phone' => trim((string) ($data['phone'] ?? '—')),
+            'source' => trim((string) ($data['source'] ?? 'Storefront Newsletter')),
+            'subscribedAt' => now()->format('Y-m-d H:i'),
+            'status' => 'active',
+        ];
+
+        array_unshift($subscribers, $newSubscriber);
+        $onlineStore['subscribers'] = array_slice($subscribers, 0, 500);
+        $settings['online_store'] = $onlineStore;
+        $store->settings = $settings;
+        $store->save();
+
+        return ApiResponse::ok(['subscribed' => true, 'subscriber' => $newSubscriber]);
+    }
+
+    public function contactMessage(Request $request, string $slug): JsonResponse
+    {
+        $store = Store::resolvePublic($slug);
+        if (! $store) {
+            return ApiResponse::error('resource.not_found', 'Store not found.', 404);
+        }
+
+        $data = $request->validate([
+            'customerName' => ['required', 'string', 'max:120'],
+            'email' => ['nullable', 'string', 'max:180'],
+            'phone' => ['nullable', 'string', 'max:24'],
+            'subject' => ['nullable', 'string', 'max:180'],
+            'message' => ['required', 'string', 'max:2000'],
+        ]);
+
+        $settings = is_array($store->settings) ? $store->settings : [];
+        $onlineStore = is_array($settings['online_store'] ?? null) ? $settings['online_store'] : [];
+        $messages = is_array($onlineStore['messages'] ?? null) ? $onlineStore['messages'] : [];
+
+        $newMsg = [
+            'id' => 'msg-' . Str::lower(Str::random(8)),
+            'customerName' => trim($data['customerName']),
+            'email' => trim((string) ($data['email'] ?? '—')),
+            'phone' => trim((string) ($data['phone'] ?? '—')),
+            'subject' => trim((string) ($data['subject'] ?? 'Storefront Inquiry')),
+            'message' => trim($data['message']),
+            'createdAt' => now()->format('Y-m-d H:i'),
+            'status' => 'unread',
+        ];
+
+        array_unshift($messages, $newMsg);
+        $onlineStore['messages'] = array_slice($messages, 0, 500);
+        $settings['online_store'] = $onlineStore;
+        $store->settings = $settings;
+        $store->save();
+
+        return ApiResponse::ok(['sent' => true, 'inquiry' => $newMsg]);
     }
 }

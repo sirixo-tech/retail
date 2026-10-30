@@ -17,45 +17,47 @@ use Illuminate\Support\Str;
 class StaffController
 {
     /** @var array<string, list<string>> */
-    private const DEFAULT_ROLE_PERMISSIONS = [
+    public const DEFAULT_ROLE_PERMISSIONS = [
         'owner' => [
-            'pos.access', 'pos.discount', 'pos.void_bill', 'pos.open_close_shift', 'pos.cash_movement',
-            'products.view', 'products.create', 'products.edit', 'products.delete', 'products.import_export', 'products.price_override',
-            'inventory.view', 'inventory.adjust_stock', 'inventory.stock_count', 'inventory.transfers',
-            'purchases.view', 'purchases.create_grn', 'purchases.returns', 'purchases.pay_supplier',
-            'orders.view', 'orders.manage_status', 'orders.assign_delivery',
-            'customers.view', 'customers.edit', 'customers.manage_khata', 'customers.manage_loyalty',
-            'staff.view', 'staff.manage', 'staff.roles_permissions', 'staff.attendance',
-            'reports.sales', 'reports.inventory', 'reports.profit_loss', 'reports.tax_gst', 'reports.export',
-            'settings.store', 'settings.gateways', 'settings.printer', 'settings.billing',
+            '*',
+            'pos.sell', 'pos.discount', 'pos.returns', 'pos.void', 'pos.shift', 'pos.access', 'pos.void_bill', 'pos.open_close_shift', 'pos.cash_movement',
+            'catalog.view', 'catalog.manage', 'products.view', 'products.create', 'products.edit', 'products.delete', 'products.import_export', 'products.price_override',
+            'inventory.view', 'inventory.adjust', 'inventory.adjust_stock', 'inventory.stock_count', 'inventory.transfers',
+            'purchases.manage', 'purchases.view', 'purchases.create_grn', 'purchases.returns', 'purchases.pay_supplier',
+            'orders.manage', 'orders.delivery', 'orders.view', 'orders.manage_status', 'orders.assign_delivery',
+            'storefront.manage',
+            'customers.view', 'customers.khata', 'customers.edit', 'customers.manage_khata', 'customers.manage_loyalty',
+            'staff.manage', 'staff.view', 'staff.roles_permissions', 'staff.attendance',
+            'reports.view', 'reports.sales', 'reports.inventory', 'reports.profit_loss', 'reports.tax_gst', 'reports.export',
+            'settings.manage', 'settings.store', 'settings.gateways', 'settings.printer', 'settings.billing',
         ],
         'manager' => [
-            'pos.access', 'pos.discount', 'pos.void_bill', 'pos.open_close_shift', 'pos.cash_movement',
-            'products.view', 'products.create', 'products.edit', 'products.import_export', 'products.price_override',
-            'inventory.view', 'inventory.adjust_stock', 'inventory.stock_count', 'inventory.transfers',
-            'purchases.view', 'purchases.create_grn', 'purchases.returns', 'purchases.pay_supplier',
-            'orders.view', 'orders.manage_status', 'orders.assign_delivery',
-            'customers.view', 'customers.edit', 'customers.manage_khata', 'customers.manage_loyalty',
-            'staff.view', 'staff.attendance',
-            'reports.sales', 'reports.inventory', 'reports.profit_loss', 'reports.tax_gst', 'reports.export',
+            'pos.sell', 'pos.discount', 'pos.returns', 'pos.void', 'pos.shift', 'pos.access', 'pos.void_bill', 'pos.open_close_shift', 'pos.cash_movement',
+            'catalog.view', 'catalog.manage', 'products.view', 'products.create', 'products.edit', 'products.import_export', 'products.price_override',
+            'inventory.view', 'inventory.adjust', 'inventory.adjust_stock', 'inventory.stock_count', 'inventory.transfers',
+            'purchases.manage', 'purchases.view', 'purchases.create_grn', 'purchases.returns', 'purchases.pay_supplier',
+            'orders.manage', 'orders.delivery', 'orders.view', 'orders.manage_status', 'orders.assign_delivery',
+            'customers.view', 'customers.khata', 'customers.edit', 'customers.manage_khata', 'customers.manage_loyalty',
+            'staff.manage', 'staff.view', 'staff.attendance',
+            'reports.view', 'reports.sales', 'reports.inventory', 'reports.profit_loss', 'reports.tax_gst', 'reports.export',
             'settings.printer',
         ],
         'cashier' => [
-            'pos.access', 'pos.discount', 'pos.open_close_shift', 'pos.cash_movement',
-            'products.view',
-            'orders.view', 'orders.manage_status',
-            'customers.view', 'customers.edit', 'customers.manage_khata', 'customers.manage_loyalty',
+            'pos.sell', 'pos.discount', 'pos.shift', 'pos.access', 'pos.open_close_shift', 'pos.cash_movement',
+            'catalog.view', 'products.view',
+            'orders.manage', 'orders.view', 'orders.manage_status',
+            'customers.view', 'customers.khata', 'customers.edit', 'customers.manage_khata', 'customers.manage_loyalty',
             'staff.attendance',
         ],
         'inventory' => [
-            'products.view', 'products.create', 'products.edit', 'products.import_export',
-            'inventory.view', 'inventory.adjust_stock', 'inventory.stock_count', 'inventory.transfers',
-            'purchases.view', 'purchases.create_grn', 'purchases.returns',
-            'reports.inventory',
+            'catalog.view', 'catalog.manage', 'products.view', 'products.create', 'products.edit', 'products.import_export',
+            'inventory.view', 'inventory.adjust', 'inventory.adjust_stock', 'inventory.stock_count', 'inventory.transfers',
+            'purchases.manage', 'purchases.view', 'purchases.create_grn', 'purchases.returns',
+            'reports.view', 'reports.inventory',
             'staff.attendance',
         ],
         'delivery' => [
-            'orders.view', 'orders.manage_status', 'orders.delivery',
+            'orders.manage', 'orders.delivery', 'orders.view', 'orders.manage_status',
             'customers.view',
             'staff.attendance',
         ],
@@ -100,8 +102,8 @@ class StaffController
             return ApiResponse::error('impersonation.denied', 'Adding staff is blocked while viewing a store.', 403);
         }
         $tenantId = (string) $request->session()->get('tenant_id');
-        if (! $this->isOwner($request->user()->id, $tenantId)) {
-            return ApiResponse::error('permission.denied', 'Only the owner can add staff.', 403);
+        if (! $this->canManageStaff($request->user()->id, $tenantId)) {
+            return ApiResponse::error('permission.denied', 'You do not have permission to manage store staff.', 403);
         }
 
         $data = $request->validate([
@@ -126,11 +128,23 @@ class StaffController
 
         $roleName = strtolower(trim($data['role']));
         if ($roleName === 'owner') {
-            return ApiResponse::error('validation.failed', 'That role is not set up for this store.', 422);
+            return ApiResponse::error('validation.failed', 'The owner role cannot be manually assigned to staff.', 422);
         }
         $roleId = DB::table('roles')->where('tenant_id', $tenantId)->where('name', $roleName)->value('id');
         if (! $roleId) {
-            return ApiResponse::error('validation.failed', 'That role is not set up for this store.', 422);
+            if (in_array($roleName, ['manager', 'cashier', 'inventory', 'delivery'], true)) {
+                $roleId = (string) Str::uuid7();
+                DB::table('roles')->insert([
+                    'id' => $roleId,
+                    'tenant_id' => $tenantId,
+                    'name' => $roleName,
+                    'guard_name' => 'web',
+                    'created_at' => now(),
+                    'updated_at' => now(),
+                ]);
+            } else {
+                return ApiResponse::error('validation.failed', 'That role is not set up for this store.', 422);
+            }
         }
 
         $user = User::query()->create([
@@ -259,14 +273,16 @@ class StaffController
             ->get()
             ->map(function ($r) use ($savedPerms, $savedMeta, $counts) {
                 $name = $r->name;
-                $perms = $savedPerms[$name] ?? (self::DEFAULT_ROLE_PERMISSIONS[$name] ?? ['pos.access', 'products.view']);
+                $perms = $savedPerms[$name] ?? (self::DEFAULT_ROLE_PERMISSIONS[$name] ?? ['pos.sell', 'pos.access', 'catalog.view', 'products.view', 'orders.manage']);
                 $meta = $savedMeta[$name] ?? [];
 
                 return [
                     'id' => $r->id,
-                    'name' => $name,
+                    'code' => $name,
+                    'name' => $meta['label'] ?? ucfirst(str_replace('_', ' ', $name)),
                     'label' => $meta['label'] ?? ucfirst(str_replace('_', ' ', $name)),
                     'description' => $meta['description'] ?? $this->defaultRoleDescription($name),
+                    'system' => in_array($name, ['owner', 'manager', 'cashier', 'inventory', 'delivery'], true),
                     'is_system' => in_array($name, ['owner', 'manager', 'cashier', 'inventory', 'delivery'], true),
                     'staff_count' => (int) ($counts[$r->id] ?? 0),
                     'permissions' => array_values(array_unique((array) $perms)),
@@ -280,12 +296,14 @@ class StaffController
     {
         $tenantId = (string) $request->session()->get('tenant_id');
         $data = $request->validate([
+            'code' => ['nullable', 'string', 'max:60'],
             'name' => ['required', 'string', 'max:60'],
             'description' => ['nullable', 'string', 'max:200'],
             'permissions' => ['required', 'array'],
         ]);
 
-        $slug = Str::snake(strtolower(trim($data['name'])));
+        $rawCode = ! empty($data['code']) ? $data['code'] : $data['name'];
+        $slug = Str::snake(strtolower(trim($rawCode)));
         if (DB::table('roles')->where('tenant_id', $tenantId)->where('name', $slug)->exists()) {
             return ApiResponse::error('conflict.duplicate', 'A role with that name already exists.', 422);
         }
@@ -312,7 +330,7 @@ class StaffController
             $store->save();
         }
 
-        return ApiResponse::ok(['id' => $id, 'name' => $slug], 201);
+        return ApiResponse::ok(['id' => $id, 'code' => $slug, 'name' => $slug], 201);
     }
 
     public function updateRole(Request $request, string $role): JsonResponse
@@ -327,10 +345,13 @@ class StaffController
         }
 
         $data = $request->validate([
+            'name' => ['nullable', 'string', 'max:60'],
             'label' => ['nullable', 'string', 'max:60'],
             'description' => ['nullable', 'string', 'max:200'],
             'permissions' => ['required', 'array'],
         ]);
+
+        $label = $data['label'] ?? ($data['name'] ?? null);
 
         $store = Store::query()->where('tenant_id', $tenantId)->orderByDesc('is_default')->first();
         if ($store) {
@@ -338,14 +359,14 @@ class StaffController
             $settings['role_permissions'][$row->name] = array_values($data['permissions']);
             $existingMeta = $settings['role_meta'][$row->name] ?? [];
             $settings['role_meta'][$row->name] = [
-                'label' => $data['label'] ?? ($existingMeta['label'] ?? ucfirst($row->name)),
+                'label' => $label ?? ($existingMeta['label'] ?? ucfirst($row->name)),
                 'description' => $data['description'] ?? ($existingMeta['description'] ?? $this->defaultRoleDescription($row->name)),
             ];
             $store->settings = $settings;
             $store->save();
         }
 
-        return ApiResponse::ok(['id' => $row->id, 'name' => $row->name, 'updated' => true]);
+        return ApiResponse::ok(['id' => $row->id, 'code' => $row->name, 'name' => $row->name, 'updated' => true]);
     }
 
     public function destroyRole(Request $request, string $role): JsonResponse
@@ -509,17 +530,30 @@ class StaffController
             ->exists();
     }
 
+    private function canManageStaff(string $userId, string $tenantId): bool
+    {
+        if ($this->isOwner($userId, $tenantId)) {
+            return true;
+        }
+
+        $role = DB::table('model_has_roles')
+            ->join('roles', 'roles.id', '=', 'model_has_roles.role_id')
+            ->where('model_has_roles.model_id', $userId)
+            ->where('model_has_roles.tenant_id', $tenantId)
+            ->value('roles.name');
+
+        if (! $role) {
+            return false;
+        }
+
+        $store = Store::query()->where('tenant_id', $tenantId)->orderByDesc('is_default')->first();
+        $perms = $store?->settings['role_permissions'][$role] ?? (self::DEFAULT_ROLE_PERMISSIONS[$role] ?? []);
+
+        return in_array('staff.manage', (array) $perms, true) || in_array('*', (array) $perms, true);
+    }
+
     private function staffLimit(string $tenantId): int
     {
-        $planId = DB::table('subscriptions')->where('tenant_id', $tenantId)->value('plan_id');
-        if (! $planId) {
-            return 0;
-        }
-        $value = PlanFeature::query()
-            ->where('plan_id', $planId)
-            ->whereHas('feature', fn ($query) => $query->where('key', 'limit.staff'))
-            ->value('value');
-
-        return $value === null ? 0 : (int) $value;
+        return app(\App\Modules\Plans\Support\Entitlement::class)->value($tenantId, 'limit.staff');
     }
 }

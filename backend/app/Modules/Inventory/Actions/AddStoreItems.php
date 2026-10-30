@@ -151,6 +151,10 @@ class AddStoreItems
                 ? (bool) $input['track_stock']
                 : (empty($details['always_in_stock']) && ! in_array(strtolower((string) ($details['type'] ?? '')), ['service', 'service product'], true));
 
+            $isPharmacy = ! empty($details['pharmacy_batch_mode']);
+            $pharmacy = is_array($details['pharmacy'] ?? null) ? $details['pharmacy'] : [];
+            $enableBatchTracking = $isPharmacy || ! empty($input['enable_batch_tracking']);
+
             $item = StoreItem::query()->create([
                 'tenant_id' => $store->tenant_id,
                 'store_id' => $store->id,
@@ -159,6 +163,7 @@ class AddStoreItems
                 'name_override' => $input['name'],
                 'online_visible' => (bool) ($input['online_visible'] ?? true),
                 'track_stock' => $trackStock,
+                'enable_batch_tracking' => $enableBatchTracking,
                 'status' => (string) ($input['status'] ?? 'active'),
                 'category_id' => $input['category_id'] ?? null,
                 'sub_category_id' => $input['sub_category_id'] ?? null,
@@ -200,6 +205,23 @@ class AddStoreItems
                     'store_id' => $item->store_id,
                     'on_hand' => 0,
                     'reserved' => 0,
+                    'created_at' => now(),
+                    'updated_at' => now(),
+                ]);
+            }
+
+            if ($enableBatchTracking && ! empty($pharmacy['batch_number'])) {
+                DB::table('stock_batches')->insert([
+                    'id' => (string) Str::uuid7(),
+                    'tenant_id' => $store->tenant_id,
+                    'store_item_id' => $item->id,
+                    'batch_number' => trim((string) $pharmacy['batch_number']),
+                    'manufacturing_date' => ! empty($pharmacy['mfg_date']) ? $pharmacy['mfg_date'] : null,
+                    'expiry_date' => ! empty($pharmacy['expiry_date']) ? $pharmacy['expiry_date'] : null,
+                    'qty_purchased' => $qty,
+                    'qty_remaining' => $qty,
+                    'cost_paise' => (int) ($input['cost_paise'] ?? 0),
+                    'status' => 'active',
                     'created_at' => now(),
                     'updated_at' => now(),
                 ]);
@@ -275,17 +297,7 @@ class AddStoreItems
 
     private function limit(string $tenantId, string $key): int
     {
-        $planId = Subscription::query()->where('tenant_id', $tenantId)->value('plan_id');
-        if (! $planId) {
-            return 0;
-        }
-
-        $value = PlanFeature::query()
-            ->where('plan_id', $planId)
-            ->whereHas('feature', fn ($query) => $query->where('key', $key))
-            ->value('value');
-
-        return $value === null ? 0 : (int) $value;
+        return app(\App\Modules\Plans\Support\Entitlement::class)->value($tenantId, $key);
     }
 
     private function defaultPriceList(string $tenantId): string

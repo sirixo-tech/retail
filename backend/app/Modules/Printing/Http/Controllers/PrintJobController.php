@@ -94,9 +94,11 @@ class PrintJobController
             'kind' => ['required', 'string', 'in:receipt,label,pick_list,delivery_note,invoice_pdf,report_pdf'],
             'sale_id' => ['nullable', 'uuid'],
             'store_id' => ['nullable', 'string'],
+            'printer_id' => ['nullable', 'string'],
             'cut' => ['nullable', 'in:none,full,partial'],
             'drawer' => ['nullable', 'boolean'],
             'purpose' => ['nullable', 'string', 'in:sale,reprint,test'],
+            'command_plan' => ['nullable', 'array'],
         ]);
 
         $storeId = $data['store_id'] ?? $this->storeId($request);
@@ -130,6 +132,29 @@ class PrintJobController
             ], 201);
         }
 
+        // Test print job: generate compiled sample payload
+        if (($data['purpose'] ?? null) === 'test') {
+            $job = $this->jobCreator->createTestJob($storeId, $data['printer_id'] ?? null);
+
+            return ApiResponse::ok([
+                'id' => $job->id,
+                'status' => $job->status,
+            ], 201);
+        }
+
+        // Compile fallback command plan if not explicitly supplied to ensure agent receives executable data
+        $commandPlan = $data['command_plan'] ?? null;
+        if (empty($commandPlan)) {
+            try {
+                $kindEnum = DocumentKind::tryFrom($data['kind']) ?? DocumentKind::RECEIPT;
+                $fixtureData = $this->compiler->getRepository()->getFixtureData($kindEnum);
+                $compiled = $this->compiler->compile($tenantId, $kindEnum, 'en', $fixtureData, 'escpos');
+                $commandPlan = $compiled->toArray();
+            } catch (Throwable $e) {
+                $commandPlan = null;
+            }
+        }
+
         // Generic job without sale
         $id = (string) Str::uuid7();
         DB::table('print_jobs')->insert([
@@ -138,6 +163,7 @@ class PrintJobController
             'store_id' => $storeId,
             'kind' => $data['kind'],
             'sale_id' => null,
+            'command_plan' => $commandPlan ? json_encode($commandPlan) : null,
             'cut' => $data['cut'] ?? 'partial',
             'drawer' => (bool) ($data['drawer'] ?? false),
             'status' => PrintJobStatus::QUEUED->value,

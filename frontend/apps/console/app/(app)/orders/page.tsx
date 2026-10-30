@@ -55,6 +55,8 @@ type OrderRow = {
   due_paise?: number;
   payment_method?: string;
   payment_status?: string;
+  upi_utr?: string | null;
+  payment_submethod?: string | null;
   items_count?: number;
   lines_summary?: string;
   sale_id?: string | null;
@@ -940,6 +942,13 @@ export default function OrdersPage() {
                           {(order.payment_method ?? (isPos ? "cash" : "online")).replaceAll("_", " ")}
                         </span>
                       </div>
+                      {order.upi_utr ? (
+                        <div className="mt-1">
+                          <span className="inline-flex items-center gap-1 rounded bg-amber-50 px-1.5 py-0.5 text-[10px] font-mono font-medium text-amber-800 border border-amber-200" title="Static UPI Reference / UTR">
+                            UTR: {order.upi_utr}
+                          </span>
+                        </div>
+                      ) : null}
                       {due > 0 ? (
                         <span className="num mt-0.5 block text-[11px] font-medium text-rose-600">
                           Due: {formatInr(due)}
@@ -1188,7 +1197,14 @@ export default function OrdersPage() {
                     {selectedDetailOrder.store_name || storeName}
                   </h4>
                   <p>Channel: {selectedDetailOrder.channel === "counter" ? "POS Counter Terminal" : `Online Store (${selectedDetailOrder.fulfillment})`}</p>
-                  <p>Payment: {(selectedDetailOrder.payment_method ?? "cash").replaceAll("_", " ").toUpperCase()}</p>
+                  <p className="flex items-center gap-1.5 flex-wrap">
+                    Payment: <span className="font-semibold">{(selectedDetailOrder.payment_method ?? "cash").replaceAll("_", " ").toUpperCase()}</span>
+                    {selectedDetailOrder.upi_utr ? (
+                      <span className="inline-flex items-center gap-1 rounded bg-amber-50 px-2 py-0.5 text-[11px] font-mono font-semibold text-amber-800 border border-amber-300">
+                        UTR: {selectedDetailOrder.upi_utr}
+                      </span>
+                    ) : null}
+                  </p>
                 </div>
               </div>
 

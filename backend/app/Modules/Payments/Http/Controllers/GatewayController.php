@@ -14,7 +14,7 @@ use Illuminate\Support\Str;
 class GatewayController
 {
     /** @var list<string> */
-    public const OFFLINE = ['cod', 'pay_at_store'];
+    public const OFFLINE = ['cod', 'pay_at_store', 'upi_qr'];
 
     /** @var list<string> */
     public const PREPAID = ['razorpay', 'cashfree', 'phonepe', 'paytm', 'stripe'];
@@ -37,6 +37,7 @@ class GatewayController
         $data = $request->validate([
             'status' => ['required', 'in:active,disabled'],
             'mode' => ['nullable', 'in:test,live'],
+            'config' => ['nullable', 'array'],
         ]);
         $storeId = $this->defaultStoreId($request);
         if (! $storeId) {
@@ -73,6 +74,44 @@ class GatewayController
                 'created_at' => now(),
                 'updated_at' => now(),
             ]);
+        }
+
+        if (isset($data['config']) && is_array($data['config'])) {
+            $storeModel = Store::query()->find($storeId);
+            if ($storeModel) {
+                $settings = $storeModel->settings ?? [];
+                $gwConfigs = is_array($settings['gateway_configs'] ?? null) ? $settings['gateway_configs'] : [];
+                $gwConfigs[$provider] = array_merge($gwConfigs[$provider] ?? [], $data['config']);
+                $settings['gateway_configs'] = $gwConfigs;
+                if ($provider === 'upi_qr') {
+                    $vpa = trim((string) ($data['config']['upi_vpa'] ?? ''));
+                    $payee = trim((string) ($data['config']['payee_name'] ?? ''));
+                    if (! isset($settings['online_store']['payments']['upiQr'])) {
+                        $settings['online_store']['payments']['upiQr'] = [
+                            'enabled' => $data['status'] === 'active',
+                            'displayName' => 'Instant UPI QR Payment',
+                            'vpa' => $vpa,
+                            'merchantName' => $payee,
+                        ];
+                    } else {
+                        $settings['online_store']['payments']['upiQr']['vpa'] = $vpa;
+                        if ($payee !== '') {
+                            $settings['online_store']['payments']['upiQr']['merchantName'] = $payee;
+                        }
+                        $settings['online_store']['payments']['upiQr']['enabled'] = ($data['status'] === 'active');
+                    }
+                } elseif ($provider === 'pay_at_store') {
+                    if (isset($settings['online_store']['payments']['payAtStore'])) {
+                        $settings['online_store']['payments']['payAtStore']['enabled'] = ($data['status'] === 'active');
+                    }
+                } elseif ($provider === 'cod') {
+                    if (isset($settings['online_store']['payments']['cod'])) {
+                        $settings['online_store']['payments']['cod']['enabled'] = ($data['status'] === 'active');
+                    }
+                }
+                $storeModel->settings = $settings;
+                $storeModel->save();
+            }
         }
 
         return ApiResponse::ok($this->rows($storeId));

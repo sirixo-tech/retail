@@ -26,6 +26,9 @@ type LogEntry = {
   ip: string | null;
   status: string;
   created_at: string;
+  response_excerpt?: string | null;
+  status_code?: number;
+  duration_ms?: number;
 };
 
 type LogStats = {
@@ -283,6 +286,7 @@ export default function HealthPage() {
           <option value="billing">billing</option>
           <option value="pos">pos</option>
           <option value="catalog">catalog</option>
+          <option value="api">api</option>
         </select>
 
         <select
@@ -368,10 +372,43 @@ export default function HealthPage() {
                       <CheckCircle2 className="h-5 w-5" />
                     </div>
                     <div className="mt-2.5 text-sm font-semibold text-slate-800">No logs found</div>
-                    <p className="mt-0.5 text-xs text-slate-400">
-                      System is running cleanly with no matching events.
-                    </p>
+                    <p className="mt-0.5 text-xs text-slate-400">No events match this filter.</p>
                   </td>
+                </tr>
+              ) : null}
+            </tbody>
+          </table>
+        </div>
+      </div>
+      <div className="overflow-hidden rounded-xl border border-slate-200 bg-white">
+        <div className="border-b border-slate-200 px-4 py-3">
+          <h2 className="text-sm font-semibold text-slate-900">API responses</h2>
+          <p className="mt-0.5 text-[11px] text-slate-500">The latest responses from this platform, with secrets removed.</p>
+        </div>
+        <div className="overflow-x-auto">
+          <table className="w-full text-left text-xs">
+            <thead>
+              <tr className="border-b border-slate-200 bg-slate-50/70 text-[10px] font-semibold uppercase tracking-wider text-slate-400">
+                <th className="px-4 py-3">Status</th>
+                <th className="px-4 py-3">Request</th>
+                <th className="px-4 py-3">Time</th>
+                <th className="px-4 py-3">Response</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-100">
+              {logs.filter((log) => log.source === "api").map((log) => (
+                <tr key={log.id}>
+                  <td className="num px-4 py-3 font-semibold text-slate-800">{log.status_code ?? log.message.split(" ")[0]}</td>
+                  <td className="px-4 py-3 font-mono text-[11px] text-slate-700">{log.action}</td>
+                  <td className="num px-4 py-3 text-slate-500">{log.duration_ms != null ? `${log.duration_ms} ms` : "—"}</td>
+                  <td className="max-w-[420px] px-4 py-3">
+                    <pre className="whitespace-pre-wrap break-all font-mono text-[10px] text-slate-600">{log.response_excerpt || log.message}</pre>
+                  </td>
+                </tr>
+              ))}
+              {logs.filter((log) => log.source === "api").length === 0 ? (
+                <tr>
+                  <td colSpan={4} className="px-4 py-8 text-center text-xs text-slate-400">No API responses recorded yet.</td>
                 </tr>
               ) : null}
             </tbody>

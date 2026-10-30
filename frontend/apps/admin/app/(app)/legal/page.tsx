@@ -80,7 +80,7 @@ export default function LegalEntityPage() {
         setBankIfsc(data.bank_ifsc ?? "HDFC0000240");
         setBankBranch(data.bank_branch ?? "Madhapur Branch, Hyderabad");
         setBankUpiId(data.bank_upi_id ?? "selfxretail@hdfcbank");
-        setSignatoryName(data.signatory_name ?? "Surya Varma");
+        setSignatoryName(data.signatory_name ?? "");
         setSignatoryDesignation(data.signatory_designation ?? "Director & Head of Finance");
         setInvoicePrefix(data.invoice_prefix ?? "SFX-");
       } catch (err) {

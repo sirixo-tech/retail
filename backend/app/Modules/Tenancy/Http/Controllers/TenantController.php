@@ -419,6 +419,31 @@ class TenantController
         $posCount = DB::table('counters')->where('tenant_id', $tenant->id)->count();
         $whatsappCount = DB::table('notification_logs')->where('tenant_id', $tenant->id)->where('channel', 'whatsapp')->count();
 
+        $entitlement = app(\App\Modules\Plans\Support\Entitlement::class);
+        $prodLimit = $entitlement->value($tenant->id, 'limit.products');
+        $staffLimit = $entitlement->value($tenant->id, 'limit.staff');
+        $storeLimit = $entitlement->value($tenant->id, 'limit.stores');
+        $counterLimit = $entitlement->value($tenant->id, 'limit.counters');
+        $smsLimit = $entitlement->value($tenant->id, 'limit.sms_per_month');
+
+        $planId = $tenant->subscription?->plan_id ?? DB::table('subscriptions')->where('tenant_id', $tenant->id)->value('plan_id');
+        $featureAccess = [];
+        if ($planId) {
+            $featureAccess = DB::table('plan_features')
+                ->join('features', 'plan_features.feature_id', '=', 'features.id')
+                ->where('plan_features.plan_id', $planId)
+                ->where('plan_features.value', '!=', '0')
+                ->pluck('features.name')
+                ->toArray();
+        }
+        if (empty($featureAccess)) {
+            $featureAccess = DB::table('features')->pluck('name')->toArray();
+        }
+
+        $defaultConn = config('database.default');
+        $driver = config("database.connections.{$defaultConn}.driver", $defaultConn);
+        $dbName = basename((string) config("database.connections.{$defaultConn}.database", 'database.sqlite'));
+
         return [
             'id' => $tenant->id,
             'name' => $tenant->name,
@@ -446,36 +471,19 @@ class TenantController
                 'renews_at' => $tenant->subscription?->current_period_end ? \Carbon\Carbon::parse($tenant->subscription->current_period_end)->format('M d, Y') : null,
             ],
             'usage_limits' => [
-                'products' => ['current' => $productCount, 'limit' => 10000],
-                'users' => ['current' => $users->count(), 'limit' => 20],
-                'stores' => ['current' => $stores->count(), 'limit' => 5],
-                'customers' => ['current' => $customerCount, 'limit' => 50000],
-                'pos_counters' => ['current' => $posCount, 'limit' => 10],
-                'whatsapp_messages' => ['current' => $whatsappCount, 'limit' => 5000],
+                'products' => ['current' => $productCount, 'limit' => $prodLimit > 0 ? $prodLimit : ($prodLimit === -1 ? 'unlimited' : 500)],
+                'users' => ['current' => $users->count(), 'limit' => $staffLimit > 0 ? $staffLimit : ($staffLimit === -1 ? 'unlimited' : 5)],
+                'stores' => ['current' => $stores->count(), 'limit' => $storeLimit > 0 ? $storeLimit : ($storeLimit === -1 ? 'unlimited' : 1)],
+                'customers' => ['current' => $customerCount, 'limit' => 'unlimited'],
+                'pos_counters' => ['current' => $posCount, 'limit' => $counterLimit > 0 ? $counterLimit : ($counterLimit === -1 ? 'unlimited' : 1)],
+                'whatsapp_messages' => ['current' => $whatsappCount, 'limit' => $smsLimit > 0 ? $smsLimit : ($smsLimit === -1 ? 'unlimited' : 50)],
             ],
-            'feature_access' => [
-                'Point of Sale (POS)',
-                'Online Storefront',
-                'Inventory Management',
-                'Master GS1 Catalog',
-                'GST Invoicing & E-Way',
-                'AI Assistant Gateway',
-                'Thermal Printing Engine',
-                'Customer Facing Display',
-                'Barcode & QR Builder',
-                'Multi-Branch Switching',
-                'Discounts & Coupons',
-                'Staff Attendance Clock',
-                'Day Book & Cash Shifts',
-                'Reports & P&L Analytics',
-            ],
+            'feature_access' => $featureAccess,
             'db_config' => [
-                'engine' => 'PostgreSQL 16 Multi-Tenant',
-                'host' => '127.0.0.1',
-                'port' => 5432,
-                'name' => 'tenant_'.str_replace('-', '_', substr($tenant->id, 0, 18)),
-                'username' => 'selfx_tenant_user',
-                'status' => 'Auto-Provisioned (RDS)',
+                'engine' => ucfirst($driver) . ' Multi-Tenant',
+                'driver' => $driver,
+                'name' => $dbName,
+                'status' => 'Connected',
             ],
             'organization' => $tenant->organization ? [
                 'id' => $tenant->organization->id,

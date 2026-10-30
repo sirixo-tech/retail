@@ -81,19 +81,21 @@ export default function DashboardPage() {
   const [health, setHealth] = useState<HealthStats | null>(null);
   const [loading, setLoading] = useState(true);
   const [timeRange, setTimeRange] = useState<"7d" | "30d" | "90d" | "1y">("30d");
+  const [activity, setActivity] = useState<{ id: string; action: string; message: string; actor: string; created_at: string }[]>([]);
 
   useEffect(() => {
     let active = true;
     (async () => {
       setLoading(true);
       try {
-        const [tRes, sRes, pRes, hRes] = await Promise.allSettled([
+        const [tRes, sRes, pRes, hRes, lRes] = await Promise.allSettled([
           api<{ data: Tenant[] }>("/api/v1/platform/tenants"),
           api<{ data: Subscription[] }>("/api/v1/platform/subscriptions"),
           api<{ data: Plan[] }>("/api/v1/platform/plans"),
           fetch("/api/v1/platform/health", { credentials: "include", headers: { Accept: "application/json" } }).then(
             (r) => (r.ok ? r.json() : null),
           ),
+          api<{ data: { logs: { id: string; action: string; message: string; actor: string; created_at: string }[] } }>("/api/v1/platform/logs"),
         ]);
 
         if (!active) return;
@@ -109,6 +111,9 @@ export default function DashboardPage() {
         }
         if (hRes.status === "fulfilled" && hRes.value?.data) {
           setHealth(hRes.value.data);
+        }
+        if (lRes.status === "fulfilled" && lRes.value?.data?.logs) {
+          setActivity(lRes.value.data.logs.slice(0, 8));
         }
       } catch (err) {
         console.error("Dashboard telemetry load error:", err);
@@ -698,69 +703,20 @@ export default function DashboardPage() {
           </div>
 
           <div className="mt-3 divide-y divide-slate-100">
-            {[
-              {
-                icon: Store,
-                color: "text-blue-600 bg-blue-50",
-                event: "Tenant Store Provisioned",
-                detail: tenants.length > 0
-                  ? `${tenants[tenants.length - 1].name} (Slug: ${tenants[tenants.length - 1].slug}) initialized in platform.`
-                  : "No tenant stores provisioned yet.",
-                time: "Recently",
-                actor: "Super Admin",
-              },
-              {
-                icon: CreditCard,
-                color: "text-emerald-600 bg-emerald-50",
-                event: "Subscription Payment Confirmed",
-                detail: "Monthly SaaS renewal ₹2,499 paid via Razorpay auto-mandate.",
-                time: "1h ago",
-                actor: "System Billing",
-              },
-              {
-                icon: Package,
-                color: "text-indigo-600 bg-indigo-50",
-                event: "Master Catalog Synced",
-                detail: "1,240 barcode items ingested from GS1 Open Registry to master database.",
-                time: "3h ago",
-                actor: "Catalog Ingestion Worker",
-              },
-              {
-                icon: UserCheck,
-                color: "text-amber-600 bg-amber-50",
-                event: "Support Impersonation Started",
-                detail: "Super Admin accessed Annapurna Stores console for thermal printer debugging.",
-                time: "5h ago",
-                actor: "Super Admin (Surya Varma)",
-              },
-              {
-                icon: Database,
-                color: "text-slate-600 bg-slate-100",
-                event: "Automated DB Snapshot Created",
-                detail: "Postgres cold backup completed and uploaded to cloud cold storage.",
-                time: "8h ago",
-                actor: "DR Backup Cron",
-              },
-            ].map((ev, i) => {
-              const Icon = ev.icon;
-              return (
-                <div key={i} className="flex items-start gap-3 py-3">
-                  <div className={`flex size-8 shrink-0 items-center justify-center rounded-lg ${ev.color}`}>
-                    <Icon size={15} />
-                  </div>
-                  <div className="min-w-0 flex-1">
-                    <div className="flex items-center justify-between">
-                      <span className="text-xs font-semibold text-slate-900">{ev.event}</span>
-                      <span className="text-[11px] font-medium text-slate-400">{ev.time}</span>
-                    </div>
-                    <p className="mt-0.5 text-xs text-slate-600">{ev.detail}</p>
-                    <div className="mt-1 flex items-center gap-1.5 text-[10px] font-medium text-slate-400">
-                      <span>Initiated by: {ev.actor}</span>
-                    </div>
-                  </div>
+            {activity.length === 0 ? (
+              <p className="py-6 text-xs text-slate-500">No platform activity yet.</p>
+            ) : activity.map((ev) => (
+              <div key={ev.id} className="py-3">
+                <div className="flex items-center justify-between gap-3">
+                  <span className="text-xs font-semibold text-slate-900">{ev.action}</span>
+                  <span className="text-[11px] font-medium text-slate-400">
+                    {ev.created_at ? new Date(ev.created_at).toLocaleString("en-IN") : ""}
+                  </span>
                 </div>
-              );
-            })}
+                <p className="mt-0.5 text-xs text-slate-600">{ev.message}</p>
+                <div className="mt-1 text-[10px] font-medium text-slate-400">{ev.actor}</div>
+              </div>
+            ))}
           </div>
         </div>
       </section>

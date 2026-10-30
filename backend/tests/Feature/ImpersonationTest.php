@@ -50,5 +50,9 @@ class ImpersonationTest extends TestCase
             ->assertJsonPath('data.kind', 'platform')
             ->assertJsonPath('data.impersonation', null);
         $this->getJson('/api/v1/platform/tenants')->assertOk();
+        $this->getJson('/api/v1/platform/logs')
+            ->assertOk()
+            ->assertJsonPath('data.impersonation_logs.0.status', 'ended')
+            ->assertJsonPath('data.impersonation_logs.0.tenant_name', 'Annapurna Stores');
     }
 }

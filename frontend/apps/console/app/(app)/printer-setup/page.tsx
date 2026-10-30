@@ -72,6 +72,53 @@ type ReceiptBlock = {
   tags: string[];
 };
 
+type ChannelPrintConfig = {
+  enabled: boolean;
+  customer_receipt: boolean;
+  counter_receipt: boolean;
+  auto_counter_on_order: boolean;
+  validation_receipt_on_scan: boolean;
+  auto_print: boolean;
+  customer_printer_id: string;
+  counter_printer_id: string;
+  copies: number;
+  counter_copies: number;
+  open_drawer: boolean;
+  cut_paper: boolean;
+  print_validation_qr: boolean;
+  qr_size: "S" | "M" | "L";
+  print_queue_token: boolean;
+  print_itemized_lines: boolean;
+  single_use_qr: boolean;
+  verify_paid_on_scan: boolean;
+  print_serving_checklist: boolean;
+  qr_instruction: string;
+  counter_stamp: string;
+};
+
+type ChannelsConfig = {
+  pos: ChannelPrintConfig;
+  kiosk: ChannelPrintConfig;
+  online: ChannelPrintConfig;
+};
+
+type KioskPrintingConfig = {
+  auto_print_kiosk_slip: boolean;
+  print_validation_qr: boolean;
+  qr_size: "S" | "M" | "L";
+  print_queue_token_banner: boolean;
+  print_itemized_lines: boolean;
+  kiosk_slip_copies: number;
+  kiosk_slip_instruction: string;
+  auto_print_counter_handover_receipt: boolean;
+  counter_receipt_copies: number;
+  print_serving_checklist: boolean;
+  single_use_qr_redemption: boolean;
+  require_paid_status_on_scan: boolean;
+  open_drawer_on_unpaid_scan: boolean;
+  counter_stamp_text: string;
+};
+
 type PrinterSetupState = {
   activeModes: Record<PrintMode, boolean>;
   bridgeHost: string;
@@ -81,6 +128,7 @@ type PrinterSetupState = {
   printers: HardwarePrinter[];
   routing: RoutingRule[];
   activeTemplateTab: PaperFormat;
+  channels: ChannelsConfig;
   headerStoreName: string;
   headerTagline: string;
   headerAddress: string;
@@ -94,9 +142,41 @@ type PrinterSetupState = {
   returnPolicyText: string;
   footerThankYou: string;
   blocks: ReceiptBlock[];
+  kiosk_printing: KioskPrintingConfig;
 };
 
 const PRINTER_STORAGE_KEY = "selfx-printer-setup-v1";
+
+function channelConfig(
+  customerPrinter: string,
+  counterPrinter: string,
+  patch: Partial<ChannelPrintConfig>,
+): ChannelPrintConfig {
+  return {
+    enabled: true,
+    customer_receipt: true,
+    counter_receipt: false,
+    auto_counter_on_order: false,
+    validation_receipt_on_scan: false,
+    auto_print: true,
+    customer_printer_id: customerPrinter,
+    counter_printer_id: counterPrinter,
+    copies: 1,
+    counter_copies: 1,
+    open_drawer: false,
+    cut_paper: true,
+    print_validation_qr: false,
+    qr_size: "L",
+    print_queue_token: false,
+    print_itemized_lines: true,
+    single_use_qr: true,
+    verify_paid_on_scan: true,
+    print_serving_checklist: true,
+    qr_instruction: "Show this QR at the counter, or to the delivery person, for validation.",
+    counter_stamp: "QR VERIFIED — READY TO HAND OVER",
+    ...patch,
+  };
+}
 
 const defaultPrinterState: PrinterSetupState = {
   activeModes: {
@@ -144,6 +224,23 @@ const defaultPrinterState: PrinterSetupState = {
       status: "online",
     },
     {
+      id: "prn-kiosk-1",
+      name: "Epson TM-T82III Kiosk #1",
+      role: "Self-Ordering Kiosk Thermal Printer",
+      connection: "lan",
+      ipAddress: "192.168.1.210",
+      port: "9100",
+      paperWidth: "80mm",
+      dpi: "203",
+      codepage: "PC437 / UTF-8",
+      autoCut: "partial",
+      openDrawer: "none",
+      buzzer: true,
+      feedLines: 4,
+      density: "normal",
+      status: "online",
+    },
+    {
       id: "prn-a4-1",
       name: "HP LaserJet Pro A4",
       role: "B2B GST Tax Invoices & Reports",
@@ -171,6 +268,28 @@ const defaultPrinterState: PrinterSetupState = {
       copies: 1,
       autoPrint: true,
       openDrawer: true,
+      cutPaper: true,
+    },
+    {
+      id: "rt-kiosk-slip",
+      docType: "Kiosk Prepaid Order & QR Token Slip",
+      description: "Printed at the Kiosk with a validation QR code when the customer pays",
+      printerId: "prn-kiosk-1",
+      paperFormat: "80mm",
+      copies: 1,
+      autoPrint: true,
+      openDrawer: false,
+      cutPaper: true,
+    },
+    {
+      id: "rt-kiosk-counter",
+      docType: "Kiosk Counter QR Validation & Handover Receipt",
+      description: "Printed at the POS Counter when staff scan the customer's Kiosk QR slip to serve items",
+      printerId: "prn-counter-1",
+      paperFormat: "80mm",
+      copies: 1,
+      autoPrint: true,
+      openDrawer: false,
       cutPaper: true,
     },
     {
@@ -454,7 +573,74 @@ const defaultPrinterState: PrinterSetupState = {
       tags: ["Terms", "Thank You"],
     },
   ],
+  channels: {
+    pos: channelConfig("prn-counter-1", "prn-counter-1", {
+      counter_receipt: true,
+      auto_counter_on_order: true,
+      open_drawer: true,
+      qr_instruction: "POS customer bill. The attached counter copy can be turned off.",
+      counter_stamp: "COUNTER COPY — PACK & FILE",
+    }),
+    kiosk: channelConfig("prn-kiosk-1", "prn-counter-1", {
+      print_validation_qr: true,
+      print_queue_token: true,
+      validation_receipt_on_scan: true,
+      auto_counter_on_order: false,
+      qr_instruction: "Prepaid kiosk order. Scan this QR at the counter to print the store receipt and collect the items.",
+      counter_stamp: "QR VERIFIED AT COUNTER — READY TO SERVE",
+    }),
+    online: channelConfig("prn-counter-1", "prn-counter-1", {
+      auto_counter_on_order: true,
+      validation_receipt_on_scan: true,
+      print_validation_qr: true,
+      print_queue_token: true,
+      open_drawer: true,
+      qr_instruction: "Show this QR at the store for pickup, or to the delivery person at handover.",
+      counter_stamp: "ONLINE ORDER VERIFIED — HAND OVER",
+    }),
+  },
+  kiosk_printing: {
+    auto_print_kiosk_slip: true,
+    print_validation_qr: true,
+    qr_size: "L",
+    print_queue_token_banner: true,
+    print_itemized_lines: true,
+    kiosk_slip_copies: 1,
+    kiosk_slip_instruction: "Scan this QR slip at the counter to validate & collect your items.",
+    auto_print_counter_handover_receipt: true,
+    counter_receipt_copies: 1,
+    print_serving_checklist: true,
+    single_use_qr_redemption: true,
+    require_paid_status_on_scan: true,
+    open_drawer_on_unpaid_scan: true,
+    counter_stamp_text: "QR VERIFIED AT COUNTER — READY TO SERVE",
+  },
 };
+
+function kioskChannelFromPrinting(
+  printing: Partial<KioskPrintingConfig> | undefined,
+  base: ChannelPrintConfig,
+): ChannelPrintConfig {
+  if (!printing) return base;
+  return {
+    ...base,
+    auto_print: printing.auto_print_kiosk_slip ?? base.auto_print,
+    customer_receipt: printing.auto_print_kiosk_slip ?? base.customer_receipt,
+    print_validation_qr: printing.print_validation_qr ?? base.print_validation_qr,
+    qr_size: printing.qr_size ?? base.qr_size,
+    print_queue_token: printing.print_queue_token_banner ?? base.print_queue_token,
+    print_itemized_lines: printing.print_itemized_lines ?? base.print_itemized_lines,
+    copies: printing.kiosk_slip_copies ?? base.copies,
+    qr_instruction: printing.kiosk_slip_instruction ?? base.qr_instruction,
+    validation_receipt_on_scan: printing.auto_print_counter_handover_receipt ?? base.validation_receipt_on_scan,
+    counter_copies: printing.counter_receipt_copies ?? base.counter_copies,
+    print_serving_checklist: printing.print_serving_checklist ?? base.print_serving_checklist,
+    single_use_qr: printing.single_use_qr_redemption ?? base.single_use_qr,
+    verify_paid_on_scan: printing.require_paid_status_on_scan ?? base.verify_paid_on_scan,
+    open_drawer: printing.open_drawer_on_unpaid_scan ?? base.open_drawer,
+    counter_stamp: printing.counter_stamp_text ?? base.counter_stamp,
+  };
+}
 
 function token() {
   return decodeURIComponent(
@@ -477,6 +663,8 @@ export default function PrinterSetupPage() {
   const [pairingStatus, setPairingStatus] = useState<string | null>(null);
   const [isAgentOnline, setIsAgentOnline] = useState(false);
   const [deviceToken, setDeviceToken] = useState("");
+  const [previewChannel, setPreviewChannel] = useState<"pos" | "kiosk" | "online">("pos");
+  const [previewCopy, setPreviewCopy] = useState<"customer" | "counter">("customer");
 
   const refreshAgentStatus = useCallback(async () => {
     const online = await checkAgentStatus();
@@ -597,6 +785,11 @@ export default function PrinterSetupPage() {
           blocks: parsed.blocks && parsed.blocks.length > 0 ? parsed.blocks : prev.blocks,
           printers: parsed.printers && parsed.printers.length > 0 ? parsed.printers : prev.printers,
           routing: parsed.routing && parsed.routing.length > 0 ? parsed.routing : prev.routing,
+          channels: {
+            pos: { ...prev.channels.pos, ...(parsed.channels?.pos ?? {}) },
+            kiosk: { ...prev.channels.kiosk, ...(parsed.channels?.kiosk ?? {}) },
+            online: { ...prev.channels.online, ...(parsed.channels?.online ?? {}) },
+          },
         }));
       }
     } catch {
@@ -640,6 +833,7 @@ export default function PrinterSetupPage() {
       })
       .catch(() => {});
 
+    let savedKioskChannel = false;
     const receiptRes = await fetch(`/api/v1/stores/${id}/receipt`, {
       credentials: "include",
       headers: { Accept: "application/json" },
@@ -652,17 +846,49 @@ export default function PrinterSetupPage() {
         };
       };
       if (body.data.printer_settings && Object.keys(body.data.printer_settings).length > 0) {
+        savedKioskChannel = Boolean(body.data.printer_settings.channels?.kiosk);
         setState((prev) => ({
           ...prev,
           ...body.data.printer_settings,
           blocks: body.data.printer_settings?.blocks ?? prev.blocks,
           printers: body.data.printer_settings?.printers ?? prev.printers,
           routing: body.data.printer_settings?.routing ?? prev.routing,
+          channels: {
+            pos: { ...prev.channels.pos, ...(body.data.printer_settings?.channels?.pos ?? {}) },
+            kiosk: { ...prev.channels.kiosk, ...(body.data.printer_settings?.channels?.kiosk ?? {}) },
+            online: { ...prev.channels.online, ...(body.data.printer_settings?.channels?.online ?? {}) },
+          },
+          kiosk_printing: {
+            ...prev.kiosk_printing,
+            ...(body.data.printer_settings?.kiosk_printing ?? {}),
+          },
         }));
       } else if (body.data.receipt_footer) {
         setState((prev) => ({ ...prev, footerThankYou: body.data.receipt_footer || prev.footerThankYou }));
       }
     }
+
+    fetch(`/api/v1/stores/${id}/kiosk-settings`, {
+      credentials: "include",
+      headers: { Accept: "application/json" },
+    })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((kBody) => {
+        const kp = kBody?.data?.kiosk_settings?.printing;
+        if (kp) {
+          setState((prev) => ({
+            ...prev,
+            kiosk_printing: { ...prev.kiosk_printing, ...kp },
+            channels: savedKioskChannel
+              ? prev.channels
+              : {
+                  ...prev.channels,
+                  kiosk: kioskChannelFromPrinting(kp, prev.channels.kiosk),
+                },
+          }));
+        }
+      })
+      .catch(() => {});
   }, []);
 
   useEffect(() => {
@@ -670,12 +896,46 @@ export default function PrinterSetupPage() {
     void refreshAgentStatus();
   }, [load, refreshAgentStatus]);
 
+  const activeChannel = state.channels[previewChannel];
+  const channelLabel = previewChannel === "pos" ? "POS" : previewChannel === "kiosk" ? "Kiosk" : "Online store";
+
+  function patchChannel(patch: Partial<ChannelPrintConfig>, channel: "pos" | "kiosk" | "online" = previewChannel) {
+    setState((current) => ({
+      ...current,
+      channels: {
+        ...current.channels,
+        [channel]: { ...current.channels[channel], ...patch },
+      },
+    }));
+  }
+
   async function saveAllSettings(nextState = state) {
+    const kiosk = nextState.channels.kiosk;
+    const synced: PrinterSetupState = {
+      ...nextState,
+      kiosk_printing: {
+        ...nextState.kiosk_printing,
+        auto_print_kiosk_slip: kiosk.enabled && kiosk.auto_print && kiosk.customer_receipt,
+        print_validation_qr: kiosk.print_validation_qr,
+        qr_size: kiosk.qr_size,
+        print_queue_token_banner: kiosk.print_queue_token,
+        print_itemized_lines: kiosk.print_itemized_lines,
+        kiosk_slip_copies: kiosk.copies,
+        kiosk_slip_instruction: kiosk.qr_instruction,
+        auto_print_counter_handover_receipt: kiosk.validation_receipt_on_scan || kiosk.auto_counter_on_order,
+        counter_receipt_copies: kiosk.counter_copies,
+        print_serving_checklist: kiosk.print_serving_checklist,
+        single_use_qr_redemption: kiosk.single_use_qr,
+        require_paid_status_on_scan: kiosk.verify_paid_on_scan,
+        open_drawer_on_unpaid_scan: kiosk.open_drawer,
+        counter_stamp_text: kiosk.counter_stamp,
+      },
+    };
+    setState(synced);
     setSaving(true);
     try {
-      window.localStorage.setItem(PRINTER_STORAGE_KEY, JSON.stringify(nextState));
+      window.localStorage.setItem(PRINTER_STORAGE_KEY, JSON.stringify(synced));
       if (storeId) {
-        // Sync store receipt
         await fetch(`/api/v1/stores/${storeId}/receipt`, {
           method: "PUT",
           credentials: "include",
@@ -685,13 +945,27 @@ export default function PrinterSetupPage() {
             "X-XSRF-TOKEN": token(),
           },
           body: JSON.stringify({
-            receipt_footer: nextState.footerThankYou,
-            printer_settings: nextState,
+            receipt_footer: synced.footerThankYou,
+            printer_settings: synced,
           }),
         }).catch(() => {});
 
-        // Sync printers to backend
-        for (const prn of nextState.printers) {
+        await fetch(`/api/v1/stores/${storeId}/kiosk-settings`, {
+          method: "PUT",
+          credentials: "include",
+          headers: {
+            Accept: "application/json",
+            "Content-Type": "application/json",
+            "X-XSRF-TOKEN": token(),
+          },
+          body: JSON.stringify({
+            kiosk_settings: {
+              printing: synced.kiosk_printing,
+            },
+          }),
+        }).catch(() => {});
+
+        for (const prn of synced.printers) {
           await fetch(`/api/v1/printers`, {
             method: "POST",
             credentials: "include",
@@ -716,19 +990,47 @@ export default function PrinterSetupPage() {
     }
   }
 
-  async function triggerTestPrint(kind: "receipt" | "label" = "receipt") {
-    if (storeId) {
-      await fetch("/api/v1/print-jobs", {
-        method: "POST",
-        credentials: "include",
-        headers: {
-          Accept: "application/json",
-          "Content-Type": "application/json",
-          "X-XSRF-TOKEN": token(),
-        },
-        body: JSON.stringify({ kind, cut: "partial", drawer: true, store_id: storeId, purpose: "test" }),
-      }).catch(() => {});
+  async function triggerTestPrint(kind: "receipt" | "label" = "receipt", printerId?: string) {
+    if (!storeId) return;
+
+    const targetPrinterId = printerId || state.printers.find((p) => p.status === "online")?.id || state.printers[0]?.id;
+
+    if (targetPrinterId && !targetPrinterId.startsWith("prn-")) {
+      try {
+        const res = await fetch(`/api/v1/printers/${targetPrinterId}/test-print`, {
+          method: "POST",
+          credentials: "include",
+          headers: {
+            Accept: "application/json",
+            "Content-Type": "application/json",
+            "X-XSRF-TOKEN": token(),
+          },
+        });
+        if (res.ok) {
+          return;
+        }
+      } catch {
+        // Fallback to queueing print-jobs below
+      }
     }
+
+    await fetch("/api/v1/print-jobs", {
+      method: "POST",
+      credentials: "include",
+      headers: {
+        Accept: "application/json",
+        "Content-Type": "application/json",
+        "X-XSRF-TOKEN": token(),
+      },
+      body: JSON.stringify({
+        kind,
+        cut: "partial",
+        drawer: true,
+        store_id: storeId,
+        purpose: "test",
+        printer_id: targetPrinterId,
+      }),
+    }).catch(() => {});
   }
 
   function updateBlock(id: string, patch: Partial<ReceiptBlock>) {
@@ -950,6 +1252,125 @@ export default function PrinterSetupPage() {
               Direct Hardware IO
             </span>
           </div>
+        </div>
+
+        <div className="mt-6 rounded-[14px] border border-line bg-white p-4">
+          <div className="mb-4">
+            <h3 className="text-[14px] font-semibold text-ink">Order channels and receipts</h3>
+            <p className="text-[12px] text-muted">
+              One setup for POS, kiosk, and the online store. Each channel can print a customer receipt and a store receipt. The store receipt can print with the order, or only after the QR is scanned.
+            </p>
+          </div>
+          <div className="grid gap-3 md:grid-cols-3">
+            {(
+              [
+                {
+                  id: "pos" as const,
+                  title: "POS",
+                  tone: "border-violet-300 bg-[#faf5ff]",
+                  copy: "Customer bill at the counter. Turn the attached store copy on or off.",
+                },
+                {
+                  id: "kiosk" as const,
+                  title: "Kiosk",
+                  tone: "border-orange-300 bg-[#fff7ed]",
+                  copy: "Prepaid order. Customer slip carries the validation QR. Store copy prints on scan, or with the order if the counter has no scanner.",
+                },
+                {
+                  id: "online" as const,
+                  title: "Online store",
+                  tone: "border-emerald-300 bg-[#ecfdf5]",
+                  copy: "Store packing slip prints when the order is placed. Customer QR is scanned at the store or by the rider.",
+                },
+              ]
+            ).map((card) => {
+              const channel = state.channels[card.id];
+              return (
+                <button
+                  key={card.id}
+                  type="button"
+                  onClick={() => {
+                    setPreviewChannel(card.id);
+                    setPreviewCopy("customer");
+                  }}
+                  className={`rounded-[12px] border p-3 text-left ${card.tone} ${previewChannel === card.id ? "ring-2 ring-slate-900" : ""}`}
+                >
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-sm font-semibold text-ink">{card.title}</span>
+                    <input
+                      type="checkbox"
+                      checked={channel.enabled}
+                      onClick={(event) => event.stopPropagation()}
+                      onChange={(event) =>
+                        setState((current) => ({
+                          ...current,
+                          channels: {
+                            ...current.channels,
+                            [card.id]: { ...current.channels[card.id], enabled: event.target.checked },
+                          },
+                        }))
+                      }
+                      className="h-4 w-4 rounded"
+                    />
+                  </div>
+                  <p className="mt-1 text-[11px] leading-relaxed text-muted">{card.copy}</p>
+                </button>
+              );
+            })}
+          </div>
+
+          <div className="mt-4 overflow-x-auto">
+            <table className="w-full text-left text-[12px]">
+              <thead>
+                <tr className="border-b border-line text-[10px] font-semibold uppercase tracking-wider text-slate-500">
+                  <th className="py-2 pr-3">Channel</th>
+                  <th className="py-2 pr-3">Customer receipt</th>
+                  <th className="py-2 pr-3">Store copy with the order</th>
+                  <th className="py-2 pr-3">Store copy on QR scan</th>
+                  <th className="py-2">Validation QR</th>
+                </tr>
+              </thead>
+              <tbody>
+                {(
+                  [
+                    ["pos", "POS counter"],
+                    ["kiosk", "Kiosk, prepaid"],
+                    ["online", "Online store"],
+                  ] as const
+                ).map(([id, label]) => {
+                  const channel = state.channels[id];
+                  const patch = (key: keyof ChannelPrintConfig, value: boolean) =>
+                    setState((current) => ({
+                      ...current,
+                      channels: {
+                        ...current.channels,
+                        [id]: { ...current.channels[id], [key]: value },
+                      },
+                    }));
+                  return (
+                    <tr key={id} className="border-b border-line/70">
+                      <td className="py-2.5 pr-3 font-semibold text-ink">{label}</td>
+                      {(
+                        ["customer_receipt", "auto_counter_on_order", "validation_receipt_on_scan", "print_validation_qr"] as const
+                      ).map((key) => (
+                        <td key={key} className="py-2.5 pr-3">
+                          <input
+                            type="checkbox"
+                            checked={channel[key]}
+                            onChange={(event) => patch(key, event.target.checked)}
+                            className="h-4 w-4 rounded"
+                          />
+                        </td>
+                      ))}
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+          <p className="mt-3 text-[11px] text-muted">
+            POS store copy is the attached counter bill. Kiosk store copy on QR scan is used when the counter has a scanner. Turn on “store copy with the order” for a kiosk when the counter has no scanner, so both slips print as soon as the customer pays. Online orders print a packing slip in the store, and the customer QR is scanned at pickup or by the rider.
+          </p>
         </div>
 
         {/* Document Routing Matrix Table (Matches Image 4 Matrix) */}
@@ -1192,7 +1613,7 @@ export default function PrinterSetupPage() {
               <div className="mt-3.5 flex items-center justify-between border-t border-line pt-3">
                 <button
                   type="button"
-                  onClick={() => void triggerTestPrint(prn.paperWidth === "label_50x25" ? "label" : "receipt")}
+                  onClick={() => void triggerTestPrint(prn.paperWidth === "label_50x25" ? "label" : "receipt", prn.id)}
                   className="inline-flex items-center gap-1 text-xs font-semibold text-indigo-600 hover:underline"
                 >
                   <Zap size={13} />
@@ -1510,7 +1931,44 @@ export default function PrinterSetupPage() {
                 <FileText size={16} className="text-indigo-600" />
                 <div>
                   <h3 className="text-[14px] font-semibold text-ink">Thermal Receipt Preview</h3>
-                  <div className="mt-1 flex items-center gap-1.5">
+                  <div className="mt-1 flex flex-wrap items-center gap-1.5">
+                    {(
+                      [
+                        ["pos", "POS"],
+                        ["kiosk", "Kiosk"],
+                        ["online", "Online"],
+                      ] as const
+                    ).map(([id, label]) => (
+                      <button
+                        key={id}
+                        type="button"
+                        onClick={() => setPreviewChannel(id)}
+                        className={`rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase ${
+                          previewChannel === id ? "bg-indigo-600 text-white" : "bg-slate-100 text-slate-600"
+                        }`}
+                      >
+                        {label}
+                      </button>
+                    ))}
+                    <button
+                      type="button"
+                      onClick={() => setPreviewCopy("customer")}
+                      className={`rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase ${
+                        previewCopy === "customer" ? "bg-slate-900 text-white" : "bg-slate-100 text-slate-600"
+                      }`}
+                    >
+                      Customer
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setPreviewCopy("counter")}
+                      className={`rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase ${
+                        previewCopy === "counter" ? "bg-slate-900 text-white" : "bg-slate-100 text-slate-600"
+                      }`}
+                    >
+                      Store copy
+                    </button>
+                  </div>
                     <button
                       type="button"
                       onClick={() => setPreviewMode("visual")}
@@ -1536,7 +1994,6 @@ export default function PrinterSetupPage() {
                     >
                       Server HTML
                     </button>
-                  </div>
                 </div>
               </div>
               <div className="flex items-center gap-1.5">
@@ -1634,7 +2091,22 @@ export default function PrinterSetupPage() {
                 {/* 5. Invoice Title Banner */}
                 {isBlockEnabled("invoice_banner") ? (
                   <div className="my-2 border-y border-dashed border-slate-400 py-1 text-center text-[11.5px] font-semibold tracking-widest uppercase">
-                    {state.invoiceTitle}
+                    {previewCopy === "counter" ? `${channelLabel} store copy` : state.invoiceTitle}
+                  </div>
+                ) : null}
+
+                <div className="mb-2 text-center text-[9px] font-semibold uppercase tracking-wider text-slate-500">
+                  {channelLabel} · {previewCopy === "customer" ? "Customer receipt" : "Store receipt"}
+                </div>
+                {previewCopy === "counter" && activeChannel.counter_stamp ? (
+                  <div className="mb-2 border border-slate-900 px-2 py-1 text-center text-[9px] font-semibold uppercase">
+                    {activeChannel.counter_stamp}
+                  </div>
+                ) : null}
+                {previewCopy === "customer" && activeChannel.print_queue_token ? (
+                  <div className="mb-2 border border-slate-900 bg-slate-900 py-1 text-center text-white">
+                    <div className="text-[8px] uppercase tracking-widest">Token</div>
+                    <div className="text-sm font-semibold">{previewChannel === "kiosk" ? "K-042" : previewChannel === "online" ? "ON-042" : "C-042"}</div>
                   </div>
                 ) : null}
 
@@ -1815,6 +2287,263 @@ export default function PrinterSetupPage() {
           </section>
         </div>
       </div>
+
+      <section className="rounded-[16px] border border-line bg-surface p-6 shadow-[0_2px_8px_rgba(15,23,42,0.03)] space-y-6">
+        <div className="flex flex-wrap items-center justify-between gap-4 border-b border-line pb-4">
+          <div className="flex items-center gap-3">
+            <span className="grid h-10 w-10 place-items-center rounded-[10px] bg-slate-900 text-white">
+              <QrCode size={20} />
+            </span>
+            <div>
+              <h2 className="text-[15px] font-semibold text-ink">{channelLabel} receipt rules</h2>
+              <p className="text-[12px] text-muted">
+                Same printer setup for every channel. These rules apply to the channel selected above.
+              </p>
+            </div>
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            {(
+              [
+                ["pos", "POS"],
+                ["kiosk", "Kiosk"],
+                ["online", "Online"],
+              ] as const
+            ).map(([id, label]) => (
+              <button
+                key={id}
+                type="button"
+                onClick={() => setPreviewChannel(id)}
+                className={`rounded-[8px] px-3 py-1.5 text-xs font-semibold ${
+                  previewChannel === id ? "bg-slate-900 text-white" : "border border-line bg-white text-ink"
+                }`}
+              >
+                {label}
+              </button>
+            ))}
+            <Button type="button" variant="primary" size="sm" disabled={saving} onClick={() => void saveAllSettings(state)}>
+              <Save size={14} />
+              <span>{saving ? "Saving..." : "Save print rules"}</span>
+            </Button>
+          </div>
+        </div>
+
+        <div className="grid gap-6 lg:grid-cols-12">
+          <div className="lg:col-span-6 space-y-5">
+            <div className="rounded-[12px] border border-line bg-bg/50 p-4 text-[12px] leading-relaxed text-muted">
+              {previewChannel === "pos"
+                ? "POS prints the customer bill at the counter. The store copy is attached to that bill and can be turned off."
+                : previewChannel === "kiosk"
+                  ? "Kiosk orders are prepaid. The customer slip always carries the validation QR. The store copy prints when that QR is scanned, or with the order if the counter has no scanner."
+                  : "An online order prints a packing slip on the store printer as soon as it is placed. The customer QR is shown on the tracking page and prints the handover receipt when scanned at the store or by the rider."}
+            </div>
+
+            <div className="rounded-[12px] border border-line bg-bg/50 p-4 space-y-3.5">
+              <h3 className="border-b border-line pb-2.5 text-xs font-semibold text-ink">Customer receipt</h3>
+              {(
+                [
+                  ["auto_print", "Print as soon as the order is placed"],
+                  ["customer_receipt", "Print the customer receipt"],
+                  ["print_validation_qr", "Print the validation QR on the customer receipt"],
+                  ["print_queue_token", "Print the order token"],
+                  ["print_itemized_lines", "Print item lines"],
+                  ["cut_paper", "Cut the paper after the customer receipt"],
+                ] as const
+              ).map(([key, label]) => (
+                <label key={key} className="flex items-center justify-between gap-3 text-xs font-medium text-ink">
+                  <span>{label}</span>
+                  <input
+                    type="checkbox"
+                    checked={activeChannel[key]}
+                    onChange={(event) => patchChannel({ [key]: event.target.checked })}
+                    className="h-4 w-4 rounded"
+                  />
+                </label>
+              ))}
+              <div className="grid grid-cols-2 gap-3">
+                <label className="block text-[11px] font-semibold text-ink">
+                  Printer
+                  <select
+                    value={activeChannel.customer_printer_id}
+                    onChange={(event) => patchChannel({ customer_printer_id: event.target.value })}
+                    className="mt-1 h-8 w-full rounded-[8px] border border-line bg-white px-2.5 text-xs text-ink"
+                  >
+                    {state.printers.map((printer) => (
+                      <option key={printer.id} value={printer.id}>
+                        {printer.name}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label className="block text-[11px] font-semibold text-ink">
+                  Copies
+                  <input
+                    type="number"
+                    min={1}
+                    max={3}
+                    value={activeChannel.copies}
+                    onChange={(event) => patchChannel({ copies: Math.max(1, Number(event.target.value || 1)) })}
+                    className="num mt-1 h-8 w-full rounded-[8px] border border-line bg-white px-2.5 text-xs text-ink"
+                  />
+                </label>
+              </div>
+              <label className="block text-[11px] font-semibold text-ink">
+                QR size
+                <select
+                  value={activeChannel.qr_size}
+                  onChange={(event) => patchChannel({ qr_size: event.target.value as "S" | "M" | "L" })}
+                  className="mt-1 h-8 w-full rounded-[8px] border border-line bg-white px-2.5 text-xs text-ink"
+                >
+                  <option value="S">Compact</option>
+                  <option value="M">Medium</option>
+                  <option value="L">Large</option>
+                </select>
+              </label>
+              <label className="block text-[11px] font-semibold text-ink">
+                Instruction under the QR
+                <input
+                  value={activeChannel.qr_instruction}
+                  onChange={(event) => patchChannel({ qr_instruction: event.target.value })}
+                  className="mt-1 h-8 w-full rounded-[8px] border border-line bg-white px-2.5 text-xs text-ink"
+                />
+              </label>
+            </div>
+
+            <div className="rounded-[12px] border border-line bg-bg/50 p-4 space-y-3.5">
+              <h3 className="border-b border-line pb-2.5 text-xs font-semibold text-ink">Store receipt</h3>
+              {(
+                [
+                  ["auto_counter_on_order", "Print the store copy with the order"],
+                  ["validation_receipt_on_scan", "Print the store copy when the QR is scanned"],
+                  ["single_use_qr", "Reject a QR that was already used"],
+                  ["verify_paid_on_scan", "Check that the order is paid before handover"],
+                  ["print_serving_checklist", "Print a tick against each item on the store copy"],
+                  ["open_drawer", "Open the cash drawer with this receipt"],
+                ] as const
+              ).map(([key, label]) => (
+                <label key={key} className="flex items-center justify-between gap-3 text-xs font-medium text-ink">
+                  <span>{label}</span>
+                  <input
+                    type="checkbox"
+                    checked={activeChannel[key]}
+                    onChange={(event) => patchChannel({ [key]: event.target.checked })}
+                    className="h-4 w-4 rounded"
+                  />
+                </label>
+              ))}
+              <div className="grid grid-cols-2 gap-3">
+                <label className="block text-[11px] font-semibold text-ink">
+                  Store printer
+                  <select
+                    value={activeChannel.counter_printer_id}
+                    onChange={(event) => patchChannel({ counter_printer_id: event.target.value })}
+                    className="mt-1 h-8 w-full rounded-[8px] border border-line bg-white px-2.5 text-xs text-ink"
+                  >
+                    {state.printers.map((printer) => (
+                      <option key={printer.id} value={printer.id}>
+                        {printer.name}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label className="block text-[11px] font-semibold text-ink">
+                  Store copies
+                  <input
+                    type="number"
+                    min={1}
+                    max={3}
+                    value={activeChannel.counter_copies}
+                    onChange={(event) => patchChannel({ counter_copies: Math.max(1, Number(event.target.value || 1)) })}
+                    className="num mt-1 h-8 w-full rounded-[8px] border border-line bg-white px-2.5 text-xs text-ink"
+                  />
+                </label>
+              </div>
+              <label className="block text-[11px] font-semibold text-ink">
+                Stamp on the store copy
+                <input
+                  value={activeChannel.counter_stamp}
+                  onChange={(event) => patchChannel({ counter_stamp: event.target.value })}
+                  className="mt-1 h-8 w-full rounded-[8px] border border-line bg-white px-2.5 text-xs text-ink"
+                />
+              </label>
+            </div>
+          </div>
+
+          <div className="lg:col-span-6 grid gap-4 sm:grid-cols-2">
+            <div className="rounded-[12px] border border-slate-200 bg-white p-4 font-mono text-[10.5px] leading-relaxed text-slate-900">
+              <div className="mb-2 flex items-center justify-between border-b border-slate-200 pb-1.5 font-sans text-[10px] font-semibold uppercase tracking-wider text-slate-600">
+                <span>{channelLabel} customer</span>
+                <span>{activeChannel.customer_receipt ? "Prints" : "Off"}</span>
+              </div>
+              <div className="text-center">
+                <p className="font-bold text-xs">{state.headerStoreName}</p>
+                <p className="text-[9.5px] text-slate-500">{channelLabel}</p>
+              </div>
+              {activeChannel.print_queue_token ? (
+                <div className="my-2 border border-slate-900 bg-slate-900 py-1.5 text-center text-white">
+                  <div className="text-[9px] uppercase tracking-widest">Order token</div>
+                  <div className="text-lg font-bold">{previewChannel === "kiosk" ? "K-042" : previewChannel === "online" ? "ON-042" : "C-042"}</div>
+                </div>
+              ) : null}
+              {activeChannel.print_itemized_lines ? (
+                <div className="my-2 space-y-1 border-b border-dashed border-slate-300 pb-2 text-[10px]">
+                  <div className="flex justify-between">
+                    <span>2 × Basmati Rice 5kg</span>
+                    <span>₹520.00</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span>1 × Filter Coffee 250g</span>
+                    <span>₹180.00</span>
+                  </div>
+                </div>
+              ) : null}
+              <div className="flex justify-between font-bold text-xs">
+                <span>Total</span>
+                <span>₹700.00</span>
+              </div>
+              {activeChannel.print_validation_qr ? (
+                <div className="mt-3 flex flex-col items-center border-t border-dashed border-slate-300 pt-2.5 text-center">
+                  <div className="flex h-24 w-24 items-center justify-center rounded border-2 border-slate-900 bg-slate-50">
+                    <QrCode className="h-16 w-16 text-slate-900" />
+                  </div>
+                  <p className="mt-1 text-[9.5px] text-slate-600">{activeChannel.qr_instruction}</p>
+                </div>
+              ) : null}
+            </div>
+
+            <div className="rounded-[12px] border border-slate-200 bg-white p-4 font-mono text-[10.5px] leading-relaxed text-slate-900">
+              <div className="mb-2 flex items-center justify-between border-b border-slate-200 pb-1.5 font-sans text-[10px] font-semibold uppercase tracking-wider text-slate-600">
+                <span>{channelLabel} store copy</span>
+                <span>{activeChannel.auto_counter_on_order || activeChannel.validation_receipt_on_scan ? "Prints" : "Off"}</span>
+              </div>
+              <div className="text-center">
+                <p className="font-bold text-xs">{state.headerStoreName}</p>
+                <p className="text-[9.5px] text-slate-500">
+                  {activeChannel.auto_counter_on_order ? "With the order" : "On QR scan"}
+                </p>
+              </div>
+              {activeChannel.counter_stamp ? (
+                <div className="my-2 border border-slate-900 px-2 py-1 text-center text-[9.5px] font-semibold uppercase">
+                  {activeChannel.counter_stamp}
+                </div>
+              ) : null}
+              <div className="my-2 space-y-1 border-b border-dashed border-slate-300 pb-2 text-[10px]">
+                <div className="flex justify-between">
+                  <span>{activeChannel.print_serving_checklist ? "[✓] " : ""}2 × Basmati Rice 5kg</span>
+                  <span>₹520.00</span>
+                </div>
+                <div className="flex justify-between">
+                  <span>{activeChannel.print_serving_checklist ? "[✓] " : ""}1 × Filter Coffee 250g</span>
+                  <span>₹180.00</span>
+                </div>
+              </div>
+              <div className="flex justify-between font-bold text-xs">
+                <span>Total</span>
+                <span>₹700.00</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
 
       {/* Add / Edit Hardware Printer Modal */}
       {showAddPrinter && editingPrinter ? (

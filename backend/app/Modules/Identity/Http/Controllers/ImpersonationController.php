@@ -87,7 +87,18 @@ class ImpersonationController
         if (! $admin) {
             return ApiResponse::error('resource.not_found', 'The platform account was not found.', 404);
         }
-        AuditLog::write((string) $request->session()->get('tenant_id'), $admin->id, 'impersonation.stopped', $request->user()->id);
+        $tenantId = (string) $request->session()->get('tenant_id');
+        AuditLog::write($tenantId, $admin->id, 'impersonation.stopped', $request->user()->id);
+        $openId = DB::table('impersonation_tickets')
+            ->where('impersonator_id', $admin->id)
+            ->where('tenant_id', $tenantId)
+            ->whereNotNull('used_at')
+            ->whereNull('stopped_at')
+            ->orderByDesc('created_at')
+            ->value('id');
+        if ($openId) {
+            DB::table('impersonation_tickets')->where('id', $openId)->update(['stopped_at' => now()]);
+        }
         Auth::login($admin);
         $request->session()->regenerate();
         $request->session()->forget(['tenant_id', 'impersonator_id']);

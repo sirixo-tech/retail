@@ -6,7 +6,9 @@ import {
   Copy,
   ExternalLink,
   Info,
+  KeyRound,
   Laptop,
+  Lock,
   Monitor,
   Pencil,
   Plus,
@@ -25,7 +27,9 @@ type Terminal = {
   id: string;
   name: string;
   code: string;
+  kind?: string;
   status: string;
+  has_pin?: boolean;
   is_paired: boolean;
   paired_at?: string;
   device_name?: string;
@@ -58,11 +62,13 @@ export default function PosTerminalsPage() {
   const [openAddModal, setOpenAddModal] = useState(false);
   const [openPairModal, setOpenPairModal] = useState(false);
   const [openEditModal, setOpenEditModal] = useState(false);
+  const [openPinModal, setOpenPinModal] = useState(false);
   const [selectedTerminal, setSelectedTerminal] = useState<Terminal | null>(null);
 
   // Form Fields
   const [terminalName, setTerminalName] = useState("");
   const [terminalCode, setTerminalCode] = useState("");
+  const [terminalPin, setTerminalPin] = useState("");
   const [pairingInputCode, setPairingInputCode] = useState("");
   const [deviceName, setDeviceName] = useState("");
   const [generatedPin, setGeneratedPin] = useState<string | null>(null);
@@ -80,13 +86,13 @@ export default function PosTerminalsPage() {
       const activeStoreId = storesBody.data?.stats?.active_location_id || storesBody.data?.stores?.[0]?.id;
 
       if (activeStoreId) {
-        const res = await fetch(`/api/v1/stores/${activeStoreId}/terminals`, {
+        const res = await fetch(`/api/v1/stores/${activeStoreId}/terminals?kind=pos`, {
           credentials: "include",
           headers: { Accept: "application/json" },
         });
         if (res.ok) {
           const body = await res.json();
-          setTerminals(body.data?.terminals ?? []);
+          setTerminals(body.data?.pos_terminals ?? body.data?.terminals ?? []);
           setStats(body.data?.stats ?? stats);
         }
       }
@@ -145,6 +151,8 @@ export default function PosTerminalsPage() {
         body: JSON.stringify({
           name: terminalName,
           code: terminalCode ? terminalCode.toUpperCase().trim() : undefined,
+          kind: "pos",
+          pin: terminalPin.trim() || undefined,
         }),
       });
 
@@ -157,6 +165,7 @@ export default function PosTerminalsPage() {
       setOpenAddModal(false);
       setTerminalName("");
       setTerminalCode("");
+      setTerminalPin("");
       await loadTerminals();
     } catch {
       setError("An error occurred creating the terminal.");
@@ -207,6 +216,75 @@ export default function PosTerminalsPage() {
       await loadTerminals();
     } catch {
       setError("An error occurred updating the terminal.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function handleSaveTerminalPin(e: FormEvent) {
+    e.preventDefault();
+    if (!selectedTerminal) return;
+    setSaving(true);
+    setError(null);
+    const token = decodeURIComponent(
+      document.cookie
+        .split("; ")
+        .find((row) => row.startsWith("XSRF-TOKEN="))
+        ?.slice("XSRF-TOKEN=".length) ?? "",
+    );
+    try {
+      const storesRes = await fetch("/api/v1/stores", { credentials: "include", headers: { Accept: "application/json" } });
+      const storesBody = await storesRes.json();
+      const activeStoreId = storesBody.data?.stats?.active_location_id || storesBody.data?.stores?.[0]?.id;
+      const res = await fetch(`/api/v1/stores/${activeStoreId}/terminals/${selectedTerminal.id}/pin`, {
+        method: "POST",
+        credentials: "include",
+        headers: {
+          Accept: "application/json",
+          "Content-Type": "application/json",
+          "X-XSRF-TOKEN": token,
+        },
+        body: JSON.stringify({ pin: terminalPin.trim() }),
+      });
+      if (!res.ok) {
+        const body = await res.json();
+        setError(body?.error?.message ?? "Enter a 4 to 6 digit PIN.");
+        return;
+      }
+      setOpenPinModal(false);
+      setTerminalPin("");
+      await loadTerminals();
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function handleClearTerminalPin() {
+    if (!selectedTerminal) return;
+    setSaving(true);
+    const token = decodeURIComponent(
+      document.cookie
+        .split("; ")
+        .find((row) => row.startsWith("XSRF-TOKEN="))
+        ?.slice("XSRF-TOKEN=".length) ?? "",
+    );
+    try {
+      const storesRes = await fetch("/api/v1/stores", { credentials: "include", headers: { Accept: "application/json" } });
+      const storesBody = await storesRes.json();
+      const activeStoreId = storesBody.data?.stats?.active_location_id || storesBody.data?.stores?.[0]?.id;
+      await fetch(`/api/v1/stores/${activeStoreId}/terminals/${selectedTerminal.id}/pin`, {
+        method: "POST",
+        credentials: "include",
+        headers: {
+          Accept: "application/json",
+          "Content-Type": "application/json",
+          "X-XSRF-TOKEN": token,
+        },
+        body: JSON.stringify({ clear: true }),
+      });
+      setOpenPinModal(false);
+      setTerminalPin("");
+      await loadTerminals();
     } finally {
       setSaving(false);
     }
@@ -428,16 +506,22 @@ export default function PosTerminalsPage() {
                     </div>
                   </div>
 
-                  {t.is_paired ? (
-                    <span className="inline-flex items-center gap-1.5 rounded-md border border-[#a7f3d0] bg-[#ecfdf5] px-2.5 py-1 text-[11px] font-semibold text-[#065f46] dark:border-emerald-900/60 dark:bg-emerald-950/40 dark:text-emerald-300">
-                      <span className="size-1.5 rounded-full bg-emerald-500 animate-pulse" />
-                      Tablet paired
+                  <div className="flex items-center gap-1.5">
+                    {t.is_paired ? (
+                      <span className="inline-flex items-center gap-1.5 rounded-md border border-[#a7f3d0] bg-[#ecfdf5] px-2.5 py-1 text-[11px] font-semibold text-[#065f46] dark:border-emerald-900/60 dark:bg-emerald-950/40 dark:text-emerald-300">
+                        <span className="size-1.5 rounded-full bg-emerald-500 animate-pulse" />
+                        Tablet paired
+                      </span>
+                    ) : (
+                      <span className="inline-flex items-center gap-1.5 rounded-md border border-[#fde68a] bg-[#fffbeb] px-2.5 py-1 text-[11px] font-semibold text-[#92400e] dark:border-amber-900/60 dark:bg-amber-950/40 dark:text-amber-300">
+                        Not paired
+                      </span>
+                    )}
+                    <span className={`inline-flex items-center gap-1 rounded-md border px-2 py-1 text-[11px] font-semibold ${t.has_pin ? "border-indigo-200 bg-indigo-50 text-indigo-700" : "border-line bg-surface-muted text-muted"}`}>
+                      <Lock size={11} />
+                      {t.has_pin ? "PIN Set" : "No PIN"}
                     </span>
-                  ) : (
-                    <span className="inline-flex items-center gap-1 rounded-md border border-[#fde68a] bg-[#fffbeb] px-2.5 py-1 text-[11px] font-semibold text-[#92400e] dark:border-amber-900/60 dark:bg-amber-950/40 dark:text-amber-300">
-                      Not paired
-                    </span>
-                  )}
+                  </div>
                 </div>
 
                 {/* Customer Display Box */}
@@ -498,6 +582,19 @@ export default function PosTerminalsPage() {
                 )}
 
                 <div className="flex items-center gap-1.5">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setSelectedTerminal(t);
+                      setTerminalPin("");
+                      setError(null);
+                      setOpenPinModal(true);
+                    }}
+                    className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-line bg-surface px-2.5 text-xs font-semibold text-ink hover:bg-surface-muted transition-colors cursor-pointer"
+                  >
+                    <KeyRound size={12} className="text-muted" />
+                    {t.has_pin ? "Change PIN" : "Set PIN"}
+                  </button>
                   <button
                     type="button"
                     onClick={() => handleOpenEdit(t)}
@@ -693,6 +790,19 @@ export default function PosTerminalsPage() {
                 />
               </div>
 
+              <div>
+                <label className="block text-xs font-semibold text-ink">Terminal Security PIN (Optional)</label>
+                <input
+                  type="password"
+                  inputMode="numeric"
+                  maxLength={6}
+                  value={terminalPin}
+                  onChange={(e) => setTerminalPin(e.target.value.replace(/\D/g, "").slice(0, 6))}
+                  placeholder="4 to 6 digits"
+                  className="num mt-1.5 h-10 w-full font-mono rounded-lg border border-line bg-surface px-3 text-xs text-ink focus:border-accent focus:outline-hidden"
+                />
+              </div>
+
               <div className="mt-5 flex items-center justify-end gap-2 border-t border-line pt-3">
                 <button
                   type="button"
@@ -773,6 +883,75 @@ export default function PosTerminalsPage() {
                 >
                   {saving ? "Saving..." : "Save changes"}
                 </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      ) : null}
+      {openPinModal && selectedTerminal ? (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-xs">
+          <div className="relative w-full max-w-sm rounded-2xl border border-line bg-surface p-6 shadow-2xl">
+            <div className="flex items-center justify-between border-b border-line pb-3">
+              <h3 className="text-sm font-semibold text-ink">
+                Terminal PIN — {selectedTerminal.name} ({selectedTerminal.code})
+              </h3>
+              <button
+                type="button"
+                onClick={() => setOpenPinModal(false)}
+                className="rounded-lg p-1 text-muted hover:bg-surface-muted hover:text-ink cursor-pointer"
+              >
+                <X size={16} />
+              </button>
+            </div>
+            <form onSubmit={handleSaveTerminalPin} className="mt-4 space-y-3">
+              <p className="text-xs text-muted">
+                Set a 4 to 6 digit security PIN required when selecting or unlocking this POS terminal.
+              </p>
+              {error ? (
+                <div className="rounded-xl border border-red-200 bg-red-50 p-2.5 text-xs font-semibold text-red-700">
+                  {error}
+                </div>
+              ) : null}
+              <div>
+                <label className="block text-xs font-semibold text-ink">4 to 6 Digit PIN *</label>
+                <input
+                  type="password"
+                  inputMode="numeric"
+                  required
+                  minLength={4}
+                  maxLength={6}
+                  value={terminalPin}
+                  onChange={(e) => setTerminalPin(e.target.value.replace(/\D/g, "").slice(0, 6))}
+                  placeholder="••••"
+                  className="num mt-1.5 h-10 w-full rounded-lg border border-line bg-surface px-3 text-center font-mono text-base tracking-widest text-ink focus:border-accent focus:outline-hidden"
+                />
+              </div>
+              <div className="mt-5 flex items-center justify-between gap-2 border-t border-line pt-3">
+                {selectedTerminal.has_pin ? (
+                  <button
+                    type="button"
+                    onClick={() => void handleClearTerminalPin()}
+                    className="text-xs font-semibold text-rose-600 hover:underline cursor-pointer"
+                  >
+                    Remove PIN
+                  </button>
+                ) : <span />}
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setOpenPinModal(false)}
+                    className="rounded-lg border border-line bg-surface px-3.5 py-1.5 text-xs font-semibold text-ink hover:bg-surface-muted cursor-pointer"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={saving || terminalPin.length < 4}
+                    className="inline-flex items-center gap-1.5 rounded-lg bg-orange-600 px-4 py-1.5 text-xs font-semibold text-white shadow-xs hover:bg-orange-700 cursor-pointer disabled:opacity-60"
+                  >
+                    {saving ? "Saving..." : "Save PIN"}
+                  </button>
+                </div>
               </div>
             </form>
           </div>

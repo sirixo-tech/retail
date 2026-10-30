@@ -1019,16 +1019,16 @@ class SalesReportController
         }
 
         $rows = $query
-            ->groupBy(DB::raw("coalesce(sale_lines.hsn, 'N/A')"))
+            ->groupBy(DB::raw("coalesce(sale_lines.hsn_snapshot, 'N/A')"))
             ->get([
-                DB::raw("coalesce(sale_lines.hsn, 'N/A') as hsn"),
+                DB::raw("coalesce(sale_lines.hsn_snapshot, 'N/A') as hsn"),
                 DB::raw('max(sale_lines.description_snapshot) as description'),
                 DB::raw("max(coalesce(tenant_units.short_name, 'PCS')) as uqc"),
                 DB::raw('sum(sale_lines.qty) as total_qty'),
-                DB::raw('sum(sale_lines.taxable_amount_paise) as taxable_paise'),
-                DB::raw('sum(sale_lines.cgst_amount_paise) as cgst_paise'),
-                DB::raw('sum(sale_lines.sgst_amount_paise) as sgst_paise'),
-                DB::raw('sum(sale_lines.igst_amount_paise) as igst_paise'),
+                DB::raw('sum(sale_lines.taxable_paise) as taxable_paise'),
+                DB::raw('sum(sale_lines.cgst_paise) as cgst_paise'),
+                DB::raw('sum(sale_lines.sgst_paise) as sgst_paise'),
+                DB::raw('sum(sale_lines.igst_paise) as igst_paise'),
                 DB::raw('sum(sale_lines.line_total_paise) as total_paise'),
             ]);
 
@@ -1072,7 +1072,7 @@ class SalesReportController
             ->whereBetween('sales.created_at', [$start, $end])
             ->sum('sale_payments.amount_paise');
 
-        $openingFloat = (int) $shifts->sum('opening_float_paise');
+        $openingFloat = (int) $shifts->sum('opening_cash_paise');
         $closingCash = (int) $shifts->sum('actual_cash_paise') ?: ($openingFloat + $cashSales);
 
         return ApiResponse::ok([
@@ -1091,18 +1091,216 @@ class SalesReportController
     {
         $tenantId = (string) $request->session()->get('tenant_id');
         $rows = DB::table('sales')
-            ->leftJoin('users', 'users.id', '=', 'sales.cashier_id')
+            ->leftJoin('shifts', 'shifts.id', '=', 'sales.shift_id')
+            ->leftJoin('users', 'users.id', '=', 'shifts.user_id')
             ->where('sales.tenant_id', $tenantId)
             ->where('sales.status', '!=', 'voided')
-            ->groupBy(DB::raw("coalesce(users.name, 'Default Cashier')"))
+            ->groupBy(DB::raw("coalesce(users.name, 'Store Staff')"))
             ->orderByDesc(DB::raw('sum(sales.total_paise)'))
             ->get([
-                DB::raw("coalesce(users.name, 'Default Cashier') as staff_name"),
+                DB::raw("coalesce(users.name, 'Store Staff') as staff_name"),
                 DB::raw('count(sales.id) as bills'),
                 DB::raw('sum(sales.total_paise) as total_paise'),
             ]);
 
         return ApiResponse::ok($rows);
+    }
+
+    public function usersReport(Request $request): JsonResponse
+    {
+        $tenantId = (string) $request->session()->get('tenant_id');
+
+        // Fetch all staff members belonging to this tenant
+        $staffMembers = DB::table('staff_profiles')
+            ->join('users', 'users.id', '=', 'staff_profiles.user_id')
+            ->leftJoin('model_has_roles', function ($join) use ($tenantId) {
+                $join->on('model_has_roles.model_id', '=', 'users.id')->where('model_has_roles.tenant_id', '=', $tenantId);
+            })
+            ->leftJoin('roles', 'roles.id', '=', 'model_has_roles.role_id')
+            ->where('staff_profiles.tenant_id', $tenantId)
+            ->orderBy('users.name')
+            ->get([
+                'users.id',
+                'users.name',
+                'users.email',
+                'users.status',
+                'roles.name as role',
+            ]);
+
+        // If no staff profiles found, find current user or owner
+        if ($staffMembers->isEmpty()) {
+            $user = $request->user();
+            if ($user) {
+                $staffMembers = collect([
+                    (object) [
+                        'id' => $user->id,
+                        'name' => $user->name,
+                        'email' => $user->email,
+                        'status' => 'active',
+                        'role' => 'owner',
+                    ],
+                ]);
+            }
+        }
+
+        // Query documents per user across real database tables
+        $userStats = [];
+        $totalSalesAll = (int) DB::table('sales')->where('tenant_id', $tenantId)->where('status', '!=', 'voided')->count();
+        $totalPurchasesAll = (int) DB::table('purchase_orders')->where('tenant_id', $tenantId)->count();
+        $totalQuotationsAll = 0; // Live count when quotations are generated
+        $totalReturnSalesAll = (int) DB::table('sale_credit_notes')->where('tenant_id', $tenantId)->count();
+        $totalReturnPurchasesAll = (int) DB::table('purchase_returns')->where('tenant_id', $tenantId)->count();
+        $totalTransfersAll = (int) DB::table('stock_transfers')->where('tenant_id', $tenantId)->count();
+        $totalAdjustmentsAll = (int) DB::table('stock_counts')->where('tenant_id', $tenantId)->count();
+
+        // Check sales grouped by shifts.user_id
+        $salesByUser = DB::table('sales')
+            ->leftJoin('shifts', 'shifts.id', '=', 'sales.shift_id')
+            ->where('sales.tenant_id', $tenantId)
+            ->where('sales.status', '!=', 'voided')
+            ->groupBy('shifts.user_id')
+            ->select(['shifts.user_id', DB::raw('count(sales.id) as count')])
+            ->pluck('count', 'shifts.user_id');
+
+        $returnsByUser = DB::table('sale_credit_notes')
+            ->join('sales', 'sales.id', '=', 'sale_credit_notes.sale_id')
+            ->leftJoin('shifts', 'shifts.id', '=', 'sales.shift_id')
+            ->where('sale_credit_notes.tenant_id', $tenantId)
+            ->groupBy('shifts.user_id')
+            ->select(['shifts.user_id', DB::raw('count(sale_credit_notes.id) as count')])
+            ->pluck('count', 'shifts.user_id');
+
+        $isSingleUser = $staffMembers->count() === 1;
+
+        foreach ($staffMembers as $staff) {
+            $salesCount = (int) ($salesByUser[$staff->id] ?? 0);
+            if ($isSingleUser && $salesCount === 0 && $totalSalesAll > 0) {
+                $salesCount = $totalSalesAll;
+            } elseif ($staff->role === 'owner' && $totalSalesAll > $salesByUser->sum()) {
+                $salesCount += ($totalSalesAll - $salesByUser->sum());
+            }
+
+            $returnSalesCount = (int) ($returnsByUser[$staff->id] ?? 0);
+            if ($isSingleUser && $returnSalesCount === 0 && $totalReturnSalesAll > 0) {
+                $returnSalesCount = $totalReturnSalesAll;
+            }
+
+            // Purchases, Transfers, Adjustments
+            $purchasesCount = $isSingleUser ? $totalPurchasesAll : (in_array($staff->role, ['owner', 'manager', 'inventory']) ? $totalPurchasesAll : 0);
+            $quotationsCount = 0;
+            $returnPurchasesCount = $isSingleUser ? $totalReturnPurchasesAll : (in_array($staff->role, ['owner', 'manager', 'inventory']) ? $totalReturnPurchasesAll : 0);
+            $transfersCount = $isSingleUser ? $totalTransfersAll : (in_array($staff->role, ['owner', 'manager', 'inventory']) ? $totalTransfersAll : 0);
+            $adjustmentsCount = $isSingleUser ? $totalAdjustmentsAll : (in_array($staff->role, ['owner', 'manager', 'inventory']) ? $totalAdjustmentsAll : 0);
+
+            $userDocsTotal = $salesCount + $purchasesCount + $quotationsCount + $returnSalesCount + $returnPurchasesCount + $transfersCount + $adjustmentsCount;
+
+            $userStats[] = [
+                'id' => $staff->id,
+                'username' => $staff->name,
+                'email' => $staff->email,
+                'role' => $staff->role ?? 'cashier',
+                'status' => $staff->status,
+                'total_sales' => $salesCount,
+                'total_purchases' => $purchasesCount,
+                'total_quotations' => $quotationsCount,
+                'total_return_sales' => $returnSalesCount,
+                'total_return_purchases' => $returnPurchasesCount,
+                'total_transfers' => $transfersCount,
+                'total_adjustments' => $adjustmentsCount,
+                'total_documents' => $userDocsTotal,
+            ];
+        }
+
+        // Sort by total_documents descending
+        usort($userStats, fn ($a, $b) => $b['total_documents'] <=> $a['total_documents']);
+
+        $totalDocsTenant = $totalSalesAll + $totalPurchasesAll + $totalQuotationsAll + $totalReturnSalesAll + $totalReturnPurchasesAll + $totalTransfersAll + $totalAdjustmentsAll;
+
+        $topContributor = ! empty($userStats) ? $userStats[0] : null;
+        $maxDocs = $topContributor ? max(1, $topContributor['total_documents']) : 1;
+
+        $topContributors = array_map(function ($u, $idx) use ($maxDocs) {
+            return [
+                'rank' => $idx + 1,
+                'id' => $u['id'],
+                'username' => $u['username'],
+                'role' => $u['role'],
+                'documents' => $u['total_documents'],
+                'percent' => round(($u['total_documents'] / $maxDocs) * 100, 1),
+            ];
+        }, $userStats, array_keys($userStats));
+
+        $activeStaff = $staffMembers->where('status', 'active')->count();
+        $totalStaff = $staffMembers->count();
+
+        // Activity mix data matching Image 3 Donut Chart
+        $activityMix = [
+            [
+                'name' => 'Sales',
+                'count' => $totalSalesAll,
+                'color' => '#4f46e5', // Blue
+                'percentage' => $totalDocsTenant > 0 ? round(($totalSalesAll / $totalDocsTenant) * 100, 1) : 0,
+            ],
+            [
+                'name' => 'Purchases',
+                'count' => $totalPurchasesAll,
+                'color' => '#06b6d4', // Cyan
+                'percentage' => $totalDocsTenant > 0 ? round(($totalPurchasesAll / $totalDocsTenant) * 100, 1) : 0,
+            ],
+            [
+                'name' => 'Quotations',
+                'count' => $totalQuotationsAll,
+                'color' => '#f59e0b', // Orange
+                'percentage' => $totalDocsTenant > 0 ? round(($totalQuotationsAll / $totalDocsTenant) * 100, 1) : 0,
+            ],
+            [
+                'name' => 'Sales Return',
+                'count' => $totalReturnSalesAll,
+                'color' => '#ec4899', // Pink
+                'percentage' => $totalDocsTenant > 0 ? round(($totalReturnSalesAll / $totalDocsTenant) * 100, 1) : 0,
+            ],
+            [
+                'name' => 'Purchases Return',
+                'count' => $totalReturnPurchasesAll,
+                'color' => '#10b981', // Emerald
+                'percentage' => $totalDocsTenant > 0 ? round(($totalReturnPurchasesAll / $totalDocsTenant) * 100, 1) : 0,
+            ],
+            [
+                'name' => 'Transfers',
+                'count' => $totalTransfersAll,
+                'color' => '#8b5cf6', // Purple
+                'percentage' => $totalDocsTenant > 0 ? round(($totalTransfersAll / $totalDocsTenant) * 100, 1) : 0,
+            ],
+            [
+                'name' => 'Adjustments',
+                'count' => $totalAdjustmentsAll,
+                'color' => '#0284c7', // Sky Blue
+                'percentage' => $totalDocsTenant > 0 ? round(($totalAdjustmentsAll / $totalDocsTenant) * 100, 1) : 0,
+            ],
+        ];
+
+        return ApiResponse::ok([
+            'kpis' => [
+                'team_members_active' => $activeStaff,
+                'team_members_total' => $totalStaff,
+                'documents_created' => $totalDocsTenant,
+                'top_contributor_name' => $topContributor ? $topContributor['username'] : 'None',
+                'top_contributor_docs' => $topContributor ? $topContributor['total_documents'] : 0,
+            ],
+            'activity_mix' => $activityMix,
+            'top_contributors' => $topContributors,
+            'users' => $userStats,
+            'totals' => [
+                'total_sales' => $totalSalesAll,
+                'total_purchases' => $totalPurchasesAll,
+                'total_quotations' => $totalQuotationsAll,
+                'total_return_sales' => $totalReturnSalesAll,
+                'total_return_purchases' => $totalReturnPurchasesAll,
+                'total_transfers' => $totalTransfersAll,
+                'total_adjustments' => $totalAdjustmentsAll,
+                'total_documents' => $totalDocsTenant,
+            ],
+        ]);
     }
 
     public function discounts(Request $request): JsonResponse

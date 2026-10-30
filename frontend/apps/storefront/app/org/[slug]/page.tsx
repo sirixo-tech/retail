@@ -72,6 +72,76 @@ export default function OrganizationStorefrontPage() {
   const [cart, setCart] = useState<Record<string, CartItem>>({});
   const [cartOpen, setCartOpen] = useState(false);
   const [orderSuccess, setOrderSuccess] = useState(false);
+  const [customerName, setCustomerName] = useState("");
+  const [customerPhone, setCustomerPhone] = useState("");
+  const [isCheckingOut, setIsCheckingOut] = useState(false);
+  const [checkoutError, setCheckoutError] = useState<string | null>(null);
+  const [placedOrders, setPlacedOrders] = useState<Array<{ storeName: string; orderId: string; invoiceNumber?: string }>>([]);
+
+  async function handleMultiOutletCheckout() {
+    setCheckoutError(null);
+    const trimmedPhone = customerPhone.trim().replace(/\D/g, "");
+    if (!customerName.trim()) {
+      setCheckoutError("Please enter your name for order pickup.");
+      return;
+    }
+    if (trimmedPhone.length < 10) {
+      setCheckoutError("Please enter a valid 10-digit mobile number for order SMS notifications.");
+      return;
+    }
+
+    setIsCheckingOut(true);
+    try {
+      const grouped: Record<string, { storeName: string; items: CartItem[] }> = {};
+      for (const cartItem of Object.values(cart)) {
+        const sSlug = cartItem.item.store_slug;
+        if (!grouped[sSlug]) {
+          grouped[sSlug] = { storeName: cartItem.item.store_name, items: [] };
+        }
+        grouped[sSlug].items.push(cartItem);
+      }
+
+      const results: Array<{ storeName: string; orderId: string; invoiceNumber?: string }> = [];
+
+      for (const [storeSlug, group] of Object.entries(grouped)) {
+        const res = await fetch(`/api/v1/public/stores/${encodeURIComponent(storeSlug)}/checkout`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            customer_name: customerName.trim(),
+            customer_phone: trimmedPhone,
+            fulfillment: "pickup",
+            payment_method: "pay_at_store",
+            lines: group.items.map((ci) => ({
+              store_item_id: ci.item.id,
+              qty: ci.qty,
+            })),
+          }),
+        });
+
+        if (!res.ok) {
+          const errBody = await res.json().catch(() => ({}));
+          throw new Error(errBody?.message || errBody?.error?.message || `Checkout failed for outlet ${group.storeName}`);
+        }
+
+        const data = await res.json();
+        const payload = data?.data || data;
+        results.push({
+          storeName: group.storeName,
+          orderId: payload.order_id || payload.id || "CONFIRMED",
+          invoiceNumber: payload.sale?.invoice_number || payload.sale?.invoice_code || payload.invoice_code,
+        });
+      }
+
+      setPlacedOrders(results);
+      setOrderSuccess(true);
+      setCart({});
+    } catch (err: any) {
+      setCheckoutError(err?.message || "Failed to place orders across outlets. Please try again.");
+    } finally {
+      setIsCheckingOut(false);
+    }
+  }
 
   useEffect(() => {
     let active = true;
@@ -481,6 +551,32 @@ export default function OrganizationStorefrontPage() {
 
             {Object.keys(cart).length > 0 && (
               <div className="border-t border-slate-100 p-5 space-y-3 bg-slate-50/50">
+                <div className="space-y-2 border-b border-slate-200/80 pb-3">
+                  <label className="block text-[11px] font-semibold text-slate-700">
+                    Pickup Customer Details
+                  </label>
+                  <input
+                    type="text"
+                    value={customerName}
+                    onChange={(e) => setCustomerName(e.target.value)}
+                    placeholder="Your Full Name"
+                    className="w-full h-8 rounded-lg border border-slate-200 bg-white px-2.5 text-xs text-slate-900 placeholder:text-slate-400 focus:border-indigo-500 focus:outline-none"
+                  />
+                  <input
+                    type="tel"
+                    value={customerPhone}
+                    onChange={(e) => setCustomerPhone(e.target.value)}
+                    placeholder="10-digit Mobile Number"
+                    maxLength={10}
+                    className="w-full h-8 rounded-lg border border-slate-200 bg-white px-2.5 text-xs text-slate-900 placeholder:text-slate-400 focus:border-indigo-500 focus:outline-none"
+                  />
+                  {checkoutError && (
+                    <p className="text-[11px] font-medium text-rose-600 leading-tight">
+                      {checkoutError}
+                    </p>
+                  )}
+                </div>
+
                 <div className="flex items-center justify-between text-xs">
                   <span className="text-slate-500">Total Items:</span>
                   <span className="font-semibold text-slate-900">{totalCartCount}</span>
@@ -493,13 +589,18 @@ export default function OrganizationStorefrontPage() {
                 </div>
                 <button
                   type="button"
-                  onClick={() => {
-                    setOrderSuccess(true);
-                    setCart({});
-                  }}
-                  className="w-full h-10 rounded-xl bg-orange-600 hover:bg-orange-700 text-white font-semibold text-xs transition shadow-sm"
+                  disabled={isCheckingOut}
+                  onClick={() => void handleMultiOutletCheckout()}
+                  className="w-full h-10 rounded-xl bg-orange-600 hover:bg-orange-700 disabled:opacity-60 text-white font-semibold text-xs transition shadow-sm flex items-center justify-center gap-1.5"
                 >
-                  Proceed to Checkout across Outlets &rarr;
+                  {isCheckingOut ? (
+                    <>
+                      <span className="animate-spin rounded-full border-2 border-white border-t-transparent size-3.5" />
+                      <span>Dispatching Orders across Outlets...</span>
+                    </>
+                  ) : (
+                    <span>Proceed to Checkout across Outlets &rarr;</span>
+                  )}
                 </button>
               </div>
             )}
@@ -514,19 +615,34 @@ export default function OrganizationStorefrontPage() {
             <div className="flex size-12 items-center justify-center rounded-full bg-emerald-100 text-emerald-600 mx-auto">
               <CheckCircle2 size={24} />
             </div>
-            <h3 className="text-base font-semibold text-slate-900">Order Placed Successfully!</h3>
+            <h3 className="text-base font-semibold text-slate-900">Orders Dispatched Successfully!</h3>
             <p className="text-xs text-slate-600 leading-relaxed">
-              Your combined orders have been dispatched to each respective campus outlet for counter preparation.
+              Your orders have been routed to each campus outlet for kitchen and counter preparation.
             </p>
+
+            {placedOrders.length > 0 && (
+              <div className="my-2 max-h-48 overflow-y-auto space-y-1.5 rounded-xl border border-slate-100 bg-slate-50 p-2.5 text-left text-xs">
+                {placedOrders.map((ord, idx) => (
+                  <div key={idx} className="flex items-center justify-between border-b border-slate-200/50 pb-1.5 last:border-b-0 last:pb-0">
+                    <span className="font-medium text-slate-800 truncate pr-2">{ord.storeName}</span>
+                    <span className="shrink-0 font-mono text-[11px] font-semibold text-indigo-700 bg-indigo-50 px-1.5 py-0.5 rounded">
+                      #{ord.invoiceNumber || ord.orderId.slice(0, 8)}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            )}
+
             <button
               type="button"
               onClick={() => {
                 setOrderSuccess(false);
                 setCartOpen(false);
+                setPlacedOrders([]);
               }}
               className="w-full h-9 rounded-xl bg-slate-900 text-white font-semibold text-xs hover:bg-slate-800 transition"
             >
-              Continue Shopping
+              Continue Browsing Campus Hub
             </button>
           </div>
         </div>

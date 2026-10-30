@@ -1,7 +1,7 @@
 "use client";
 
 import { ArrowRight, Eye, EyeOff, Lock, Mail } from "lucide-react";
-import { useEffect, useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent } from "react";
 import { api, warmCsrf } from "../lib/api";
 
 export default function LoginPage() {
@@ -9,6 +9,41 @@ export default function LoginPage() {
   const [pending, setPending] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
   const [platformRequired, setPlatformRequired] = useState(false);
+  const [methods, setMethods] = useState({ email_password: true, phone_otp: true });
+  const [signMethod, setSignMethod] = useState<"email" | "phone">("email");
+  const [phone, setPhone] = useState("");
+  const [otp, setOtp] = useState("");
+  const [otpSent, setOtpSent] = useState(false);
+  const [devCode, setDevCode] = useState<string | null>(null);
+  const confirmation = useRef<null | { confirm: (code: string) => Promise<{ user: { getIdToken: () => Promise<string> } }> }>(null);
+
+  async function loadFirebase(config: { api_key: string; auth_domain: string; project_id: string; app_id: string; messaging_sender_id?: string }) {
+    const urls = [
+      "https://www.gstatic.com/firebasejs/10.14.1/firebase-app-compat.js",
+      "https://www.gstatic.com/firebasejs/10.14.1/firebase-auth-compat.js",
+    ];
+    for (const url of urls) {
+      if (document.querySelector(`script[src="${url}"]`)) continue;
+      await new Promise<void>((resolve, reject) => {
+        const script = document.createElement("script");
+        script.src = url;
+        script.onload = () => resolve();
+        script.onerror = () => reject(new Error("Firebase did not load."));
+        document.head.appendChild(script);
+      });
+    }
+    const firebase = (window as unknown as { firebase: { apps: unknown[]; initializeApp: (c: object) => void; auth: () => { signInWithPhoneNumber: (p: string, v: unknown) => Promise<{ confirm: (code: string) => Promise<{ user: { getIdToken: () => Promise<string> } }> }>; RecaptchaVerifier: new (id: string, o: object) => unknown } } }).firebase;
+    if (!firebase.apps.length) {
+      firebase.initializeApp({
+        apiKey: config.api_key,
+        authDomain: config.auth_domain,
+        projectId: config.project_id,
+        appId: config.app_id,
+        messagingSenderId: config.messaging_sender_id ?? "",
+      });
+    }
+    return firebase;
+  }
 
   useEffect(() => {
     if (typeof window !== "undefined") {
@@ -18,7 +53,25 @@ export default function LoginPage() {
       }
     }
 
+    const host = window.location.hostname;
+    const local = host === "localhost" || host === "127.0.0.1";
+    const dedicatedAdminHost = host.startsWith("admin.");
+    if (!dedicatedAdminHost) {
+      window.location.replace(local ? `${window.location.protocol}//${host}:3002/login` : "/login");
+      return;
+    }
+
     let active = true;
+    fetch("/api/v1/public/auth/methods", { headers: { Accept: "application/json" } })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((body: { data?: { email_password?: boolean; phone_otp?: boolean } } | null) => {
+        if (!active || !body?.data) return;
+        const emailOn = body.data.email_password !== false;
+        const phoneOn = body.data.phone_otp !== false;
+        setMethods({ email_password: emailOn, phone_otp: phoneOn });
+        if (!emailOn && phoneOn) setSignMethod("phone");
+      })
+      .catch(() => {});
     api<{ data?: { kind?: string } }>("/api/v1/auth/platform/me")
       .then((res) => {
         if (active && res.data?.kind === "platform") {
@@ -63,8 +116,68 @@ export default function LoginPage() {
 
       const target = window.location.pathname.startsWith("/superadmin") ? "/superadmin/" : "/";
       window.location.replace(target);
-    } catch {
-      setError("Those details do not match a platform administrator account.");
+    } catch (err) {
+      const message = (err as { error?: { message?: string } })?.error?.message;
+      setError(message && !message.trim().startsWith("<") ? message : "Those details do not match a platform administrator account.");
+    } finally {
+      setPending(false);
+    }
+  }
+
+  async function sendPhoneCode(event: FormEvent) {
+    event.preventDefault();
+    setError(null);
+    setPending(true);
+    setDevCode(null);
+    try {
+      const res = await api<{ data?: { status?: string; code?: string; firebase?: { active?: boolean } } }>("/api/v1/auth/phone/request", {
+        method: "POST",
+        body: JSON.stringify({ phone, purpose: "platform" }),
+      });
+      if (res.data?.status === "firebase" && res.data.firebase?.active) {
+        const firebase = await loadFirebase(res.data.firebase as { api_key: string; auth_domain: string; project_id: string; app_id: string; messaging_sender_id?: string });
+        const digits = phone.replace(/\D/g, "").slice(-10);
+        const auth = firebase.auth() as { signInWithPhoneNumber: (p: string, v: unknown) => Promise<{ confirm: (code: string) => Promise<{ user: { getIdToken: () => Promise<string> } }> }> };
+        const verifier = new (firebase.auth as unknown as { RecaptchaVerifier: new (id: string, o: object) => unknown }).RecaptchaVerifier("admin-recaptcha", { size: "normal" });
+        confirmation.current = await auth.signInWithPhoneNumber("+91" + digits, verifier);
+        setOtpSent(true);
+        return;
+      }
+      setOtpSent(true);
+      setDevCode(res.data?.code ?? null);
+    } catch (err) {
+      setError((err as { error?: { message?: string } })?.error?.message ?? "The code could not be sent.");
+    } finally {
+      setPending(false);
+    }
+  }
+
+  async function verifyPhoneCode(event: FormEvent) {
+    event.preventDefault();
+    setError(null);
+    setPending(true);
+    try {
+      if (confirmation.current) {
+        const cred = await confirmation.current.confirm(otp);
+        const idToken = await cred.user.getIdToken();
+        const res = await api<{ data?: { kind?: string } }>("/api/v1/auth/phone/firebase", {
+          method: "POST",
+          body: JSON.stringify({ id_token: idToken, purpose: "platform" }),
+        });
+        if (res.data?.kind === "platform") {
+          window.location.replace(window.location.pathname.startsWith("/superadmin") ? "/superadmin/" : "/");
+        }
+        return;
+      }
+      const res = await api<{ data?: { kind?: string } }>("/api/v1/auth/phone/verify", {
+        method: "POST",
+        body: JSON.stringify({ phone, code: otp, purpose: "platform" }),
+      });
+      if (res.data?.kind === "platform") {
+        window.location.replace(window.location.pathname.startsWith("/superadmin") ? "/superadmin/" : "/");
+      }
+    } catch (err) {
+      setError((err as { error?: { message?: string } })?.error?.message ?? "That code is not valid.");
     } finally {
       setPending(false);
     }
@@ -96,7 +209,7 @@ export default function LoginPage() {
       {/* Right Admin Login Card */}
       <section className="flex flex-col justify-center px-6 py-12 sm:px-12 lg:col-span-6 xl:col-span-6">
         <div className="mx-auto w-full max-w-[400px]">
-          <form onSubmit={onSubmit} className="rounded-2xl border border-slate-200 bg-white p-8 shadow-xs">
+          <div className="rounded-2xl border border-slate-200 bg-white p-8 shadow-xs">
             <div className="mb-6 flex items-center gap-2.5 lg:hidden">
               <img
                 src="/logo.png"
@@ -109,6 +222,34 @@ export default function LoginPage() {
             <p className="mt-1 text-xs text-slate-500">
               Sign in with your platform administrator credentials.
             </p>
+            {methods.email_password && methods.phone_otp ? (
+              <div className="mt-4 flex rounded-lg bg-slate-100 p-1">
+                <button type="button" onClick={() => setSignMethod("email")} className={`flex-1 rounded-md py-1.5 text-xs font-semibold ${signMethod === "email" ? "bg-white text-slate-900" : "text-slate-500"}`}>Email</button>
+                <button type="button" onClick={() => setSignMethod("phone")} className={`flex-1 rounded-md py-1.5 text-xs font-semibold ${signMethod === "phone" ? "bg-white text-slate-900" : "text-slate-500"}`}>Mobile</button>
+              </div>
+            ) : null}
+
+            {signMethod === "phone" && methods.phone_otp ? (
+              <form onSubmit={otpSent ? verifyPhoneCode : sendPhoneCode} className="mt-6 space-y-4">
+                <label className="block text-xs font-semibold text-slate-700">
+                  Mobile number
+                  <input value={phone} onChange={(e) => setPhone(e.target.value)} autoComplete="off" inputMode="tel" className="mt-1.5 h-11 w-full rounded-xl border border-slate-200 px-3 text-sm" placeholder="9876543210" />
+                </label>
+                {otpSent ? (
+                  <label className="block text-xs font-semibold text-slate-700">
+                    Code
+                    <input value={otp} onChange={(e) => setOtp(e.target.value)} autoComplete="one-time-code" inputMode="numeric" className="mt-1.5 h-11 w-full rounded-xl border border-slate-200 px-3 text-sm" placeholder="6 digit code" />
+                  </label>
+                ) : null}
+                <div id="admin-recaptcha" />
+                {devCode ? <p className="text-xs text-slate-500">SMS is not connected on this machine. The code is {devCode}.</p> : null}
+                {error ? <p className="text-xs font-medium text-red-700">{error}</p> : null}
+                <button type="submit" disabled={pending} className="flex h-11 w-full items-center justify-center rounded-xl bg-slate-900 text-sm font-semibold text-white disabled:opacity-60">
+                  {pending ? "Please wait" : otpSent ? "Sign in" : "Send code"}
+                </button>
+              </form>
+            ) : (
+            <form onSubmit={onSubmit}>
 
             {platformRequired && (
               <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs leading-relaxed text-amber-800">
@@ -128,8 +269,8 @@ export default function LoginPage() {
                     name="email"
                     type="email"
                     required
-                    defaultValue="admin@selfx.test"
-                    autoComplete="username"
+                    defaultValue=""
+                    autoComplete="off"
                     className="h-full w-full bg-transparent pl-2.5 text-sm text-slate-900 outline-none"
                   />
                 </div>
@@ -146,7 +287,7 @@ export default function LoginPage() {
                     name="password"
                     type={showPassword ? "text" : "password"}
                     required
-                    defaultValue="password"
+                    defaultValue=""
                     autoComplete="current-password"
                     className="h-full w-full bg-transparent px-2.5 text-sm text-slate-900 outline-none"
                   />
@@ -176,7 +317,9 @@ export default function LoginPage() {
               <span>{pending ? "Signing in..." : "Sign in"}</span>
               <ArrowRight className="h-4 w-4" />
             </button>
-          </form>
+            </form>
+            )}
+          </div>
           <p className="mt-5 text-center text-xs text-slate-500">
             <a href="/welcome" className="font-semibold text-slate-900 underline-offset-2 hover:underline">
               View product overview

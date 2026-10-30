@@ -2,12 +2,15 @@
 
 namespace App\Modules\Inventory\Http\Controllers;
 
+use App\Modules\Catalog\Models\Product;
 use App\Modules\Inventory\Actions\ReceivePurchase;
+use App\Modules\Inventory\Models\StoreItem;
 use App\Modules\Tenancy\Models\Store;
 use App\Support\ApiResponse;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Str;
 use RuntimeException;
 
 class PurchaseController
@@ -18,13 +21,284 @@ class PurchaseController
 
     public function suppliers(Request $request): JsonResponse
     {
+        $tenantId = $request->session()->get('tenant_id') ?? $request->user()?->tenant_id;
+        if (! $tenantId) {
+            return ApiResponse::error('auth.unauthorized', 'Tenant not found.', 401);
+        }
+
         $rows = DB::table('suppliers')
-            ->where('tenant_id', $request->session()->get('tenant_id'))
+            ->where('tenant_id', $tenantId)
             ->whereNull('deleted_at')
             ->orderBy('name')
-            ->get(['id', 'name', 'phone', 'gstin']);
+            ->get(['id', 'name', 'phone', 'email', 'gstin', 'address']);
 
-        return ApiResponse::ok($rows);
+        $balances = DB::table('supplier_ledger_entries')
+            ->where('tenant_id', $tenantId)
+            ->groupBy('supplier_id', 'direction')
+            ->selectRaw('supplier_id, direction, sum(amount_paise) as total')
+            ->get()
+            ->groupBy('supplier_id');
+
+        $enriched = $rows->map(function ($s) use ($balances) {
+            $entries = $balances->get($s->id, collect());
+            $credits = (int) ($entries->firstWhere('direction', 'credit')?->total ?? 0);
+            $debits = (int) ($entries->firstWhere('direction', 'debit')?->total ?? 0);
+            $s->balance_paise = max(0, $credits - $debits);
+            return $s;
+        });
+
+        return ApiResponse::ok($enriched);
+    }
+
+    public function storeSupplier(Request $request): JsonResponse
+    {
+        $tenantId = $request->session()->get('tenant_id') ?? $request->user()?->tenant_id;
+        if (! $tenantId) {
+            return ApiResponse::error('auth.unauthorized', 'Tenant not found.', 401);
+        }
+
+        $data = $request->validate([
+            'name' => ['required', 'string', 'max:160'],
+            'phone' => ['nullable', 'string', 'max:25'],
+            'email' => ['nullable', 'email', 'max:160'],
+            'gstin' => ['nullable', 'string', 'max:20'],
+            'address' => ['nullable', 'string', 'max:500'],
+        ]);
+
+        $id = (string) Str::uuid7();
+        DB::table('suppliers')->insert([
+            'id' => $id,
+            'tenant_id' => $tenantId,
+            'name' => $data['name'],
+            'phone' => $data['phone'] ?? null,
+            'email' => $data['email'] ?? null,
+            'gstin' => $data['gstin'] ?? null,
+            'address' => $data['address'] ?? null,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+
+        $created = DB::table('suppliers')->where('id', $id)->first();
+        return ApiResponse::ok($created, 201);
+    }
+
+    public function index(Request $request): JsonResponse
+    {
+        $tenantId = $request->session()->get('tenant_id') ?? $request->user()?->tenant_id;
+        if (! $tenantId) {
+            return ApiResponse::error('auth.unauthorized', 'Tenant not found.', 401);
+        }
+
+        $filters = [
+            'store_id' => $request->query('store_id'),
+            'supplier_id' => $request->query('supplier_id'),
+            'status' => $request->query('status'),
+            'payment_status' => $request->query('payment_status'),
+            'search' => $request->query('search'),
+            'date_from' => $request->query('date_from'),
+            'date_to' => $request->query('date_to'),
+        ];
+
+        $data = $this->purchases->listPurchases($tenantId, $filters);
+        return ApiResponse::ok($data);
+    }
+
+    public function storePurchase(Request $request): JsonResponse
+    {
+        $tenantId = $request->session()->get('tenant_id') ?? $request->user()?->tenant_id;
+        if (! $tenantId) {
+            return ApiResponse::error('auth.unauthorized', 'Tenant not found.', 401);
+        }
+
+        $data = $request->validate([
+            'store_id' => ['required', 'uuid'],
+            'supplier_id' => ['required', 'uuid'],
+            'status' => ['required', 'string', 'in:received,pending,ordered'],
+            'date' => ['nullable', 'date'],
+            'order_tax_rate' => ['nullable', 'numeric', 'min:0', 'max:100'],
+            'order_tax_paise' => ['nullable', 'integer', 'min:0'],
+            'discount_paise' => ['nullable', 'integer', 'min:0'],
+            'shipping_paise' => ['nullable', 'integer', 'min:0'],
+            'paid_paise' => ['nullable', 'integer', 'min:0'],
+            'notes' => ['nullable', 'string', 'max:1000'],
+            'lines' => ['required', 'array', 'min:1'],
+            'lines.*.store_item_id' => ['required', 'uuid'],
+            'lines.*.qty' => ['required', 'numeric', 'gt:0'],
+            'lines.*.cost_paise' => ['required', 'integer', 'min:0'],
+            'lines.*.discount_paise' => ['nullable', 'integer', 'min:0'],
+            'lines.*.tax_bps' => ['nullable', 'integer', 'min:0'],
+            'lines.*.batch_number' => ['nullable', 'string', 'max:50'],
+            'lines.*.expires_on' => ['nullable', 'date'],
+        ]);
+
+        $store = Store::query()->where('id', $data['store_id'])->where('tenant_id', $tenantId)->first();
+        if (! $store) {
+            return ApiResponse::error('resource.not_found', 'Store not found.', 404);
+        }
+
+        try {
+            $result = $this->purchases->createPurchase($store, $data);
+        } catch (RuntimeException $e) {
+            return ApiResponse::error('validation.failed', $e->getMessage(), 422);
+        }
+
+        return ApiResponse::ok($result, 201);
+    }
+
+    public function showPurchase(Request $request, string $purchase): JsonResponse
+    {
+        $tenantId = $request->session()->get('tenant_id') ?? $request->user()?->tenant_id;
+        if (! $tenantId) {
+            return ApiResponse::error('auth.unauthorized', 'Tenant not found.', 401);
+        }
+
+        $details = $this->purchases->getPurchaseDetails($tenantId, $purchase);
+        if (! $details) {
+            return ApiResponse::error('resource.not_found', 'Purchase order not found.', 404);
+        }
+
+        return ApiResponse::ok($details);
+    }
+
+    public function recordPayment(Request $request, string $purchase): JsonResponse
+    {
+        $tenantId = $request->session()->get('tenant_id') ?? $request->user()?->tenant_id;
+        if (! $tenantId) {
+            return ApiResponse::error('auth.unauthorized', 'Tenant not found.', 401);
+        }
+
+        $data = $request->validate([
+            'amount_paise' => ['required', 'integer', 'min:1'],
+            'payment_method' => ['nullable', 'string', 'in:cash,upi,card,bank_transfer,cheque'],
+            'note' => ['nullable', 'string', 'max:255'],
+        ]);
+
+        try {
+            $result = $this->purchases->recordPurchasePayment(
+                $tenantId,
+                $purchase,
+                (int) $data['amount_paise'],
+                $data['payment_method'] ?? 'cash',
+                $data['note'] ?? null
+            );
+        } catch (RuntimeException $e) {
+            return ApiResponse::error('validation.failed', $e->getMessage(), 422);
+        }
+
+        return ApiResponse::ok($result);
+    }
+
+    public function destroyPurchase(Request $request, string $purchase): JsonResponse
+    {
+        $tenantId = $request->session()->get('tenant_id') ?? $request->user()?->tenant_id;
+        if (! $tenantId) {
+            return ApiResponse::error('auth.unauthorized', 'Tenant not found.', 401);
+        }
+
+        try {
+            $this->purchases->deletePurchase($tenantId, $purchase);
+        } catch (RuntimeException $e) {
+            return ApiResponse::error('validation.failed', $e->getMessage(), 422);
+        }
+
+        return ApiResponse::ok(['success' => true]);
+    }
+
+    public function importPurchases(Request $request): JsonResponse
+    {
+        $tenantId = $request->session()->get('tenant_id') ?? $request->user()?->tenant_id;
+        if (! $tenantId) {
+            return ApiResponse::error('auth.unauthorized', 'Tenant not found.', 401);
+        }
+
+        $data = $request->validate([
+            'store_id' => ['required', 'uuid'],
+            'supplier_id' => ['required', 'uuid'],
+            'status' => ['required', 'string', 'in:received,pending,ordered'],
+            'notes' => ['nullable', 'string', 'max:500'],
+            'rows' => ['required', 'array', 'min:1'],
+            'rows.*.product_identifier' => ['required', 'string'],
+            'rows.*.cost_paise' => ['required', 'integer', 'min:0'],
+            'rows.*.qty' => ['required', 'numeric', 'gt:0'],
+            'rows.*.discount_paise' => ['nullable', 'integer', 'min:0'],
+            'rows.*.tax_bps' => ['nullable', 'integer', 'min:0'],
+            'rows.*.batch_number' => ['nullable', 'string', 'max:50'],
+            'rows.*.expires_on' => ['nullable', 'date'],
+        ]);
+
+        $store = Store::query()->where('id', $data['store_id'])->where('tenant_id', $tenantId)->first();
+        if (! $store) {
+            return ApiResponse::error('resource.not_found', 'Store not found.', 404);
+        }
+
+        $storeItems = StoreItem::query()->where('store_id', $store->id)->get();
+        $masterIds = $storeItems->pluck('master_product_id')->filter()->unique();
+        $products = ! $masterIds->isEmpty()
+            ? Product::query()->whereIn('id', $masterIds)->get()->keyBy('id')
+            : collect();
+
+        $lines = [];
+        $unmatched = [];
+
+        foreach ($data['rows'] as $index => $row) {
+            $term = trim(strtolower($row['product_identifier']));
+            $match = $storeItems->first(function ($item) use ($term, $products) {
+                if (strtolower($item->sku) === $term) return true;
+                if ($item->name_override && strtolower($item->name_override) === $term) return true;
+                $prod = $products->get($item->master_product_id);
+                if ($prod && strtolower($prod->name) === $term) return true;
+                return false;
+            });
+
+            if (! $match) {
+                $match = $storeItems->first(function ($item) use ($term, $products) {
+                    if (str_contains(strtolower($item->sku), $term)) return true;
+                    if ($item->name_override && str_contains(strtolower($item->name_override), $term)) return true;
+                    $prod = $products->get($item->master_product_id);
+                    if ($prod && str_contains(strtolower($prod->name), $term)) return true;
+                    return false;
+                });
+            }
+
+            if (! $match) {
+                $unmatched[] = "Row #" . ($index + 1) . ": \"" . $row['product_identifier'] . "\" could not be matched to an existing catalog item.";
+                continue;
+            }
+
+            $lines[] = [
+                'store_item_id' => $match->id,
+                'qty' => $row['qty'],
+                'cost_paise' => $row['cost_paise'],
+                'discount_paise' => $row['discount_paise'] ?? 0,
+                'tax_bps' => $row['tax_bps'] ?? 0,
+                'batch_number' => $row['batch_number'] ?? null,
+                'expires_on' => $row['expires_on'] ?? null,
+            ];
+        }
+
+        if (! empty($unmatched)) {
+            return ApiResponse::error('validation.failed', implode('; ', array_slice($unmatched, 0, 5)), 422);
+        }
+
+        if (empty($lines)) {
+            return ApiResponse::error('validation.failed', 'No valid line items found to import.', 422);
+        }
+
+        $purchaseData = [
+            'store_id' => $store->id,
+            'supplier_id' => $data['supplier_id'],
+            'status' => $data['status'],
+            'notes' => $data['notes'] ?? 'Imported via CSV batch',
+            'lines' => $lines,
+        ];
+
+        try {
+            $result = $this->purchases->createPurchase($store, $purchaseData);
+        } catch (RuntimeException $e) {
+            return ApiResponse::error('validation.failed', $e->getMessage(), 422);
+        }
+
+        return ApiResponse::ok($result, 201);
     }
 
     public function receive(Request $request, string $store): JsonResponse

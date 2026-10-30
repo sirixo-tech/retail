@@ -2,6 +2,7 @@
 
 import { formatInr } from "@selfx/types";
 import {
+  AlertCircle,
   BarChart3,
   Building2,
   Calculator,
@@ -10,27 +11,36 @@ import {
   ChevronDown,
   ChevronLeft,
   ChevronRight,
+  Clock,
+  ExternalLink,
   FileText,
+  Filter,
   Folder,
   Gift,
   Globe,
   Home,
+  MapPin,
   Maximize2,
   Minus,
   Monitor,
+  Package,
   Pause,
+  Phone,
   Plus,
   Printer,
+  RefreshCw,
   RotateCcw,
   Scale,
   ScanLine,
   ScreenShare,
   Search,
   Settings,
+  ShoppingBag,
   ShoppingCart,
   Store,
   Tag,
   Trash2,
+  Truck,
   Undo2,
   UserPlus,
   UserRound,
@@ -231,7 +241,12 @@ function PosScreen() {
   const [discountReason, setDiscountReason] = useState("");
   const [clientUuid, setClientUuid] = useState(() => crypto.randomUUID());
   const [holds, setHolds] = useState<{ id: string; label: string | null; lines: { store_item_id: string; qty: number }[] }[]>([]);
-  const [panel, setPanel] = useState<null | "shift" | "customer" | "pay" | "return" | "today" | "holds" | "settings">(null);
+  const [panel, setPanel] = useState<null | "shift" | "customer" | "pay" | "return" | "today" | "holds" | "settings" | "pos-orders">(null);
+  const [posOrders, setPosOrders] = useState<any[]>([]);
+  const [posOrdersLoading, setPosOrdersLoading] = useState(false);
+  const [posOrdersTab, setPosOrdersTab] = useState<"all" | "online" | "counter" | "held">("all");
+  const [posOrdersFilter, setPosOrdersFilter] = useState<"all" | "today" | "pending" | "ready" | "completed" | "unpaid">("all");
+  const [posOrdersSearch, setPosOrdersSearch] = useState("");
   const [settings, setSettings] = useState<PosSettings>(defaultPosSettings);
   const [receiptFooter, setReceiptFooter] = useState("");
   const [category, setCategory] = useState("all");
@@ -418,6 +433,7 @@ function PosScreen() {
       if (keys.ok) {
         setQuickIds(((await keys.json()) as { data: { store_item_id: string }[] }).data.map((row) => row.store_item_id));
       }
+      void loadPosOrders();
     })();
 
     if (typeof window !== "undefined" && "serviceWorker" in navigator) {
@@ -443,6 +459,121 @@ function PosScreen() {
       window.removeEventListener("offline", handleOffline);
     };
   }, []);
+
+  async function loadPosOrders() {
+    try {
+      setPosOrdersLoading(true);
+      const res = await fetch("/api/v1/orders", {
+        credentials: "include",
+        headers: { Accept: "application/json" },
+      });
+      if (res.ok) {
+        const body = await res.json();
+        setPosOrders(Array.isArray(body?.data) ? body.data : []);
+      }
+      if (storeId) {
+        const holdsRes = await fetch(`/api/v1/stores/${storeId}/holds`, {
+          credentials: "include",
+          headers: { Accept: "application/json" },
+        });
+        if (holdsRes.ok) {
+          const holdsBody = await holdsRes.json();
+          if (Array.isArray(holdsBody?.data)) setHolds(holdsBody.data);
+        }
+      }
+    } catch {
+      // ignore
+    } finally {
+      setPosOrdersLoading(false);
+    }
+  }
+
+  async function transitionPosOrder(orderId: string, toStatus: string) {
+    try {
+      const res = await fetch(`/api/v1/orders/${orderId}/transitions`, {
+        method: "POST",
+        credentials: "include",
+        headers: {
+          Accept: "application/json",
+          "Content-Type": "application/json",
+          "X-XSRF-TOKEN": csrf(),
+        },
+        body: JSON.stringify({ to: toStatus }),
+      });
+      if (res.ok) {
+        showNotice(`Order marked as ${toStatus}.`, "ok");
+        await loadPosOrders();
+      } else {
+        const data = await res.json();
+        showNotice(data?.error?.message ?? "Status transition failed.", "error");
+      }
+    } catch {
+      showNotice("Failed to update order status.", "error");
+    }
+  }
+
+  async function discardHold(holdId: string) {
+    if (!storeId) return;
+    await fetch(`/api/v1/stores/${storeId}/holds/${holdId}`, {
+      method: "DELETE",
+      credentials: "include",
+      headers: { Accept: "application/json", "X-XSRF-TOKEN": csrf() },
+    });
+    setHolds((current) => current.filter((row) => row.id !== holdId));
+    showNotice("Draft ticket discarded.", "ok");
+  }
+
+  const filteredPosOrders = useMemo(() => {
+    return posOrders.filter((order) => {
+      if (posOrdersTab === "online" && order.channel !== "online") return false;
+      if (posOrdersTab === "counter" && order.channel !== "counter") return false;
+
+      if (posOrdersFilter === "pending" && !["placed", "pending"].includes(order.status)) return false;
+      if (posOrdersFilter === "ready" && !["ready", "ready_for_pickup", "out_for_delivery"].includes(order.status)) return false;
+      if (posOrdersFilter === "completed" && !["delivered", "picked_up", "completed"].includes(order.status)) return false;
+      if (posOrdersFilter === "unpaid" && order.payment_status !== "unpaid" && order.payment_status !== "due") return false;
+      if (posOrdersFilter === "today") {
+        const orderDate = new Date(order.created_at).toDateString();
+        const todayDate = new Date().toDateString();
+        if (orderDate !== todayDate) return false;
+      }
+
+      if (posOrdersSearch.trim()) {
+        const q = posOrdersSearch.toLowerCase().trim();
+        const matchNum = String(order.number || "").toLowerCase().includes(q);
+        const matchCust = String(order.customer_name || "").toLowerCase().includes(q);
+        const matchPhone = String(order.customer_phone || "").toLowerCase().includes(q);
+        const matchAddress = String(order.address || "").toLowerCase().includes(q);
+        return matchNum || matchCust || matchPhone || matchAddress;
+      }
+
+      return true;
+    });
+  }, [posOrders, posOrdersTab, posOrdersFilter, posOrdersSearch]);
+
+  function printPackingSlip(order: any) {
+    const popup = window.open("", "_blank", "width=420,height=650");
+    if (!popup) return;
+    const rows = (order.lines || []).map((l: any) => `<tr><td style="font-size:13px;font-weight:600;padding:6px 0;border-bottom:1px dashed #ccc">${l.qty}x ${l.name}</td><td style="text-align:right;padding:6px 0;border-bottom:1px dashed #ccc;font-family:monospace">₹${(((l.total_paise || (l.qty * (l.unit_price_paise || 0))) || 0) / 100).toFixed(2)}</td></tr>`).join("");
+    const customerInfo = order.customer_name ? `<p style="margin:4px 0"><strong>Customer:</strong> ${order.customer_name} ${order.customer_phone ? `(${order.customer_phone})` : ""}</p>` : "";
+    const addressInfo = order.address ? `<p style="margin:4px 0;font-size:11px;color:#555"><strong>Delivery Address:</strong> ${order.address}${order.city ? `, ${order.city}` : ""}${order.pincode ? ` - ${order.pincode}` : ""}</p>` : "";
+    const notesInfo = order.order_notes ? `<p style="margin:4px 0;font-size:11px;background:#f5f5f5;padding:4px"><strong>Notes:</strong> ${order.order_notes}</p>` : "";
+
+    popup.document.write(`<!doctype html><html><head><title>Packing Slip - ${order.number}</title><style>body{font-family:Inter,sans-serif;width:76mm;margin:12px auto;color:#1a1d23}h2{text-align:center;margin:4px 0;font-size:15px;text-transform:uppercase}p{margin:3px 0;font-size:12px}table{width:100%;margin:10px 0;border-collapse:collapse}</style></head><body><h2>*** PACKING SLIP ***</h2><p><strong>Order:</strong> ${order.number}</p><p><strong>Channel:</strong> ${(order.channel === "online" ? "Online Storefront" : "POS Counter")} · ${(order.fulfillment || "Store Pickup").toUpperCase()}</p><p><strong>Date:</strong> ${new Date(order.created_at).toLocaleString()}</p>${customerInfo}${addressInfo}${notesInfo}<table style="margin-top:8px">${rows}</table><div style="border-top:1px solid #000;margin-top:8px;padding-top:4px;display:flex;justify-content:space-between;font-size:13px"><strong>Total Amount:</strong><strong style="font-family:monospace">₹${((order.total_paise || 0) / 100).toFixed(2)}</strong></div><p style="text-align:center;margin-top:16px;font-size:10px;color:#888">Verified & Packed by Retail Staff</p></body></html>`);
+    popup.document.close();
+    popup.focus();
+    popup.print();
+  }
+
+  function printOrderReceipt(order: any) {
+    const popup = window.open("", "_blank", "width=420,height=720");
+    if (!popup) return;
+    const rows = (order.lines || []).map((l: any) => `<tr><td style="padding:6px 0;border-bottom:1px dashed #ccc">${l.name}<br><span style="font-size:11px;color:#666">${l.qty} × ₹${((l.unit_price_paise || 0) / 100).toFixed(2)}</span></td><td style="text-align:right;padding:6px 0;border-bottom:1px dashed #ccc">₹${(((l.total_paise || (l.qty * (l.unit_price_paise || 0))) || 0) / 100).toFixed(2)}</td></tr>`).join("");
+    popup.document.write(`<!doctype html><html><head><title>${order.number}</title><style>body{font-family:Inter,sans-serif;width:76mm;margin:16px auto;color:#1a1d23}h1{font-size:16px;text-align:center;margin-bottom:4px}table{width:100%;border-collapse:collapse;font-size:13px;margin:10px 0}.muted{color:#5c6570;font-size:12px;text-align:center;margin:2px 0}</style></head><body><h1>${order.store_name || "SelfX Store"}</h1><p class="muted">${order.number}<br>${new Date(order.created_at).toLocaleString()}</p>${order.customer_name ? `<p class="muted">Customer: ${order.customer_name}</p>` : ""}<table>${rows}</table><p style="display:flex;justify-content:space-between;font-size:15px;margin-top:8px"><strong>Total</strong> <strong>₹${((order.total_paise || 0) / 100).toFixed(2)}</strong></p><p class="muted">${receiptFooter || "Thank you for shopping with us!"}</p></body></html>`);
+    popup.document.close();
+    popup.focus();
+    popup.print();
+  }
 
   function parseScaleBarcode(raw: string): { sku: string; qty: number; isScale: boolean; pricePaise?: number } {
     const code = raw.trim();
@@ -1272,15 +1403,20 @@ function PosScreen() {
 
           <button
             type="button"
-            onClick={() => setPanel("holds")}
-            title="Shared Branch Draft Bills"
-            aria-label="Shared Drafts"
-            className="relative grid size-9 place-items-center rounded-[10px] border border-[#e2e8f0] bg-white text-slate-600 transition hover:border-indigo-300 hover:text-[#6366f1]"
+            onClick={() => {
+              void loadPosOrders();
+              setPosOrdersTab("all");
+              setPanel("pos-orders");
+            }}
+            title="Orders &amp; Held Tickets"
+            aria-label="Orders"
+            className="relative flex items-center gap-1.5 h-9 rounded-[10px] border border-[#e2e8f0] bg-white px-2.5 text-xs font-semibold text-slate-700 transition hover:border-indigo-400 hover:text-indigo-600 shadow-2xs"
           >
-            <Pause size={15} />
-            {holds.length > 0 ? (
-              <span className="absolute -top-1 -right-1 flex size-4 items-center justify-center rounded-full bg-amber-500 text-[9px] font-semibold text-white">
-                {holds.length}
+            <ShoppingBag size={15} className="text-indigo-600" />
+            <span className="hidden sm:inline font-bold">Orders</span>
+            {(posOrders.filter((o) => o.status !== "completed" && o.status !== "cancelled").length + holds.length) > 0 ? (
+              <span className="flex h-4 min-w-4 items-center justify-center rounded-full bg-indigo-600 px-1 text-[9px] font-bold text-white">
+                {posOrders.filter((o) => o.status !== "completed" && o.status !== "cancelled").length + holds.length}
               </span>
             ) : null}
           </button>
@@ -1884,7 +2020,11 @@ function PosScreen() {
 
           <button
             type="button"
-            onClick={() => setPanel("holds")}
+            onClick={() => {
+              void loadPosOrders();
+              setPosOrdersTab("held");
+              setPanel("pos-orders");
+            }}
             className="inline-flex h-10 items-center gap-2 rounded-[10px] border border-[#e2e8f0] bg-white px-4 text-[13px] font-semibold text-slate-700 transition hover:bg-slate-50"
           >
             <FileText size={15} className="text-slate-500" />
@@ -1949,7 +2089,496 @@ function PosScreen() {
         </div>
       </footer>
 
-      {panel ? (
+      {/* =====================================================================
+          1. DEDICATED RIGHT-SIDE SLIDE-OVER DRAWER FOR POS & ONLINE ORDERS
+         ===================================================================== */}
+      {(panel === "pos-orders" || panel === "holds") && (
+        <div
+          className="fixed inset-0 z-50 flex justify-end bg-black/40 backdrop-blur-[2px] transition-opacity"
+          onClick={() => setPanel(null)}
+        >
+          <div
+            className="h-full w-full max-w-xl md:max-w-2xl bg-white shadow-2xl flex flex-col overflow-hidden border-l border-slate-200 animate-in slide-in-from-right duration-300"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Header */}
+            <div className="flex items-center justify-between border-b border-slate-200 px-6 py-4 bg-slate-50/70">
+              <div className="flex items-center gap-3">
+                <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-gradient-to-tr from-indigo-600 to-violet-500 text-white shadow-sm">
+                  <ShoppingBag size={20} />
+                </div>
+                <div>
+                  <div className="flex items-center gap-2">
+                    <h2 className="text-base font-bold text-slate-900">Orders &amp; Recent Drafts</h2>
+                    <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] font-bold text-emerald-700 border border-emerald-200">
+                      <span className="h-1.5 w-1.5 rounded-full bg-emerald-500 animate-pulse" />
+                      LIVE
+                    </span>
+                  </div>
+                  <p className="text-xs text-slate-500">Live online storefront orders &amp; counter sales</p>
+                </div>
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => void loadPosOrders()}
+                  disabled={posOrdersLoading}
+                  title="Refresh activity"
+                  className="flex h-9 w-9 items-center justify-center rounded-lg border border-slate-200 bg-white text-slate-600 hover:bg-slate-50 hover:text-slate-900 transition disabled:opacity-50 cursor-pointer"
+                >
+                  <RefreshCw size={15} className={posOrdersLoading ? "animate-spin" : ""} />
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setPanel(null)}
+                  className="flex h-9 w-9 items-center justify-center rounded-lg border border-slate-200 bg-white text-slate-500 hover:bg-slate-100 hover:text-slate-800 transition cursor-pointer"
+                >
+                  <X size={18} />
+                </button>
+              </div>
+            </div>
+
+            {/* Channels & Tabs */}
+            <div className="border-b border-slate-200 bg-white px-6 pt-3 pb-0">
+              <div className="flex gap-2">
+                {[
+                  { id: "all", label: "All Activity", count: posOrders.length },
+                  { id: "online", label: "Storefront", count: posOrders.filter((o) => o.channel === "online").length, icon: Globe },
+                  { id: "counter", label: "Counter POS", count: posOrders.filter((o) => o.channel === "counter").length, icon: Store },
+                  { id: "held", label: "Parked Drafts", count: holds.length, icon: Pause },
+                ].map((tab) => {
+                  const Icon = tab.icon;
+                  const active = (panel === "holds" && tab.id === "held") || (panel === "pos-orders" && posOrdersTab === tab.id);
+                  return (
+                    <button
+                      key={tab.id}
+                      type="button"
+                      onClick={() => {
+                        if (tab.id === "held") {
+                          setPanel("holds");
+                          setPosOrdersTab("held");
+                        } else {
+                          setPanel("pos-orders");
+                          setPosOrdersTab(tab.id as any);
+                        }
+                      }}
+                      className={`relative flex items-center gap-1.5 pb-3 px-3 text-xs font-semibold transition cursor-pointer border-b-2 ${
+                        active
+                          ? "border-indigo-600 text-indigo-600"
+                          : "border-transparent text-slate-500 hover:text-slate-800 hover:border-slate-300"
+                      }`}
+                    >
+                      {Icon ? <Icon size={13} /> : null}
+                      <span>{tab.label}</span>
+                      <span
+                        className={`ml-1 rounded-full px-1.5 py-0.2 text-[10px] font-bold ${
+                          active ? "bg-indigo-100 text-indigo-700" : "bg-slate-100 text-slate-600"
+                        }`}
+                      >
+                        {tab.count}
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* Filter Bar & Search (For Orders tabs) */}
+            {posOrdersTab !== "held" && panel !== "holds" ? (
+              <div className="space-y-2 border-b border-slate-100 bg-slate-50/50 p-4">
+                <div className="relative">
+                  <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+                  <input
+                    value={posOrdersSearch}
+                    onChange={(e) => setPosOrdersSearch(e.target.value)}
+                    placeholder="Search by order #, customer name, phone, address..."
+                    className="h-9 w-full rounded-lg border border-slate-200 bg-white pl-9 pr-3 text-xs text-slate-900 placeholder:text-slate-400 focus:border-indigo-500 focus:outline-none shadow-2xs"
+                  />
+                  {posOrdersSearch ? (
+                    <button
+                      type="button"
+                      onClick={() => setPosOrdersSearch("")}
+                      className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
+                    >
+                      <X size={13} />
+                    </button>
+                  ) : null}
+                </div>
+
+                <div className="flex flex-wrap items-center gap-1.5 pt-1">
+                  {[
+                    { id: "all", label: "All Status" },
+                    { id: "pending", label: "Pending" },
+                    { id: "ready", label: "Ready / Dispatch" },
+                    { id: "completed", label: "Completed" },
+                    { id: "unpaid", label: "Unpaid / COD" },
+                    { id: "today", label: "Today Only" },
+                  ].map((f) => (
+                    <button
+                      key={f.id}
+                      type="button"
+                      onClick={() => setPosOrdersFilter(f.id as any)}
+                      className={`h-6 rounded-md px-2.5 text-[11px] font-semibold transition cursor-pointer ${
+                        posOrdersFilter === f.id
+                          ? "bg-slate-900 text-white shadow-2xs"
+                          : "bg-white text-slate-600 border border-slate-200 hover:bg-slate-100"
+                      }`}
+                    >
+                      {f.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            ) : null}
+
+            {/* Body Content */}
+            <div className="flex-1 overflow-y-auto p-4 space-y-3 bg-slate-50/30">
+              {posOrdersTab === "held" || panel === "holds" ? (
+                /* PARKED DRAFTS VIEW */
+                holds.length === 0 ? (
+                  <div className="flex flex-col items-center justify-center py-16 text-center">
+                    <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-slate-100 text-slate-400">
+                      <Pause size={24} />
+                    </div>
+                    <p className="mt-3 text-sm font-semibold text-slate-700">No Parked Drafts</p>
+                    <p className="text-xs text-slate-400 max-w-xs mt-1">
+                      Press &quot;Hold (Pause)&quot; in the POS register to save temporary bills for customers stepped aside.
+                    </p>
+                  </div>
+                ) : (
+                  holds.map((hold, idx) => (
+                    <div
+                      key={hold.id}
+                      className="rounded-xl border border-slate-200 bg-white p-4 shadow-2xs hover:border-slate-300 transition"
+                    >
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-2">
+                          <span className="flex h-6 w-6 items-center justify-center rounded-full bg-indigo-50 text-[11px] font-bold text-indigo-700">
+                            #{idx + 1}
+                          </span>
+                          <span className="text-xs font-bold text-slate-900">
+                            {hold.label || `Draft Ticket (${hold.id.slice(0, 8)})`}
+                          </span>
+                        </div>
+                        <span className="rounded-md bg-amber-50 px-2 py-0.5 text-[11px] font-semibold text-amber-700 border border-amber-200">
+                          {hold.lines.reduce((acc, l) => acc + l.qty, 0)} items
+                        </span>
+                      </div>
+
+                      <div className="mt-3 flex items-center justify-between border-t border-slate-100 pt-3">
+                        <div className="text-[11px] text-slate-500">
+                          Items: {hold.lines.map((l) => `${l.qty}x`).join(", ")}
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <button
+                            type="button"
+                            onClick={() => void discardHold(hold.id)}
+                            className="inline-flex items-center gap-1 rounded-lg border border-rose-200 bg-rose-50 px-2.5 py-1 text-xs font-semibold text-rose-700 hover:bg-rose-100 transition cursor-pointer"
+                          >
+                            <Trash2 size={12} />
+                            Discard
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => void recall(hold)}
+                            className="inline-flex items-center gap-1 rounded-lg bg-indigo-600 px-3 py-1 text-xs font-semibold text-white hover:bg-indigo-700 shadow-2xs transition cursor-pointer"
+                          >
+                            <RotateCcw size={12} />
+                            Recall to Register
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  ))
+                )
+              ) : (
+                /* LIVE ORDERS & SALES VIEW */
+                posOrdersLoading ? (
+                  <div className="flex flex-col items-center justify-center py-16 text-center">
+                    <RefreshCw size={24} className="animate-spin text-indigo-600" />
+                    <p className="mt-2 text-xs font-medium text-slate-500">Loading live storefront &amp; POS orders...</p>
+                  </div>
+                ) : filteredPosOrders.length === 0 ? (
+                  <div className="flex flex-col items-center justify-center py-16 text-center">
+                    <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-slate-100 text-slate-400">
+                      <ShoppingBag size={24} />
+                    </div>
+                    <p className="mt-3 text-sm font-semibold text-slate-700">No orders found</p>
+                    <p className="text-xs text-slate-400 max-w-xs mt-1">
+                      No customer orders match your selected filters. New orders from the online storefront or POS counter will appear here in real time.
+                    </p>
+                  </div>
+                ) : (
+                  filteredPosOrders.map((order) => {
+                    const isOnline = order.channel === "online";
+                    const isDelivery = order.fulfillment === "delivery";
+                    const statusColors: Record<string, { bg: string; text: string; border: string }> = {
+                      placed: { bg: "bg-amber-50", text: "text-amber-800", border: "border-amber-200" },
+                      accepted: { bg: "bg-blue-50", text: "text-blue-800", border: "border-blue-200" },
+                      packing: { bg: "bg-indigo-50", text: "text-indigo-800", border: "border-indigo-200" },
+                      ready: { bg: "bg-purple-50", text: "text-purple-800", border: "border-purple-200" },
+                      ready_for_pickup: { bg: "bg-purple-50", text: "text-purple-800", border: "border-purple-200" },
+                      out_for_delivery: { bg: "bg-sky-50", text: "text-sky-800", border: "border-sky-200" },
+                      delivered: { bg: "bg-emerald-50", text: "text-emerald-800", border: "border-emerald-200" },
+                      picked_up: { bg: "bg-emerald-50", text: "text-emerald-800", border: "border-emerald-200" },
+                      completed: { bg: "bg-emerald-50", text: "text-emerald-800", border: "border-emerald-200" },
+                      cancelled: { bg: "bg-rose-50", text: "text-rose-800", border: "border-rose-200" },
+                      voided: { bg: "bg-rose-50", text: "text-rose-800", border: "border-rose-200" },
+                    };
+                    const color = statusColors[order.status] || { bg: "bg-slate-100", text: "text-slate-800", border: "border-slate-200" };
+
+                    return (
+                      <div
+                        key={`${order.channel}-${order.id}`}
+                        className="rounded-xl border border-slate-200 bg-white p-4 shadow-2xs hover:border-slate-300 transition"
+                      >
+                        {/* Header Row */}
+                        <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 pb-2.5">
+                          <div className="flex items-center gap-2">
+                            <span className="font-mono text-xs font-bold text-slate-900">
+                              #{order.number}
+                            </span>
+                            {isOnline ? (
+                              <span className="inline-flex items-center gap-1 rounded-md bg-indigo-50 px-2 py-0.5 text-[10px] font-bold text-indigo-700 border border-indigo-100">
+                                <Globe size={11} />
+                                Online Store
+                              </span>
+                            ) : (
+                              <span className="inline-flex items-center gap-1 rounded-md bg-emerald-50 px-2 py-0.5 text-[10px] font-bold text-emerald-700 border border-emerald-100">
+                                <Store size={11} />
+                                POS Counter
+                              </span>
+                            )}
+                            <span className="inline-flex items-center gap-1 rounded-md bg-slate-100 px-2 py-0.5 text-[10px] font-semibold text-slate-700">
+                              {isDelivery ? <Truck size={10} /> : <ShoppingBag size={10} />}
+                              {isDelivery ? "Delivery" : "Store Pickup"}
+                            </span>
+                          </div>
+
+                          <div className="flex items-center gap-2">
+                            <span
+                              className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10.5px] font-bold border ${color.bg} ${color.text} ${color.border}`}
+                            >
+                              <span className="h-1.5 w-1.5 rounded-full bg-current" />
+                              {order.status.replace(/_/g, " ").toUpperCase()}
+                            </span>
+                          </div>
+                        </div>
+
+                        {/* Customer & Fulfillment Details */}
+                        <div className="mt-2.5 grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs">
+                          <div>
+                            <div className="font-semibold text-slate-900 flex items-center gap-1.5">
+                              <span>{order.customer_name || "Walk-in Customer"}</span>
+                            </div>
+                            {order.customer_phone ? (
+                              <a
+                                href={`tel:${order.customer_phone}`}
+                                className="inline-flex items-center gap-1 text-[11px] text-indigo-600 hover:underline mt-0.5"
+                              >
+                                <Phone size={10} />
+                                {order.customer_phone}
+                              </a>
+                            ) : null}
+                          </div>
+                          <div className="text-right sm:text-right text-[11px] text-slate-500">
+                            <div>{new Date(order.created_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</div>
+                            <div className="text-[10px] text-slate-400">{new Date(order.created_at).toLocaleDateString()}</div>
+                          </div>
+                        </div>
+
+                        {/* Delivery Address & Notes (if applicable) */}
+                        {order.address ? (
+                          <div className="mt-2 rounded-lg bg-slate-50 p-2 text-xs text-slate-600 flex items-start gap-1.5">
+                            <MapPin size={13} className="text-rose-500 mt-0.5 shrink-0" />
+                            <div className="flex-1 text-[11px]">
+                              <span className="font-medium text-slate-800">{order.address}</span>
+                              {order.city ? `, ${order.city}` : ""}
+                              {order.pincode ? ` - ${order.pincode}` : ""}
+                              {order.delivery_slot ? (
+                                <span className="ml-1.5 inline-block font-semibold text-indigo-700">
+                                  (Slot: {order.delivery_slot})
+                                </span>
+                              ) : null}
+                            </div>
+                            {order.live_location_url ? (
+                              <a
+                                href={order.live_location_url}
+                                target="_blank"
+                                rel="noreferrer"
+                                className="inline-flex items-center gap-0.5 text-[10px] font-semibold text-indigo-600 hover:underline shrink-0"
+                              >
+                                <span>Map</span>
+                                <ExternalLink size={9} />
+                              </a>
+                            ) : null}
+                          </div>
+                        ) : null}
+
+                        {order.order_notes ? (
+                          <div className="mt-1.5 rounded-lg bg-amber-50/70 border border-amber-200/50 p-2 text-[11px] text-amber-900">
+                            <strong className="font-semibold">Note:</strong> {order.order_notes}
+                          </div>
+                        ) : null}
+
+                        {/* Items List Preview */}
+                        <div className="mt-3 border-t border-slate-100 pt-2.5">
+                          <div className="text-[11px] font-semibold text-slate-500 uppercase tracking-wider mb-1">
+                            Items ({order.lines?.length || 0})
+                          </div>
+                          <div className="space-y-1">
+                            {(order.lines || []).map((line: any, lIdx: number) => (
+                              <div key={lIdx} className="flex items-center justify-between text-xs text-slate-700">
+                                <span className="font-medium text-slate-800">
+                                  {line.qty} × {line.name}
+                                </span>
+                                <span className="font-mono text-slate-900">
+                                  ₹{(((line.total_paise || (line.qty * (line.unit_price_paise || 0))) || 0) / 100).toFixed(2)}
+                                </span>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+
+                        {/* Payment & Total Row */}
+                        <div className="mt-3 flex items-center justify-between border-t border-slate-100 pt-2.5 bg-slate-50/50 -mx-4 -mb-4 px-4 py-3 rounded-b-xl">
+                          <div>
+                            <div className="flex items-center gap-1.5">
+                              <span className="text-xs text-slate-500">Total:</span>
+                              <span className="font-mono text-sm font-bold text-slate-900">
+                                ₹{((order.total_paise || 0) / 100).toFixed(2)}
+                              </span>
+                            </div>
+                            <div className="flex items-center gap-1.5 mt-0.5">
+                              <span
+                                className={`text-[10px] font-bold uppercase ${
+                                  order.payment_status === "paid" ? "text-emerald-600" : "text-amber-600"
+                                }`}
+                              >
+                                {order.payment_status === "paid" ? "● Paid" : "○ Unpaid / COD"}
+                              </span>
+                              <span className="text-[10px] text-slate-400">·</span>
+                              <span className="text-[10px] font-semibold text-slate-600 uppercase">
+                                {order.payment_method || "Counter"}
+                              </span>
+                            </div>
+                          </div>
+
+                          {/* Retail Action Buttons */}
+                          <div className="flex flex-wrap items-center gap-1.5">
+                            {/* Workflow transitions for Online storefront orders */}
+                            {isOnline && order.status === "placed" ? (
+                              <>
+                                <button
+                                  type="button"
+                                  onClick={() => void transitionPosOrder(order.id, "accepted")}
+                                  className="inline-flex items-center gap-1 rounded-lg bg-emerald-600 px-2.5 py-1.5 text-xs font-semibold text-white hover:bg-emerald-700 shadow-2xs transition cursor-pointer"
+                                >
+                                  <Check size={12} />
+                                  Accept
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => void transitionPosOrder(order.id, "rejected")}
+                                  className="inline-flex items-center gap-1 rounded-lg border border-rose-200 bg-rose-50 px-2 py-1.5 text-xs font-semibold text-rose-700 hover:bg-rose-100 transition cursor-pointer"
+                                >
+                                  <X size={12} />
+                                  Reject
+                                </button>
+                              </>
+                            ) : null}
+
+                            {isOnline && order.status === "accepted" ? (
+                              <button
+                                type="button"
+                                onClick={() => void transitionPosOrder(order.id, "packing")}
+                                className="inline-flex items-center gap-1 rounded-lg bg-indigo-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-indigo-700 shadow-2xs transition cursor-pointer"
+                              >
+                                <Package size={12} />
+                                Pack Items
+                              </button>
+                            ) : null}
+
+                            {isOnline && order.status === "packing" ? (
+                              <button
+                                type="button"
+                                onClick={() => void transitionPosOrder(order.id, "ready")}
+                                className="inline-flex items-center gap-1 rounded-lg bg-purple-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-purple-700 shadow-2xs transition cursor-pointer"
+                              >
+                                <CheckCircle2 size={12} />
+                                Mark Ready
+                              </button>
+                            ) : null}
+
+                            {isOnline && order.status === "ready" && isDelivery ? (
+                              <button
+                                type="button"
+                                onClick={() => void transitionPosOrder(order.id, "out_for_delivery")}
+                                className="inline-flex items-center gap-1 rounded-lg bg-sky-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-sky-700 shadow-2xs transition cursor-pointer"
+                              >
+                                <Truck size={12} />
+                                Dispatch
+                              </button>
+                            ) : null}
+
+                            {isOnline && order.status === "ready" && !isDelivery ? (
+                              <button
+                                type="button"
+                                onClick={() => void transitionPosOrder(order.id, "picked_up")}
+                                className="inline-flex items-center gap-1 rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-emerald-700 shadow-2xs transition cursor-pointer"
+                              >
+                                <CheckCircle2 size={12} />
+                                Picked Up
+                              </button>
+                            ) : null}
+
+                            {isOnline && order.status === "out_for_delivery" ? (
+                              <button
+                                type="button"
+                                onClick={() => void transitionPosOrder(order.id, "delivered")}
+                                className="inline-flex items-center gap-1 rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-emerald-700 shadow-2xs transition cursor-pointer"
+                              >
+                                <CheckCircle2 size={12} />
+                                Delivered
+                              </button>
+                            ) : null}
+
+                            {/* Retail Printing */}
+                            <button
+                              type="button"
+                              onClick={() => printPackingSlip(order)}
+                              title="Print retail packing slip"
+                              className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-[11px] font-semibold text-slate-700 hover:bg-slate-100 transition cursor-pointer"
+                            >
+                              <FileText size={12} className="text-slate-500" />
+                              Slip
+                            </button>
+
+                            <button
+                              type="button"
+                              onClick={() => printOrderReceipt(order)}
+                              title="Print customer receipt / invoice"
+                              className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-[11px] font-semibold text-slate-700 hover:bg-slate-100 transition cursor-pointer"
+                            >
+                              <Printer size={12} className="text-slate-500" />
+                              Invoice
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })
+                )
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* =====================================================================
+          2. CENTERED MODAL FOR SHIFT, CUSTOMER, PAY, RETURN, SETTINGS, TODAY
+         ===================================================================== */}
+      {panel && panel !== "pos-orders" && panel !== "holds" ? (
         <div className="fixed inset-0 z-20 grid place-items-center bg-[#1a1d23]/30 p-4 backdrop-blur-[1px]" onClick={() => setPanel(null)}>
           <div
             className="max-h-[90vh] w-full max-w-3xl overflow-auto rounded-[16px] border border-[#eceef3] bg-white shadow-xl"
@@ -2430,74 +3059,7 @@ function PosScreen() {
               </div>
             ) : null}
 
-            {panel === "holds" ? (
-              <div className="p-6">
-                <div className="flex items-center justify-between border-b border-slate-100 pb-3">
-                  <div>
-                    <h2 className="text-base font-semibold text-slate-900">Branch Parked Drafts</h2>
-                    <p className="text-xs text-slate-500">Resume floating customer carts held by any register in this store.</p>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <button
-                      type="button"
-                      onClick={() => {
-                        if (storeId) {
-                          void fetch(`/api/v1/stores/${storeId}/holds`, { credentials: "include", headers: { Accept: "application/json" } })
-                            .then((r) => r.json())
-                            .then((body) => {
-                              if (body.data) setHolds(body.data);
-                              showNotice("Central drafts refreshed.", "ok");
-                            });
-                        }
-                      }}
-                      className="rounded-md border border-slate-200 bg-white px-2.5 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-50 cursor-pointer"
-                    >
-                      Sync Drafts
-                    </button>
-                    <button type="button" onClick={() => setPanel(null)} className="text-xs text-slate-400 hover:text-slate-800 cursor-pointer">
-                      Close
-                    </button>
-                  </div>
-                </div>
 
-                <div className="mt-4 space-y-2 max-h-80 overflow-y-auto">
-                  {holds.map((hold) => {
-                    const itemCount = hold.lines?.reduce((s, l) => s + (l.qty || 1), 0) || 0;
-                    return (
-                      <div
-                        key={hold.id}
-                        className="flex items-center justify-between rounded-xl border border-slate-200 bg-white p-3 hover:border-indigo-300 transition"
-                      >
-                        <div>
-                          <p className="text-xs font-semibold text-slate-900">{hold.label ?? "Unassigned Cart"}</p>
-                          <p className="text-[11px] text-slate-500">
-                            {itemCount} item{itemCount === 1 ? "" : "s"} &middot; Shared Draft
-                          </p>
-                        </div>
-                        <div className="flex items-center gap-2">
-                          <button
-                            type="button"
-                            onClick={() => {
-                              void recall(hold);
-                              setPanel(null);
-                              showNotice("Draft cart resumed on this counter.", "ok");
-                            }}
-                            className="rounded-lg bg-indigo-600 px-3 py-1.5 text-xs font-semibold text-white shadow-2xs hover:bg-indigo-700 cursor-pointer"
-                          >
-                            Resume on This Counter
-                          </button>
-                        </div>
-                      </div>
-                    );
-                  })}
-                  {holds.length === 0 ? (
-                    <div className="py-8 text-center text-xs text-slate-400">
-                      No parked drafts found for this store. Use the "Park" button in the cart to hold an active basket.
-                    </div>
-                  ) : null}
-                </div>
-              </div>
-            ) : null}
 
             {panel === "settings" ? (
               <div>

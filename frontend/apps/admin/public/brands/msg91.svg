@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 130 36" fill="none">
+  <rect width="36" height="36" rx="8" fill="#E53935"/>
+  <path d="M10 12C10 10.8954 10.8954 10 12 10H24C25.1046 10 26 10.8954 26 12V21C26 22.1046 25.1046 23 24 23H14L10 26V12Z" fill="white"/>
+  <circle cx="14.5" cy="16.5" r="1.5" fill="#E53935"/>
+  <circle cx="18" cy="16.5" r="1.5" fill="#E53935"/>
+  <circle cx="21.5" cy="16.5" r="1.5" fill="#E53935"/>
+  <text x="44" y="24" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="17" font-weight="800" fill="#1E293B" letter-spacing="-0.5">MSG<tspan fill="#E53935">91</tspan></text>
+</svg>

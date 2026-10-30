@@ -1,5 +1,8 @@
 <?php
 
+use App\Modules\Hardware\Http\Controllers\HardwareMarketplaceController;
+use App\Modules\Hardware\Http\Controllers\PlatformHardwareController;
+use App\Modules\Marketing\Http\Controllers\MarketingController;
 use App\Modules\Audit\Http\Controllers\HealthController;
 use App\Modules\Billing\Http\Controllers\BillingController;
 use App\Modules\Billing\Http\Controllers\LegalEntityController;
@@ -16,6 +19,8 @@ use App\Modules\Printing\Http\Controllers\PrinterController;
 use App\Modules\Printing\Http\Controllers\PrintProfileController;
 use App\Modules\Printing\Http\Controllers\TemplateController;
 use App\Modules\Identity\Http\Controllers\ImpersonationController;
+use App\Modules\Integrations\Http\Controllers\IntegrationController;
+use App\Modules\Integrations\Http\Controllers\TryOnPublicController;
 use App\Modules\Identity\Http\Controllers\StaffController;
 use App\Modules\Inventory\Http\Controllers\PurchaseController;
 use App\Modules\Inventory\Http\Controllers\StoreItemController;
@@ -26,6 +31,7 @@ use App\Modules\Plans\Http\Controllers\PlanController;
 use App\Modules\Platform\Http\Controllers\ApiKeyController;
 use App\Modules\Platform\Http\Controllers\PlatformAppController;
 use App\Modules\Platform\Http\Controllers\PlatformBackupController;
+use App\Modules\Platform\Http\Controllers\PlatformPushController;
 use App\Modules\Platform\Http\Controllers\PlatformQueueController;
 use App\Modules\Storefront\Http\Controllers\PublicShopController;
 use App\Modules\Platform\Http\Controllers\WebhookEndpointController;
@@ -52,8 +58,17 @@ Route::get('public/organizations/{slug}/items', [PublicShopController::class, 'o
 Route::get('public/i18n/{locale}', [PublicShopController::class, 'strings']);
 Route::get('public/pages/{slug}', [PublicShopController::class, 'page']);
 Route::get('public/stores/{slug}/sections', [PublicShopController::class, 'sections']);
+Route::get('public/auth/methods', [AuthController::class, 'methods']);
+Route::get('public/maps', [AuthController::class, 'maps']);
+Route::post('auth/phone/request', [AuthController::class, 'requestPhoneOtp']);
+Route::post('auth/phone/verify', [AuthController::class, 'verifyPhoneOtp']);
+Route::post('auth/phone/firebase', [AuthController::class, 'firebasePhone']);
 Route::post('public/stores/{slug}/otp', [PublicShopController::class, 'requestOtp']);
+Route::post('public/stores/{slug}/auth/request-otp', [PublicShopController::class, 'requestOtp']);
 Route::post('public/stores/{slug}/otp/verify', [PublicShopController::class, 'verifyOtp']);
+Route::post('public/stores/{slug}/auth/verify-otp', [PublicShopController::class, 'verifyOtp']);
+Route::post('public/stores/{slug}/subscribe', [PublicShopController::class, 'subscribe']);
+Route::post('public/stores/{slug}/contact', [PublicShopController::class, 'contactMessage']);
     Route::get('public/stores/{slug}', [SaleController::class, 'publicStore']);
     Route::get('public/stores/{slug}/favourites', [SaleController::class, 'favourites']);
     Route::get('public/stores/{slug}/loyalty', [SaleController::class, 'publicLoyalty']);
@@ -61,10 +76,12 @@ Route::post('public/stores/{slug}/favourites', [SaleController::class, 'saveFavo
 Route::post('public/stores/{slug}/ai', [AiAssistantController::class, 'storefrontChat']);
 Route::get('open/items', [ApiKeyController::class, 'items']);
 Route::get('public/stores/{slug}/gateways', [GatewayController::class, 'publicIndex']);
+Route::post('public/stores/{slug}/tryon/generate', [TryOnPublicController::class, 'generate']);
 Route::post('public/stores/{slug}/checkout', [SaleController::class, 'checkout']);
 Route::post('public/orders/track', [SaleController::class, 'track']);
 Route::get('public/orders/customer', [SaleController::class, 'customerOrders']);
 Route::post('public/orders/scan-pickup', [SaleController::class, 'scanPickupQr']);
+Route::post('public/kiosk/orders', [SaleController::class, 'kioskOrder']);
 Route::post('public/webhooks/{provider}', [WebhookController::class, 'store']);
 Route::post('public/payments/{payment}/capture', [WebhookController::class, 'testCapture']);
 Route::get('public/terminals/generate-pair-code', [TerminalController::class, 'publicGeneratePairCode']);
@@ -88,6 +105,8 @@ Route::middleware('auth')->group(function () {
         Route::get('auth/me', [AuthController::class, 'me']);
         Route::post('auth/staff/password/change', [AuthController::class, 'changePassword']);
         Route::post('auth/switch-store', [AuthController::class, 'switchStore']);
+        Route::post('auth/select-branch', [AuthController::class, 'switchStore']);
+        Route::post('auth/select-terminal', [AuthController::class, 'selectTerminal']);
     });
 });
 
@@ -123,6 +142,12 @@ Route::middleware(['auth', 'password.changed', 'kind:platform'])->group(function
     Route::get('platform/logs', [BillingController::class, 'platformLogs']);
     Route::get('platform/settings', [BillingController::class, 'platformSettings']);
     Route::put('platform/settings', [BillingController::class, 'updatePlatformSettings']);
+    Route::post('platform/mail/test', [BillingController::class, 'testMail']);
+    Route::post('platform/sms/test', [BillingController::class, 'testSms']);
+    Route::post('platform/whatsapp/test', [BillingController::class, 'testWhatsapp']);
+    Route::post('platform/gateways/{provider}/test', [BillingController::class, 'testPlatformGateway']);
+    Route::post('platform/storage/scan', [BillingController::class, 'scanStorage']);
+    Route::post('platform/storage/purge', [BillingController::class, 'purgeStorage']);
     Route::post('platform/branding/upload', [BillingController::class, 'uploadBrandingAsset']);
     Route::get('platform/legal-entity', [LegalEntityController::class, 'show']);
     Route::put('platform/legal-entity', [LegalEntityController::class, 'update']);
@@ -159,6 +184,19 @@ Route::middleware(['auth', 'password.changed', 'kind:platform'])->group(function
     Route::get('platform/queue-status', [PlatformQueueController::class, 'status']);
     Route::post('platform/queue/retry-all', [PlatformQueueController::class, 'retryAll']);
     Route::post('platform/queue/flush', [PlatformQueueController::class, 'flush']);
+
+    // SelfX Hardware Catalog & Tenant Orders Management (SuperAdmin)
+    Route::get('platform/hardware', [PlatformHardwareController::class, 'index']);
+    Route::post('platform/hardware', [PlatformHardwareController::class, 'store']);
+    Route::match(['put', 'patch'], 'platform/hardware/{id}', [PlatformHardwareController::class, 'update']);
+    Route::delete('platform/hardware/{id}', [PlatformHardwareController::class, 'destroy']);
+    Route::get('platform/hardware/orders', [PlatformHardwareController::class, 'orders']);
+    Route::put('platform/hardware/orders/{id}/status', [PlatformHardwareController::class, 'updateOrderStatus']);
+
+    // Platform Push Notifications Integration (SuperAdmin)
+    Route::get('platform/push-notifications', [PlatformPushController::class, 'show']);
+    Route::put('platform/push-notifications', [PlatformPushController::class, 'update']);
+    Route::post('platform/push-notifications/test', [PlatformPushController::class, 'test']);
 });
 
 Route::get('public/apps', [PlatformAppController::class, 'index']);
@@ -178,13 +216,50 @@ Route::middleware(['auth', 'password.changed', 'kind:staff', 'tenant.enforce'])-
     Route::delete('stores/{store}', [StoreController::class, 'destroy']);
     Route::post('stores/{store}/switch', [StoreController::class, 'switch']);
 
-    // POS Terminals & Pairing
+    // Marketing Suite Routes (Tenant)
+    Route::get('marketing/overview', [MarketingController::class, 'dashboard']);
+    Route::get('marketing/campaigns', [MarketingController::class, 'campaigns']);
+    Route::post('marketing/campaigns', [MarketingController::class, 'storeCampaign']);
+    Route::post('marketing/campaigns/{id}/dispatch', [MarketingController::class, 'dispatchCampaign']);
+    Route::post('marketing/campaigns/test-send', [MarketingController::class, 'testSend']);
+    Route::get('marketing/segments', [MarketingController::class, 'segments']);
+    Route::post('marketing/segments', [MarketingController::class, 'storeSegment']);
+    Route::get('marketing/templates', [MarketingController::class, 'templates']);
+    Route::post('marketing/templates', [MarketingController::class, 'storeTemplate']);
+    Route::delete('marketing/templates/{id}', [MarketingController::class, 'deleteTemplate']);
+    Route::get('marketing/settings', [MarketingController::class, 'settings']);
+    Route::put('marketing/settings', [MarketingController::class, 'updateSettings']);
+    Route::post('marketing/settings/test-connection', [MarketingController::class, 'testConnection']);
+
+    // SelfX Hardware Marketplace & Rental Hub (Tenant)
+    Route::get('tenant/hardware', [HardwareMarketplaceController::class, 'index']);
+    Route::get('tenant/hardware/{id}', [HardwareMarketplaceController::class, 'show']);
+    Route::post('tenant/hardware/checkout', [HardwareMarketplaceController::class, 'checkout']);
+    Route::post('tenant/hardware/confirm', [HardwareMarketplaceController::class, 'confirmCheckout']);
+    Route::post('tenant/hardware/demo', [HardwareMarketplaceController::class, 'bookDemo']);
+    Route::get('tenant/hardware/my-devices', [HardwareMarketplaceController::class, 'myDevices']);
+    Route::post('tenant/hardware/rma', [HardwareMarketplaceController::class, 'submitRma']);
+
+    // POS & Kiosk Terminals, PINs & Settings
     Route::get('stores/{store}/terminals', [TerminalController::class, 'index']);
     Route::post('stores/{store}/terminals', [TerminalController::class, 'store']);
     Route::put('stores/{store}/terminals/{terminal}', [TerminalController::class, 'update']);
     Route::delete('stores/{store}/terminals/{terminal}', [TerminalController::class, 'destroy']);
     Route::post('stores/{store}/terminals/{terminal}/pair', [TerminalController::class, 'pair']);
     Route::post('stores/{store}/terminals/{terminal}/unpair', [TerminalController::class, 'unpair']);
+    Route::post('stores/{store}/terminals/{terminal}/pin', [TerminalController::class, 'setPin']);
+    Route::post('stores/{store}/terminals/{terminal}/verify-pin', [TerminalController::class, 'verifyPin']);
+    Route::get('stores/{store}/kiosk-settings', [TerminalController::class, 'kioskSettings']);
+    Route::put('stores/{store}/kiosk-settings', [TerminalController::class, 'updateKioskSettings']);
+    Route::get('integrations', [IntegrationController::class, 'index']);
+    Route::get('integrations/{provider}', [IntegrationController::class, 'show']);
+    Route::put('integrations/{provider}', [IntegrationController::class, 'update']);
+    Route::post('integrations/{provider}/test', [IntegrationController::class, 'test']);
+    Route::post('integrations/{provider}/sync', [IntegrationController::class, 'sync']);
+    Route::post('integrations/{provider}/stores', [IntegrationController::class, 'saveShop']);
+    Route::delete('integrations/{provider}/stores/{shopId}', [IntegrationController::class, 'removeShop']);
+    Route::post('integrations/{provider}/reset-mappings', [IntegrationController::class, 'resetMappings']);
+    Route::delete('integrations/{provider}/logs', [IntegrationController::class, 'clearLogs']);
 
     Route::get('stores/{store}/items', [StoreItemController::class, 'index']);
     Route::get('catalog/own/categories', [TenantCatalogController::class, 'categories']);
@@ -263,6 +338,8 @@ Route::middleware(['auth', 'password.changed', 'kind:staff', 'tenant.enforce'])-
     Route::get('orders', [SaleController::class, 'orders']);
     Route::get('pick-list', [SaleController::class, 'pickList']);
     Route::get('notifications', [NotificationController::class, 'index']);
+    Route::delete('notifications/{id}', [NotificationController::class, 'destroy']);
+    Route::post('notifications/clear', [NotificationController::class, 'clearAll']);
     Route::post('ai/reports', [ReportAnswerController::class, 'ask']);
     Route::post('ai/assistant', [AiAssistantController::class, 'tenantChat']);
     Route::get('ai/reports/saved', [ReportAnswerController::class, 'saved']);
@@ -298,9 +375,21 @@ Route::middleware(['auth', 'password.changed', 'kind:staff', 'tenant.enforce'])-
     Route::post('delivery/orders/{order}/assign', [SaleController::class, 'assignDeliveryStaff']);
     Route::post('delivery/orders/{order}/status', [SaleController::class, 'updateDeliveryStatus']);
     Route::post('orders/scan-pickup', [SaleController::class, 'scanPickupQr']);
+    Route::post('kiosk/orders', [SaleController::class, 'kioskOrder']);
+    Route::post('kiosk/validate-qr', [SaleController::class, 'scanPickupQr']);
     Route::put('stores/{store}/sections', [SaleController::class, 'saveSections']);
     Route::post('stores/{store}/delivery-zones', [SaleController::class, 'addZone']);
+    
+    // Suppliers & Purchases Management
     Route::get('suppliers', [PurchaseController::class, 'suppliers']);
+    Route::post('suppliers', [PurchaseController::class, 'storeSupplier']);
+    Route::get('purchases', [PurchaseController::class, 'index']);
+    Route::post('purchases', [PurchaseController::class, 'storePurchase']);
+    Route::get('purchases/{purchase}', [PurchaseController::class, 'showPurchase']);
+    Route::post('purchases/{purchase}/payment', [PurchaseController::class, 'recordPayment']);
+    Route::delete('purchases/{purchase}', [PurchaseController::class, 'destroyPurchase']);
+    Route::post('purchases/import', [PurchaseController::class, 'importPurchases']);
+
     Route::post('stores/{store}/purchases', [PurchaseController::class, 'receive']);
     Route::post('stores/{store}/purchase-returns', [PurchaseController::class, 'purchaseReturn']);
     Route::post('stores/{store}/supplier-payments', [PurchaseController::class, 'paySupplier']);
@@ -355,12 +444,15 @@ Route::middleware(['auth', 'password.changed', 'kind:staff', 'tenant.enforce'])-
     Route::get('reports/profit', [SalesReportController::class, 'profit']);
     Route::get('reports/shifts', [SalesReportController::class, 'shifts']);
     Route::get('reports/dashboard', [SalesReportController::class, 'dashboard']);
+    Route::get('reports/users', [SalesReportController::class, 'usersReport']);
     Route::get('audit', [SalesReportController::class, 'audit']);
     Route::get('stores/{store}/holds', [SaleController::class, 'holds']);
     Route::post('stores/{store}/holds', [SaleController::class, 'park']);
     Route::delete('stores/{store}/holds/{hold}', [SaleController::class, 'releaseHold']);
     Route::get('billing/subscription', [BillingController::class, 'subscription']);
     Route::post('billing/change-plan', [BillingController::class, 'changePlan']);
+    Route::post('billing/initiate-checkout', [BillingController::class, 'initiateCheckout']);
+    Route::post('billing/confirm-checkout', [BillingController::class, 'confirmCheckout']);
     Route::get('billing/features', [BillingController::class, 'features']);
     Route::get('billing/usage', [BillingController::class, 'usage']);
     Route::get('billing/invoices', [BillingController::class, 'invoices']);
@@ -369,7 +461,9 @@ Route::middleware(['auth', 'password.changed', 'kind:staff', 'tenant.enforce'])-
     Route::get('billing/invoices/{invoice}/pdf', [LegalEntityController::class, 'pdf']);
     Route::get('coupons', [CouponController::class, 'index']);
     Route::post('coupons', [CouponController::class, 'store']);
+    Route::post('coupons/{id}/toggle', [CouponController::class, 'toggle']);
+    Route::delete('coupons/{id}', [CouponController::class, 'destroy']);
     Route::get('gateways', [GatewayController::class, 'index']);
-    Route::patch('gateways/{provider}', [GatewayController::class, 'update']);
+    Route::match(['patch', 'put'], 'gateways/{provider}', [GatewayController::class, 'update']);
     Route::put('gateways/{provider}/credentials', [GatewayController::class, 'credentials']);
 });

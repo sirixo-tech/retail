@@ -32,6 +32,7 @@ return Application::configure(basePath: dirname(__DIR__))
         $middleware->prependToGroup('web', \App\Http\Middleware\HydrateSessionFromHeader::class);
         $middleware->append(\App\Http\Middleware\CheckPlatformMaintenance::class);
         $middleware->append(\App\Http\Middleware\PerformanceMonitoring::class);
+        $middleware->append(\App\Http\Middleware\RecordApiResponse::class);
         $middleware->appendToGroup('web', \App\Http\Middleware\EnforceTenantContext::class);
     })
     ->withExceptions(function (Exceptions $exceptions): void {

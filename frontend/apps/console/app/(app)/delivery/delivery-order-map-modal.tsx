@@ -45,7 +45,15 @@ export interface DeliveryOrderMapModalProps {
     store_lng?: number | null;
   } | null;
   googleMapsApiKey?: string | null;
-  onStatusTransition?: (orderId: string, toStatus: string) => Promise<void>;
+  onStatusTransition?: (orderId: string, toStatus: string, otp?: string) => Promise<boolean | void>;
+}
+
+function computeVerificationCode(orderNumber?: string, id?: string): string {
+  const source = `${orderNumber ?? ""} ${id ?? ""}`;
+  const digits = source.replace(/\D+/g, "");
+  if (!digits) return "2045";
+  const lastFour = digits.slice(-4);
+  return lastFour.length === 4 ? lastFour : lastFour.padStart(4, "0");
 }
 
 export function DeliveryOrderMapModal({
@@ -58,6 +66,9 @@ export function DeliveryOrderMapModal({
   const mapRef = useRef<HTMLDivElement>(null);
   const [googleMapLoaded, setGoogleMapLoaded] = useState(false);
   const [transitioning, setTransitioning] = useState(false);
+  const [otpPromptOpen, setOtpPromptOpen] = useState(false);
+  const [deliveryOtp, setDeliveryOtp] = useState("");
+  const [otpError, setOtpError] = useState<string | null>(null);
 
   if (!isOpen || !order) return null;
 
@@ -150,11 +161,32 @@ export function DeliveryOrderMapModal({
     }
   }, [googleMapLoaded, storeLat, storeLng, custLat, custLng]);
 
-  async function handleAction(status: string) {
+  async function handleAction(status: string, otp?: string) {
     if (!onStatusTransition || !order) return;
     setTransitioning(true);
     try {
-      await onStatusTransition(order.id, status);
+      await onStatusTransition(order.id, status, otp);
+    } finally {
+      setTransitioning(false);
+    }
+  }
+
+  async function handleVerifyAndDeliver() {
+    if (!order || !onStatusTransition) return;
+    const clean = deliveryOtp.trim();
+    if (clean.length !== 4) {
+      setOtpError("Enter 4-digit OTP from customer");
+      return;
+    }
+    const expected = computeVerificationCode(order.number, order.id);
+    if (clean !== expected) {
+      setOtpError("Incorrect OTP. Ask customer for 4-digit tracking code.");
+      return;
+    }
+    setTransitioning(true);
+    try {
+      await onStatusTransition(order.id, "delivered", clean);
+      setOtpPromptOpen(false);
     } finally {
       setTransitioning(false);
     }
@@ -327,35 +359,87 @@ export function DeliveryOrderMapModal({
             Close
           </Button>
 
-          <div className="flex items-center gap-2">
-            {!isOutForDelivery && !isDelivered && (
-              <Button
-                type="button"
-                variant="secondary"
-                size="sm"
-                disabled={transitioning}
-                onClick={() => handleAction("out_for_delivery")}
-                className="inline-flex items-center gap-1.5 bg-indigo-50 border-indigo-200 text-indigo-700 hover:bg-indigo-100"
-              >
-                <Bike size={14} />
-                <span>Start Delivery (Out for Delivery)</span>
-              </Button>
-            )}
-
-            {!isDelivered && (
+          {otpPromptOpen ? (
+            <div className="flex flex-wrap items-center gap-2">
+              <input
+                type="text"
+                inputMode="numeric"
+                maxLength={4}
+                autoFocus
+                placeholder="4-digit OTP"
+                value={deliveryOtp}
+                onChange={(e) => {
+                  setDeliveryOtp(e.target.value.replace(/\D/g, "").slice(0, 4));
+                  setOtpError(null);
+                }}
+                className="h-8 w-28 rounded-lg border border-slate-300 px-2 text-center font-mono font-bold text-sm tracking-widest text-slate-900 outline-none focus:border-emerald-600 bg-white"
+              />
               <Button
                 type="button"
                 variant="primary"
                 size="sm"
-                disabled={transitioning}
-                onClick={() => handleAction("delivered")}
-                className="inline-flex items-center gap-1.5 bg-emerald-600 hover:bg-emerald-700"
+                disabled={transitioning || deliveryOtp.length !== 4}
+                onClick={handleVerifyAndDeliver}
+                className="bg-emerald-600 hover:bg-emerald-700"
               >
-                <CheckCircle2 size={14} />
-                <span>Mark Delivered</span>
+                Verify &amp; Deliver
               </Button>
-            )}
-          </div>
+              <Button
+                type="button"
+                variant="secondary"
+                size="sm"
+                onClick={() => {
+                  setOtpPromptOpen(false);
+                  setOtpError(null);
+                }}
+              >
+                Cancel
+              </Button>
+              {otpError && (
+                <span className="text-[11px] font-semibold text-rose-600 w-full text-right">
+                  {otpError}
+                </span>
+              )}
+            </div>
+          ) : (
+            <div className="flex items-center gap-2">
+              {!isOutForDelivery && !isDelivered && (
+                <Button
+                  type="button"
+                  variant="secondary"
+                  size="sm"
+                  disabled={transitioning}
+                  onClick={() => handleAction("out_for_delivery")}
+                  className="inline-flex items-center gap-1.5 bg-indigo-50 border-indigo-200 text-indigo-700 hover:bg-indigo-100"
+                >
+                  <Bike size={14} />
+                  <span>Start Delivery (Out for Delivery)</span>
+                </Button>
+              )}
+
+              {!isDelivered && (
+                <Button
+                  type="button"
+                  variant="primary"
+                  size="sm"
+                  disabled={transitioning}
+                  onClick={() => {
+                    if (order.fulfillment === "pickup") {
+                      void handleAction("delivered");
+                    } else {
+                      setOtpPromptOpen(true);
+                      setDeliveryOtp("");
+                      setOtpError(null);
+                    }
+                  }}
+                  className="inline-flex items-center gap-1.5 bg-emerald-600 hover:bg-emerald-700"
+                >
+                  <ShieldCheck size={14} />
+                  <span>{order.fulfillment === "pickup" ? "Mark Picked Up" : "Enter OTP & Deliver"}</span>
+                </Button>
+              )}
+            </div>
+          )}
         </div>
       </div>
     </div>

@@ -442,8 +442,9 @@ select:disabled {
 }
 
 input:not([type="checkbox"]):not([type="radio"]):not([type="file"]):not([type="range"]):not([type="button"]):not([type="submit"]):not([type="reset"]):not(:disabled),
-textarea:not(:disabled) {
-  cursor: text;
+textarea:not(:disabled),
+[role="searchbox"] {
+  cursor: default !important;
 }
 
 :focus-visible {

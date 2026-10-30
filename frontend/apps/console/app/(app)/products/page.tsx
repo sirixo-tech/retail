@@ -20,6 +20,8 @@ import {
   Scale,
   Search,
   ShieldCheck,
+  Stethoscope,
+  Pill,
   Tag,
   Trash2,
   Upload,
@@ -219,6 +221,18 @@ export function ProductWorkspace({ view }: { view: View }) {
   const [statusActive, setStatusActive] = useState(true);
   const [notForSelling, setNotForSelling] = useState(false);
   const [pharmacyBatchMode, setPharmacyBatchMode] = useState(false);
+  const [pharmacyBatchNumber, setPharmacyBatchNumber] = useState("");
+  const [pharmacyMfgDate, setPharmacyMfgDate] = useState("");
+  const [pharmacyExpDate, setPharmacyExpDate] = useState("");
+  const [pharmacyComposition, setPharmacyComposition] = useState("");
+  const [pharmacySchedule, setPharmacySchedule] = useState("OTC");
+  const [pharmacyDosageForm, setPharmacyDosageForm] = useState("Tablets");
+  const [pharmacyPackSize, setPharmacyPackSize] = useState("10 Tablets / Strip");
+  const [pharmacyManufacturer, setPharmacyManufacturer] = useState("");
+  const [pharmacyDrugLicense, setPharmacyDrugLicense] = useState("");
+  const [pharmacyStorageCondition, setPharmacyStorageCondition] = useState("Room Temperature (< 25°C)");
+  const [pharmacyRequiresRx, setPharmacyRequiresRx] = useState(false);
+  const [pharmacyIsNarcotic, setPharmacyIsNarcotic] = useState(false);
   const [featuredProduct, setFeaturedProduct] = useState(false);
   const [hideFromOnline, setHideFromOnline] = useState(false);
   const [alwaysInStock, setAlwaysInStock] = useState(true);
@@ -383,6 +397,22 @@ export function ProductWorkspace({ view }: { view: View }) {
         rack_location: prodRack,
         not_for_sale: notForSelling,
         pharmacy_batch_mode: pharmacyBatchMode,
+        pharmacy: pharmacyBatchMode
+          ? {
+              batch_number: pharmacyBatchNumber.trim(),
+              mfg_date: pharmacyMfgDate,
+              expiry_date: pharmacyExpDate,
+              composition: pharmacyComposition.trim(),
+              schedule: pharmacySchedule,
+              dosage_form: pharmacyDosageForm,
+              pack_size: pharmacyPackSize.trim(),
+              manufacturer: pharmacyManufacturer.trim(),
+              drug_license_no: pharmacyDrugLicense.trim(),
+              storage_condition: pharmacyStorageCondition,
+              requires_prescription: pharmacyRequiresRx,
+              is_narcotic: pharmacyIsNarcotic,
+            }
+          : null,
         featured: featuredProduct,
         always_in_stock: alwaysInStock,
         pre_order: preOrderAvailable
@@ -407,6 +437,18 @@ export function ProductWorkspace({ view }: { view: View }) {
       setProdNote("");
       setProdImage("");
       setProdGallery([]);
+      setPharmacyBatchNumber("");
+      setPharmacyMfgDate("");
+      setPharmacyExpDate("");
+      setPharmacyComposition("");
+      setPharmacySchedule("OTC");
+      setPharmacyDosageForm("Tablets");
+      setPharmacyPackSize("10 Tablets / Strip");
+      setPharmacyManufacturer("");
+      setPharmacyDrugLicense("");
+      setPharmacyStorageCondition("Room Temperature (< 25°C)");
+      setPharmacyRequiresRx(false);
+      setPharmacyIsNarcotic(false);
     }
   }
 
@@ -935,6 +977,170 @@ export function ProductWorkspace({ view }: { view: View }) {
                 </label>
               </div>
             </section>
+
+            {/* Pharmacy & Clinical Compliance (Appears when Pharmacy Mode is Active) */}
+            {pharmacyBatchMode && (
+              <section className="rounded-[16px] border-2 border-emerald-400/80 bg-gradient-to-b from-emerald-50/50 via-surface to-surface p-6 shadow-[0_4px_20px_rgba(16,185,129,0.08)] transition-all animate-in fade-in slide-in-from-top-3">
+                <div className="mb-5 flex flex-wrap items-center justify-between gap-3 border-b border-emerald-100 pb-3.5">
+                  <div className="flex items-center gap-2.5">
+                    <span className="grid h-9 w-9 place-items-center rounded-[9px] bg-emerald-100 text-emerald-700 shadow-2xs">
+                      <Stethoscope size={19} />
+                    </span>
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <h2 className="text-[15px] font-semibold text-ink">Pharmacy &amp; Batch Compliance</h2>
+                        <span className="rounded-full bg-emerald-600 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-white shadow-2xs">
+                          Active Rx Mode
+                        </span>
+                      </div>
+                      <p className="text-[12px] text-muted">
+                        Drug Schedule, active generic salt, batch number, manufacturer, and expiry tracking
+                      </p>
+                    </div>
+                  </div>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <label className="flex items-center gap-1.5 rounded-lg border border-amber-200 bg-amber-50 px-2.5 py-1 text-xs font-semibold text-amber-800 cursor-pointer transition hover:bg-amber-100">
+                      <input
+                        type="checkbox"
+                        checked={pharmacyRequiresRx}
+                        onChange={(e) => setPharmacyRequiresRx(e.target.checked)}
+                        className="rounded border-amber-400 text-amber-600 focus:ring-amber-500"
+                      />
+                      <span>Prescription Required (Rx)</span>
+                    </label>
+                    <label className="flex items-center gap-1.5 rounded-lg border border-rose-200 bg-rose-50 px-2.5 py-1 text-xs font-semibold text-rose-800 cursor-pointer transition hover:bg-rose-100">
+                      <input
+                        type="checkbox"
+                        checked={pharmacyIsNarcotic}
+                        onChange={(e) => setPharmacyIsNarcotic(e.target.checked)}
+                        className="rounded border-rose-400 text-rose-600 focus:ring-rose-500"
+                      />
+                      <span>Narcotic / Schedule X</span>
+                    </label>
+                  </div>
+                </div>
+
+                <div className="grid gap-4 sm:grid-cols-3">
+                  <label className="block text-[13px] font-semibold text-ink">
+                    Initial Batch Number <span className="text-emerald-600">*</span>
+                    <input
+                      value={pharmacyBatchNumber}
+                      onChange={(e) => setPharmacyBatchNumber(e.target.value)}
+                      placeholder="e.g. BT-2026-X01"
+                      className="mt-1.5 h-10 w-full rounded-[8px] border border-line bg-bg px-3 text-sm font-normal text-ink focus:border-emerald-500 focus:outline-none"
+                    />
+                  </label>
+
+                  <label className="block text-[13px] font-semibold text-ink">
+                    Manufacturing Date (MFG)
+                    <input
+                      type="date"
+                      value={pharmacyMfgDate}
+                      onChange={(e) => setPharmacyMfgDate(e.target.value)}
+                      className="mt-1.5 h-10 w-full rounded-[8px] border border-line bg-bg px-3 text-sm font-normal text-ink focus:border-emerald-500 focus:outline-none"
+                    />
+                  </label>
+
+                  <label className="block text-[13px] font-semibold text-ink">
+                    Expiry Date (EXP) <span className="text-rose-500">*</span>
+                    <input
+                      type="date"
+                      value={pharmacyExpDate}
+                      onChange={(e) => setPharmacyExpDate(e.target.value)}
+                      className="mt-1.5 h-10 w-full rounded-[8px] border border-line bg-bg px-3 text-sm font-normal text-ink focus:border-emerald-500 focus:outline-none"
+                    />
+                  </label>
+
+                  <div className="sm:col-span-2 block text-[13px] font-semibold text-ink">
+                    Generic / Salt Name (Composition) <span className="text-emerald-600">*</span>
+                    <input
+                      value={pharmacyComposition}
+                      onChange={(e) => setPharmacyComposition(e.target.value)}
+                      placeholder="e.g. Paracetamol IP 500mg + Phenylephrine HCl 5mg"
+                      className="mt-1.5 h-10 w-full rounded-[8px] border border-line bg-bg px-3 text-sm font-normal text-ink focus:border-emerald-500 focus:outline-none"
+                    />
+                  </div>
+
+                  <label className="block text-[13px] font-semibold text-ink">
+                    Drug Schedule
+                    <select
+                      value={pharmacySchedule}
+                      onChange={(e) => setPharmacySchedule(e.target.value)}
+                      className="mt-1.5 h-10 w-full rounded-[8px] border border-line bg-bg px-3 text-sm font-normal text-ink focus:border-emerald-500 focus:outline-none"
+                    >
+                      <option value="OTC">OTC (Over the Counter / General)</option>
+                      <option value="Schedule H">Schedule H (Prescription)</option>
+                      <option value="Schedule H1">Schedule H1 (High-Alert Rx & Register)</option>
+                      <option value="Schedule X">Schedule X (Narcotics / Psychotropic)</option>
+                      <option value="Schedule G">Schedule G (Medical Supervision)</option>
+                      <option value="AYUSH">AYUSH / Herbal Medicine</option>
+                    </select>
+                  </label>
+
+                  <label className="block text-[13px] font-semibold text-ink">
+                    Dosage Form
+                    <select
+                      value={pharmacyDosageForm}
+                      onChange={(e) => setPharmacyDosageForm(e.target.value)}
+                      className="mt-1.5 h-10 w-full rounded-[8px] border border-line bg-bg px-3 text-sm font-normal text-ink focus:border-emerald-500 focus:outline-none"
+                    >
+                      <option value="Tablets">Tablets</option>
+                      <option value="Capsules">Capsules</option>
+                      <option value="Syrup / Suspension">Syrup / Suspension</option>
+                      <option value="Injection / Vial">Injection / Vial</option>
+                      <option value="Ointment / Gel">Ointment / Gel</option>
+                      <option value="Drops (Eye/Ear)">Drops (Eye/Ear)</option>
+                      <option value="Inhaler / Respules">Inhaler / Respules</option>
+                      <option value="Powder / Granules">Powder / Granules</option>
+                    </select>
+                  </label>
+
+                  <label className="block text-[13px] font-semibold text-ink">
+                    Pack / Strip Details
+                    <input
+                      value={pharmacyPackSize}
+                      onChange={(e) => setPharmacyPackSize(e.target.value)}
+                      placeholder="e.g. 1 Strip of 10 Tablets"
+                      className="mt-1.5 h-10 w-full rounded-[8px] border border-line bg-bg px-3 text-sm font-normal text-ink focus:border-emerald-500 focus:outline-none"
+                    />
+                  </label>
+
+                  <label className="block text-[13px] font-semibold text-ink">
+                    Manufacturer / Marketer
+                    <input
+                      value={pharmacyManufacturer}
+                      onChange={(e) => setPharmacyManufacturer(e.target.value)}
+                      placeholder="e.g. Sun Pharma / Cipla / Abbott"
+                      className="mt-1.5 h-10 w-full rounded-[8px] border border-line bg-bg px-3 text-sm font-normal text-ink focus:border-emerald-500 focus:outline-none"
+                    />
+                  </label>
+
+                  <label className="block text-[13px] font-semibold text-ink">
+                    Drug License (DL) / FSSAI No.
+                    <input
+                      value={pharmacyDrugLicense}
+                      onChange={(e) => setPharmacyDrugLicense(e.target.value)}
+                      placeholder="e.g. DL-20B-18492"
+                      className="mt-1.5 h-10 w-full rounded-[8px] border border-line bg-bg px-3 text-sm font-normal text-ink focus:border-emerald-500 focus:outline-none"
+                    />
+                  </label>
+
+                  <label className="sm:col-span-2 block text-[13px] font-semibold text-ink">
+                    Storage &amp; Temperature Instructions
+                    <select
+                      value={pharmacyStorageCondition}
+                      onChange={(e) => setPharmacyStorageCondition(e.target.value)}
+                      className="mt-1.5 h-10 w-full rounded-[8px] border border-line bg-bg px-3 text-sm font-normal text-ink focus:border-emerald-500 focus:outline-none"
+                    >
+                      <option value="Room Temperature (< 25°C)">Room Temperature (Store below 25°C)</option>
+                      <option value="Cool Place (15°C - 20°C)">Cool Place (15°C to 20°C)</option>
+                      <option value="Cold Storage / Refrigerate (2°C - 8°C)">Cold Storage / Refrigerate (2°C to 8°C - Do Not Freeze)</option>
+                      <option value="Protect from Light & Moisture">Protect from Direct Light &amp; Moisture</option>
+                    </select>
+                  </label>
+                </div>
+              </section>
+            )}
           </div>
 
           {/* RIGHT COLUMN: Product Gallery + Status Checkboxes + Pre-Order + Warranty */}

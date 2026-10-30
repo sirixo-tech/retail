@@ -75,7 +75,7 @@ class DatabaseSeeder extends Seeder
                 'values' => [
                     'module.pos' => 1, 'module.inventory' => 1, 'module.storefront' => 1, 'module.customers' => 1,
                     'limit.stores' => 1, 'limit.staff' => 2, 'limit.products' => 100, 'limit.orders_per_month' => 300,
-                    'limit.storage_mb' => 500, 'limit.sms_per_month' => 50, 'limit.ai_credits_per_month' => 0, 'limit.counters' => 1,
+                    'limit.storage_mb' => 500, 'limit.sms_per_month' => 50, 'limit.ai_credits_per_month' => 0, 'limit.counters' => 2,
                 ],
             ],
             'professional' => [

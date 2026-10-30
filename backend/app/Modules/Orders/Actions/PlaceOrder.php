@@ -80,16 +80,53 @@ class PlaceOrder
             $firstShippingMethod = !empty($shippingMethods) && is_array($shippingMethods) ? ($shippingMethods[0] ?? null) : null;
 
             if ($fulfillment === 'delivery') {
+                $serviceableLocations = is_array($onlineSettings['serviceableLocations'] ?? null)
+                    ? array_values(array_filter($onlineSettings['serviceableLocations'], fn ($loc) => is_array($loc) && ($loc['enabled'] ?? true) !== false))
+                    : [];
+                $matchedServiceable = null;
+                $cleanPin = trim((string) ($pincode ?? ''));
+                $cleanAddr = mb_strtolower(trim((string) ($addressData['address'] ?? '')));
+
+                if (! empty($serviceableLocations)) {
+                    foreach ($serviceableLocations as $loc) {
+                        $locPin = trim((string) ($loc['pincode'] ?? ''));
+                        $locName = mb_strtolower(trim((string) ($loc['name'] ?? '')));
+                        if (
+                            ($locPin !== '' && strcasecmp($locPin, $cleanPin) === 0) ||
+                            ($locPin !== '' && $cleanAddr !== '' && str_contains($cleanAddr, mb_strtolower($locPin))) ||
+                            ($locName !== '' && $cleanAddr !== '' && str_contains($cleanAddr, $locName)) ||
+                            ($locName !== '' && $cleanPin !== '' && strcasecmp($locName, $cleanPin) === 0)
+                        ) {
+                            $matchedServiceable = $loc;
+                            break;
+                        }
+                    }
+
+                    if (! $matchedServiceable) {
+                        $labels = array_map(
+                            fn ($loc) => trim(($loc['name'] ?? '') . (! empty($loc['pincode']) ? ' (' . $loc['pincode'] . ')' : '')),
+                            array_slice($serviceableLocations, 0, 6)
+                        );
+                        throw new RuntimeException(
+                            'Delivery is only available for registered store locations: ' . implode(', ', array_filter($labels)) . '. Please enter a registered location/PIN or choose Pay in store.'
+                        );
+                    }
+                }
+
                 $zone = DB::table('delivery_zones')
                     ->where('store_id', $store->id)
                     ->where('pincode', $pincode)
                     ->first();
-                if ($zone) {
+                if ($matchedServiceable) {
+                    $freeThreshold = (int) (($shippingSettings['freeDeliveryAbove'] ?? ($firstShippingMethod['freeAboveAmount'] ?? ($checkoutSettings['freeDeliveryAbove'] ?? 0))) * 100);
+                    $locFee = (int) round(((float) ($matchedServiceable['deliveryFee'] ?? ($shippingSettings['standardDeliveryFee'] ?? 0))) * 100);
+                    $fee = ($freeThreshold > 0 && $subtotal >= $freeThreshold) ? 0 : $locFee;
+                } elseif ($zone) {
                     $fee = (int) $zone->charge_paise;
                 } elseif (empty($shippingSettings) && empty($shippingMethods)) {
                     throw new RuntimeException('We do not deliver to that pincode.');
                 } else {
-                    $freeThreshold = (int) (($shippingSettings['freeDeliveryAbove'] ?? ($firstShippingMethod['freeAboveAmount'] ?? ($checkoutSettings['freeDeliveryAbove'] ?? 499))) * 100);
+                    $freeThreshold = (int) (($shippingSettings['freeDeliveryAbove'] ?? ($firstShippingMethod['freeAboveAmount'] ?? ($checkoutSettings['freeDeliveryAbove'] ?? 0))) * 100);
                     $defaultDeliveryFee = (int) (($shippingSettings['standardDeliveryFee'] ?? ($firstShippingMethod['feeAmount'] ?? ($checkoutSettings['deliveryFee'] ?? 35))) * 100);
                     $fee = ($freeThreshold > 0 && $subtotal >= $freeThreshold) ? 0 : $defaultDeliveryFee;
                 }
@@ -128,6 +165,32 @@ class PlaceOrder
             }
 
             $discount = $this->discount($store->tenant_id, $subtotal, $couponCode);
+            $loyaltyProgram = is_array($onlineSettings['loyalty'] ?? null) ? $onlineSettings['loyalty'] : [];
+            $loyaltyDiscount = 0;
+            $loyaltyCustomerId = null;
+            $redeemPoints = (int) ($addressData['loyalty_points'] ?? 0);
+            if (($loyaltyProgram['enabled'] ?? false) && $redeemPoints > 0) {
+                $digits = substr(preg_replace('/\D+/', '', $phone) ?? '', -10);
+                $loyaltyCustomerId = $digits !== ''
+                    ? DB::table('customers')->where('tenant_id', $store->tenant_id)->where('phone_e164', $digits)->value('id')
+                    : null;
+                if ($loyaltyCustomerId) {
+                    $balance = (int) DB::table('customers')->where('id', $loyaltyCustomerId)->value('loyalty_points');
+                    $paisePerPoint = max(1, (int) ($loyaltyProgram['redeemPaisePerPoint'] ?? $loyaltyProgram['redeem_paise_per_point'] ?? 100));
+                    $minPoints = max(0, (int) ($loyaltyProgram['minRedeemPoints'] ?? $loyaltyProgram['min_redeem_points'] ?? 1));
+                    $maxPercent = min(100, max(1, (int) ($loyaltyProgram['maxRedeemPercent'] ?? $loyaltyProgram['max_redeem_percent'] ?? 50)));
+                    $redeemPoints = min($redeemPoints, $balance);
+                    if ($redeemPoints >= $minPoints) {
+                        $cap = (int) floor($subtotal * ($maxPercent / 100));
+                        $loyaltyDiscount = min($cap, $redeemPoints * $paisePerPoint);
+                        $redeemPoints = (int) floor($loyaltyDiscount / $paisePerPoint);
+                        $loyaltyDiscount = $redeemPoints * $paisePerPoint;
+                    } else {
+                        $redeemPoints = 0;
+                    }
+                }
+            }
+            $discount += $loyaltyDiscount;
             $count = DB::table('orders')->where('tenant_id', $store->tenant_id)->count() + 1;
             $orderId = (string) Str::uuid7();
             $orderNumber = 'ON-'.str_pad((string) $count, 6, '0', STR_PAD_LEFT);
@@ -150,17 +213,26 @@ class PlaceOrder
                 'longitude' => $lng,
                 'live_location_url' => $liveLocUrl,
                 'special_instructions' => $orderNotes,
+                'delivery_slot' => $addressData['delivery_slot'] ?? null,
+                'customer_auth_mode' => $addressData['customer_auth_mode'] ?? 'guest',
                 'cgst_paise' => $cgstPaise,
                 'sgst_paise' => $sgstPaise,
                 'cgst_pct' => $cgstPct,
                 'sgst_pct' => $sgstPct,
                 'is_tax_inclusive' => $inclusive,
                 'packaging_fee_paise' => $packagingFee,
+                'upi_utr' => $addressData['upi_utr'] ?? ($addressData['utr'] ?? null),
+                'payment_submethod' => $addressData['payment_submethod'] ?? ($paymentMethod === 'upi_qr' ? 'static_qr' : null),
             ];
 
             $finalTotal = $inclusive
                 ? max(0, $subtotal - $discount + $fee + $packagingFee)
                 : max(0, $subtotal + $totalGstPaise - $discount + $fee + $packagingFee);
+
+            $resolvedPaymentMethod = in_array($paymentMethod, ['upi_qr', 'upi'], true) ? 'upi' : $paymentMethod;
+            $initialPaymentStatus = in_array($paymentMethod, ['upi_qr', 'upi'], true)
+                ? (! empty($addressData['upi_utr']) ? 'awaiting_verification' : 'unpaid')
+                : 'unpaid';
 
             DB::table('orders')->insert([
                 'id' => $orderId,
@@ -176,8 +248,8 @@ class PlaceOrder
                 'delivery_fee_paise' => $fee,
                 'discount_paise' => $discount,
                 'total_paise' => $finalTotal,
-                'payment_status' => 'unpaid',
-                'payment_method' => $paymentMethod,
+                'payment_status' => $initialPaymentStatus,
+                'payment_method' => $resolvedPaymentMethod,
                 'pickup_qr' => $pickupQr,
                 'delivery_status' => $fulfillment === 'delivery' ? 'unassigned' : 'not_applicable',
                 'latitude' => $lat,
@@ -200,16 +272,19 @@ class PlaceOrder
                 ]);
             }
             $this->event($orderId, null, 'placed', null, null);
-            DB::table('notification_logs')->insert([
-                'id' => (string) Str::uuid7(),
-                'tenant_id' => $store->tenant_id,
-                'channel' => 'sms',
-                'template' => 'order.placed',
-                'status' => 'not_configured',
-                'reference_id' => $orderId,
-                'detail' => 'Online order placed: ' . $orderNumber . ($fulfillment === 'delivery' ? ' (Delivery with Live GPS)' : ' (Pay in store pickup)'),
-                'created_at' => now(),
-            ]);
+            app(\App\Modules\Notifications\SmsGateway::class)->record(
+                $store->tenant_id,
+                'order.placed',
+                'Online order placed: '.$orderNumber.($fulfillment === 'delivery' ? ' (Delivery with Live GPS)' : ' (Pay in store pickup)'),
+                $phone,
+                'Your order '.$orderNumber.' at '.$store->name.' is placed.',
+                $orderId,
+            );
+            $this->applyLoyalty($store, $name, $phone, $orderId, $finalTotal, $loyaltyProgram, $loyaltyCustomerId, $redeemPoints);
+            try {
+                app(\App\Modules\Integrations\IntegrationNotifier::class)->orderPlaced($store, $orderNumber, $finalTotal, $name, $phone);
+            } catch (\Throwable) {
+            }
 
             return $this->present(DB::table('orders')->where('id', $orderId)->first());
         });
@@ -258,6 +333,14 @@ class PlaceOrder
                         'created_at' => now(),
                         'updated_at' => now(),
                     ],
+                );
+                app(\App\Modules\Notifications\SmsGateway::class)->record(
+                    $tenantId,
+                    'delivery.otp',
+                    'Delivery code was not sent by SMS.',
+                    (string) ($order->customer_phone ?? ''),
+                    'Your delivery code for order '.$order->number.' is '.$oneTimeCode.'.',
+                    $order->id,
                 );
             }
             if ($to === 'delivered') {
@@ -322,6 +405,60 @@ class PlaceOrder
         ]);
 
         return $off;
+    }
+
+    /**
+     * @param  array<string, mixed>  $program
+     */
+    private function applyLoyalty(Store $store, string $name, string $phone, string $orderId, int $totalPaise, array $program, ?string $customerId, int $redeemPoints): void
+    {
+        if (! ($program['enabled'] ?? false)) {
+            return;
+        }
+        $digits = substr(preg_replace('/\D+/', '', $phone) ?? '', -10);
+        if (strlen($digits) < 10) {
+            return;
+        }
+        if (! $customerId) {
+            $customerId = DB::table('customers')->where('tenant_id', $store->tenant_id)->where('phone_e164', $digits)->value('id');
+        }
+        if (! $customerId) {
+            $customerId = (string) Str::uuid7();
+            DB::table('customers')->insert([
+                'id' => $customerId,
+                'tenant_id' => $store->tenant_id,
+                'name' => $name,
+                'phone_e164' => $digits,
+                'created_at' => now(),
+                'updated_at' => now(),
+            ]);
+        }
+        if ($redeemPoints > 0) {
+            DB::table('customers')->where('id', $customerId)->decrement('loyalty_points', $redeemPoints);
+            DB::table('loyalty_entries')->insert([
+                'id' => (string) Str::uuid7(),
+                'tenant_id' => $store->tenant_id,
+                'customer_id' => $customerId,
+                'sale_id' => $orderId,
+                'direction' => 'redeem',
+                'points' => $redeemPoints,
+                'created_at' => now(),
+            ]);
+        }
+        $spend = max(1, (int) ($program['earnRupeesPerPoint'] ?? $program['earn_rupees_per_point'] ?? 100));
+        $earned = intdiv(max(0, $totalPaise), $spend * 100);
+        if ($earned > 0 && ! DB::table('loyalty_entries')->where('sale_id', $orderId)->where('direction', 'earn')->exists()) {
+            DB::table('customers')->where('id', $customerId)->increment('loyalty_points', $earned);
+            DB::table('loyalty_entries')->insert([
+                'id' => (string) Str::uuid7(),
+                'tenant_id' => $store->tenant_id,
+                'customer_id' => $customerId,
+                'sale_id' => $orderId,
+                'direction' => 'earn',
+                'points' => $earned,
+                'created_at' => now(),
+            ]);
+        }
     }
 
     private function event(string $orderId, ?string $from, string $to, ?string $actorId, ?string $note): void

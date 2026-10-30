@@ -68,11 +68,14 @@ class StoreController
         $activeStoreId = session('active_store_id');
         $defaultStore = $stores->firstWhere('is_default', true) ?? $stores->first();
 
+        $storeLimit = app(\App\Modules\Plans\Support\Entitlement::class)->value($tenantId, 'limit.stores');
+        $effectiveLimit = $storeLimit > 0 ? $storeLimit : ($tenant?->kind === 'organization' ? 20 : 1);
+
         return ApiResponse::ok([
             'stores' => $rows,
             'stats' => [
                 'total_locations' => $stores->count(),
-                'plan_limit' => $tenant?->kind === 'organization' ? 20 : 1,
+                'plan_limit' => $effectiveLimit,
                 'with_orders' => $rows->filter(fn ($s) => $s['orders_count'] > 0)->count(),
                 'default_location' => $defaultStore?->name ?? 'Default Branch',
                 'active_location_id' => $activeStoreId ?: ($defaultStore?->id),
@@ -90,10 +93,15 @@ class StoreController
         $tenant = Tenant::query()->find($tenantId);
         $count = Store::query()->where('tenant_id', $tenantId)->count();
 
-        if ($tenant->kind !== 'organization' && $count >= 1) {
+        $storeLimit = app(\App\Modules\Plans\Support\Entitlement::class)->value($tenantId, 'limit.stores');
+        if ($storeLimit === 0) {
+            $storeLimit = $tenant->kind === 'organization' ? 20 : 1;
+        }
+
+        if ($storeLimit > 0 && $count >= $storeLimit) {
             return ApiResponse::error(
                 'plan.limit_reached',
-                'Single store plan allows 1 branch. Upgrade to an Organization plan to add multiple locations.',
+                "Your plan limit of {$storeLimit} location(s) has been reached. Please upgrade your subscription plan to add more branches.",
                 422
             );
         }

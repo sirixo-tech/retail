@@ -164,6 +164,12 @@ export function AppShell({
     setOpenMenus((prev) => ({ ...prev, [href]: !prev[href] }));
   }
 
+  const [logoFailed, setLogoFailed] = useState(false);
+
+  useEffect(() => {
+    setLogoFailed(false);
+  }, [logoUrl]);
+
   return (
     <div
       className="min-h-screen bg-bg text-ink transition-colors duration-150"
@@ -183,11 +189,12 @@ export function AppShell({
         >
           <div className="flex h-16 shrink-0 items-center justify-between border-b border-line/60 px-4">
             <div className="flex items-center gap-2.5 min-w-0 overflow-hidden">
-              {logoUrl ? (
+              {logoUrl && !logoFailed ? (
                 <a href="/" className="flex items-center gap-2 overflow-hidden py-1">
                   <img
                     src={logoUrl}
                     alt={product}
+                    onError={() => setLogoFailed(true)}
                     className="h-9 w-auto max-w-[170px] object-contain transition-transform hover:scale-[1.02]"
                   />
                 </a>

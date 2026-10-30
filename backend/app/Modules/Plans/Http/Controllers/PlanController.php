@@ -20,7 +20,7 @@ class PlanController
             ->groupBy('plan_id')
             ->pluck('total', 'plan_id');
 
-        $allFeatures = DB::table('features')->orderBy('key')->get(['id', 'key', 'name', 'kind']);
+        $allFeatures = DB::table('features')->orderBy('key')->get(['id', 'key', 'name', 'value_type']);
 
         $plans = Plan::query()
             ->where('status', 'active')
@@ -194,7 +194,7 @@ class PlanController
                         'id' => (string) Str::uuid7(),
                         'key' => $key,
                         'name' => $label,
-                        'kind' => str_starts_with($key, 'limit.') ? 'limit' : 'flag',
+                        'value_type' => str_starts_with($key, 'limit.') ? 'integer' : 'boolean',
                         'created_at' => now(),
                         'updated_at' => now(),
                     ]);

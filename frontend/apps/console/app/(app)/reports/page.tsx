@@ -32,6 +32,7 @@ import {
   Trash2,
   X,
 } from "lucide-react";
+import { UsersReportView, type UsersReportData, type UserActivityRow } from "./UsersReportView";
 import { useSearchParams } from "next/navigation";
 import { Suspense, useEffect, useMemo, useState, type ComponentType, type FormEvent } from "react";
 
@@ -263,6 +264,11 @@ const REPORT_META: Record<
     subtitle: string;
   }
 > = {
+  users: {
+    title: "Users Report",
+    breadcrumb: "Users Report",
+    subtitle: "Staff operational performance audit tracking sales, purchase orders, quotations, returns, transfers, and stock adjustments.",
+  },
   sales: {
     title: "Sales Summary Report",
     breadcrumb: "Sales Summary",
@@ -416,6 +422,9 @@ function ReportsWorkspace() {
   const [selectedLedgerItemId, setSelectedLedgerItemId] = useState<string>("");
   const [purchaseRegisterData, setPurchaseRegisterData] = useState<PurchaseRegisterData | null>(null);
   const [selectedSupplierId, setSelectedSupplierId] = useState<string>("");
+  const [usersReportData, setUsersReportData] = useState<UsersReportData | null>(null);
+  const [selectedUserDetail, setSelectedUserDetail] = useState<UserActivityRow | null>(null);
+  const [userTableSearch, setUserTableSearch] = useState("");
   const [schedules, setSchedules] = useState<ScheduleRow[]>([]);
   const [remoteWarehouses, setRemoteWarehouses] = useState<WarehouseRow[]>([]);
 
@@ -471,6 +480,7 @@ function ReportsWorkspace() {
         schedRes,
         itemLedgerRes,
         purchRegRes,
+        usersRes,
       ] = await Promise.all([
         fetch(`/api/v1/reports/dashboard${qStr}`, { credentials: "include", headers }),
         fetch(`/api/v1/reports/stock${qStr}`, { credentials: "include", headers }),
@@ -489,6 +499,7 @@ function ReportsWorkspace() {
         fetch("/api/v1/reports/schedules", { credentials: "include", headers }),
         fetch(`/api/v1/reports/item-ledger${qStr}${selectedLedgerItemId ? `&item_id=${selectedLedgerItemId}` : ""}`, { credentials: "include", headers }),
         fetch(`/api/v1/reports/purchase-register${qStr}${selectedSupplierId ? `&supplier_id=${selectedSupplierId}` : ""}`, { credentials: "include", headers }),
+        fetch(`/api/v1/reports/users${qStr}`, { credentials: "include", headers }),
       ]);
 
       if (dashRes.ok) setDashboard(((await dashRes.json()) as { data: DashboardData }).data);
@@ -514,6 +525,7 @@ function ReportsWorkspace() {
       if (schedRes.ok) setSchedules(((await schedRes.json()) as { data: ScheduleRow[] }).data ?? []);
       if (itemLedgerRes.ok) setItemLedgerData(((await itemLedgerRes.json()) as { data: ItemLedgerData }).data);
       if (purchRegRes.ok) setPurchaseRegisterData(((await purchRegRes.json()) as { data: PurchaseRegisterData }).data);
+      if (usersRes.ok) setUsersReportData(((await usersRes.json()) as { data: UsersReportData }).data);
     } finally {
       setLoading(false);
     }
@@ -910,6 +922,19 @@ function ReportsWorkspace() {
             <X className="h-4 w-4 text-slate-400" />
           </button>
         </div>
+      ) : null}
+
+      {/* ===================================================================
+       * 0. USERS REPORT (From Reference Image 3)
+       * ================================================================= */}
+      {activeTab === "users" ? (
+        <UsersReportView
+          data={usersReportData}
+          searchQuery={userTableSearch}
+          setSearchQuery={setUserTableSearch}
+          onSelectUser={(u) => setSelectedUserDetail(u)}
+          onRefresh={() => void loadReports()}
+        />
       ) : null}
 
       {/* ===================================================================
@@ -3698,6 +3723,80 @@ function ReportsWorkspace() {
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      ) : null}
+
+      {/* User Activity Detail Modal */}
+      {selectedUserDetail ? (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 p-4 backdrop-blur-sm">
+          <div className="relative w-full max-w-lg rounded-2xl border border-slate-200 bg-white p-6 shadow-2xl animate-in fade-in zoom-in-95">
+            <button
+              type="button"
+              onClick={() => setSelectedUserDetail(null)}
+              className="absolute right-4 top-4 rounded-lg p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-600"
+            >
+              <X className="h-4 w-4" />
+            </button>
+
+            <div className="mb-4">
+              <div className="flex items-center gap-2">
+                <div className="flex h-10 w-10 items-center justify-center rounded-full bg-indigo-100 text-indigo-700 font-bold">
+                  {selectedUserDetail.username.charAt(0).toUpperCase()}
+                </div>
+                <div>
+                  <h2 className="text-base font-bold text-slate-900">{selectedUserDetail.username}</h2>
+                  <p className="text-xs text-slate-500">
+                    {selectedUserDetail.email} · <span className="capitalize">{selectedUserDetail.role}</span>
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-2 gap-3 py-2 text-xs">
+              <div className="rounded-lg border border-slate-100 bg-slate-50 p-3">
+                <span className="text-slate-500">Total Sales</span>
+                <p className="mt-1 text-lg font-bold text-slate-900">{selectedUserDetail.total_sales}</p>
+              </div>
+              <div className="rounded-lg border border-slate-100 bg-slate-50 p-3">
+                <span className="text-slate-500">Total Purchases</span>
+                <p className="mt-1 text-lg font-bold text-slate-900">{selectedUserDetail.total_purchases}</p>
+              </div>
+              <div className="rounded-lg border border-slate-100 bg-slate-50 p-3">
+                <span className="text-slate-500">Total Quotations</span>
+                <p className="mt-1 text-lg font-bold text-slate-900">{selectedUserDetail.total_quotations}</p>
+              </div>
+              <div className="rounded-lg border border-slate-100 bg-slate-50 p-3">
+                <span className="text-slate-500">Return Sales (Credit Notes)</span>
+                <p className="mt-1 text-lg font-bold text-slate-900">{selectedUserDetail.total_return_sales}</p>
+              </div>
+              <div className="rounded-lg border border-slate-100 bg-slate-50 p-3">
+                <span className="text-slate-500">Return Purchases</span>
+                <p className="mt-1 text-lg font-bold text-slate-900">{selectedUserDetail.total_return_purchases}</p>
+              </div>
+              <div className="rounded-lg border border-slate-100 bg-slate-50 p-3">
+                <span className="text-slate-500">Stock Transfers</span>
+                <p className="mt-1 text-lg font-bold text-slate-900">{selectedUserDetail.total_transfers}</p>
+              </div>
+              <div className="rounded-lg border border-slate-100 bg-slate-50 p-3">
+                <span className="text-slate-500">Stock Adjustments</span>
+                <p className="mt-1 text-lg font-bold text-slate-900">{selectedUserDetail.total_adjustments}</p>
+              </div>
+              <div className="rounded-lg border border-indigo-200 bg-indigo-50/50 p-3">
+                <span className="font-semibold text-indigo-700">Total Documents Created</span>
+                <p className="mt-1 text-lg font-bold text-indigo-900">{selectedUserDetail.total_documents}</p>
+              </div>
+            </div>
+
+            <div className="mt-4 flex justify-end">
+              <button
+                type="button"
+                onClick={() => setSelectedUserDetail(null)}
+                className="h-9 rounded-lg bg-slate-900 px-4 text-xs font-semibold text-white hover:bg-slate-800"
+              >
+                Close
+              </button>
+            </div>
           </div>
         </div>
       ) : null}

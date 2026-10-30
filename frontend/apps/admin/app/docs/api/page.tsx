@@ -109,22 +109,164 @@ const API_ENDPOINTS: ApiEndpoint[] = [
     group: "Authentication",
     method: "POST",
     path: "/api/v1/auth/staff/login",
-    title: "Tenant Staff Login",
-    description: "Authenticates a tenant manager, cashier, or store admin with store slug namespace.",
+    title: "Tenant Staff / POS / Kiosk Login",
+    description: "Authenticates a store owner, manager, cashier, or kiosk operator using email and password, returning structured store_id, branch_id, registered branches, and branch terminals (POS & Kiosk).",
     auth: "Public",
     requestBody: {
       schema: [
-        { name: "slug", type: "string", required: true, description: "Tenant organization slug identifier" },
         { name: "email", type: "string", required: true, description: "Staff account email" },
         { name: "password", type: "string", required: true, description: "Staff password" },
+        { name: "store_id", type: "string", required: false, description: "Optional merchant store UUID" },
+        { name: "branch_id", type: "string", required: false, description: "Optional physical branch UUID or code" },
+        { name: "terminal_id", type: "string", required: false, description: "Optional POS or Kiosk terminal UUID or code" },
+        { name: "terminal_pin", type: "string", required: false, description: "4–6 digit terminal PIN if terminal is PIN-protected" },
       ],
-      example: { slug: "bangalore", email: "store@selfx.in", password: "••••••••" },
+      example: {
+        email: "store@selfx.in",
+        password: "••••••••",
+        store_id: "01a154f0-4069-71b2-86b1-52ec52bc179c",
+        branch_id: "01a154f0-42d2-7115-b1db-11b1425c0e8c",
+      },
     },
     responses: [
       {
         status: 200,
-        description: "Staff authenticated",
-        example: { data: { id: "01a154f0-user", name: "Store Manager", kind: "staff", role: "Manager", tenant: { slug: "bangalore" } } },
+        description: "Authenticated with store_id, branch_id, branches, and terminals",
+        example: {
+          data: {
+            token: "fcr00l2u0AlIsqwcJIm0bz2K3B7DzMFZAd6InTZP",
+            token_type: "Bearer",
+            abilities: ["*"],
+            store_id: "01a154f0-4069-71b2-86b1-52ec52bc179c",
+            branch_id: "01a154f0-42d2-7115-b1db-11b1425c0e8c",
+            terminal_id: "01a154f0-8810-7000-9120-001122334455",
+            is_super_admin: false,
+            user: {
+              id: "01a154f0-user",
+              name: "Ananya Shah",
+              email: "store@selfx.in",
+              phone: "9876543210",
+              kind: "staff",
+              role: "owner",
+              has_pos_pin: true,
+              must_change_password: false,
+            },
+            current_store: {
+              id: "01a154f0-4069-71b2-86b1-52ec52bc179c",
+              store_id: "01a154f0-4069-71b2-86b1-52ec52bc179c",
+              name: "Annapurna Supermarket",
+              slug: "annapurna",
+              status: "active",
+            },
+            current_branch: {
+              id: "01a154f0-42d2-7115-b1db-11b1425c0e8c",
+              branch_id: "01a154f0-42d2-7115-b1db-11b1425c0e8c",
+              store_id: "01a154f0-4069-71b2-86b1-52ec52bc179c",
+              name: "MG Road Flagship",
+              code: "MAIN",
+              is_default: true,
+            },
+            branches: [
+              {
+                id: "01a154f0-42d2-7115-b1db-11b1425c0e8c",
+                branch_id: "01a154f0-42d2-7115-b1db-11b1425c0e8c",
+                store_id: "01a154f0-4069-71b2-86b1-52ec52bc179c",
+                name: "MG Road Flagship",
+                code: "MAIN",
+                is_default: true,
+                terminals: [
+                  { id: "01a154f0-8810", name: "Main POS Counter", code: "T1", kind: "pos", has_pin: true, is_paired: true },
+                  { id: "01a154f0-8811", name: "Entrance Self-Order Kiosk", code: "K1", kind: "kiosk", has_pin: true, is_paired: true },
+                ],
+              },
+            ],
+            terminals: [
+              { id: "01a154f0-8810", name: "Main POS Counter", code: "T1", kind: "pos", has_pin: true, is_paired: true },
+              { id: "01a154f0-8811", name: "Entrance Self-Order Kiosk", code: "K1", kind: "kiosk", has_pin: true, is_paired: true },
+            ],
+            permissions: ["pos.sell", "kiosk.manage", "kiosk.validate_qr", "inventory.manage"],
+            plan_features: { "module.pos": 1, "module.offline_pos": 1, "limit.counters": -1 },
+          },
+        },
+      },
+    ],
+  },
+  {
+    id: "auth-phone-otp-request",
+    group: "Authentication",
+    method: "POST",
+    path: "/api/v1/auth/phone/request",
+    title: "Request Mobile OTP for Login / Registration",
+    description: "Dispatches a 6-digit OTP via the active Super Admin SMS gateway (or returns Firebase Phone Auth config when Firebase is active).",
+    auth: "Public",
+    requestBody: {
+      schema: [
+        { name: "phone", type: "string", required: true, description: "10-digit mobile number" },
+        { name: "purpose", type: "string", required: true, description: "One of: staff, platform, register, customer" },
+      ],
+      example: { phone: "9876543210", purpose: "staff" },
+    },
+    responses: [
+      {
+        status: 200,
+        description: "OTP dispatched",
+        example: { data: { status: "sent" } },
+      },
+    ],
+  },
+  {
+    id: "auth-phone-otp-verify",
+    group: "Authentication",
+    method: "POST",
+    path: "/api/v1/auth/phone/verify",
+    title: "Verify Mobile OTP & Establish Session",
+    description: "Verifies the 6-digit mobile OTP and returns the full store_id, branch_id, branches, and terminals session payload.",
+    auth: "Public",
+    requestBody: {
+      schema: [
+        { name: "phone", type: "string", required: true, description: "10-digit mobile number" },
+        { name: "code", type: "string", required: true, description: "6-digit OTP code" },
+        { name: "purpose", type: "string", required: true, description: "One of: staff, platform, register, customer" },
+        { name: "store_id", type: "string", required: false, description: "Optional store UUID" },
+        { name: "branch_id", type: "string", required: false, description: "Optional branch UUID" },
+      ],
+      example: { phone: "9876543210", code: "482910", purpose: "staff" },
+    },
+    responses: [
+      {
+        status: 200,
+        description: "OTP verified and session created",
+        example: { data: { store_id: "01a154f0-store", branch_id: "01a154f0-branch", kind: "staff" } },
+      },
+    ],
+  },
+  {
+    id: "auth-select-terminal",
+    group: "Authentication",
+    method: "POST",
+    path: "/api/v1/auth/select-terminal",
+    title: "Select POS or Kiosk Terminal (With PIN Verification)",
+    description: "Binds the active session to a specific POS counter or Kiosk terminal on the selected branch, verifying the 4–6 digit terminal PIN if set.",
+    auth: "Session Cookie",
+    requestBody: {
+      schema: [
+        { name: "terminal_id", type: "string", required: true, description: "Target POS or Kiosk terminal UUID or code (e.g. T1, K1)" },
+        { name: "pin", type: "string", required: false, description: "4–6 digit terminal PIN if terminal has_pin is true" },
+      ],
+      example: { terminal_id: "K1", pin: "2580" },
+    },
+    responses: [
+      {
+        status: 200,
+        description: "Terminal bound to session",
+        example: {
+          data: {
+            store_id: "01a154f0-store",
+            branch_id: "01a154f0-branch",
+            terminal_id: "01a154f0-kiosk-1",
+            current_terminal: { id: "01a154f0-kiosk-1", name: "Entrance Self-Order Kiosk", code: "K1", kind: "kiosk", has_pin: true },
+          },
+        },
       },
     ],
   },
@@ -783,7 +925,7 @@ const API_ENDPOINTS: ApiEndpoint[] = [
     method: "GET",
     path: "/api/v1/public/terminals/check-pair-status",
     title: "Poll Pairing Handshake Status",
-    description: "Used by customer display and secondary tablet apps to poll whether the pair code was verified by the cashier.",
+    description: "Used by POS and Kiosk apps to poll whether the 6-digit pair code was authorized in the console.",
     auth: "Public",
     queryParams: [
       { name: "code", type: "string", required: true, description: "6-digit pairing code", example: "849201" },
@@ -791,8 +933,172 @@ const API_ENDPOINTS: ApiEndpoint[] = [
     responses: [
       {
         status: 200,
-        description: "Pairing status",
-        example: { data: { paired: true, terminal: { code: "POS-02", name: "Counter 2 - Express", store_slug: "bangalore" } } },
+        description: "Pairing status with store_id, branch_id, terminal_id, and kind",
+        example: {
+          data: {
+            paired: true,
+            counter: {
+              terminal_id: "01a154f0-kiosk-1",
+              counter_code: "K1",
+              counter_name: "Entrance Kiosk #1",
+              kind: "kiosk",
+              has_pin: true,
+              store_id: "01a154f0-branch",
+              branch_id: "01a154f0-branch",
+              tenant_id: "01a154f0-store",
+            },
+          },
+        },
+      },
+    ],
+  },
+  {
+    id: "terminals-set-pin",
+    group: "Branches & POS Terminals",
+    method: "POST",
+    path: "/api/v1/stores/{store}/terminals/{terminal}/pin",
+    title: "Set or Clear POS / Kiosk Terminal PIN",
+    description: "Sets or removes a 4 to 6 digit security PIN on a POS counter or Self-Ordering Kiosk terminal.",
+    auth: "Session Cookie",
+    parameters: [
+      { name: "store", type: "string", required: true, description: "Branch UUID", example: "01a154f0-branch" },
+      { name: "terminal", type: "string", required: true, description: "Terminal UUID", example: "01a154f0-kiosk-1" },
+    ],
+    requestBody: {
+      schema: [
+        { name: "pin", type: "string", required: false, description: "4 to 6 digit numeric PIN" },
+        { name: "clear", type: "boolean", required: false, description: "Pass true to remove the terminal PIN" },
+      ],
+      example: { pin: "2580" },
+    },
+    responses: [
+      {
+        status: 200,
+        description: "PIN saved",
+        example: { data: { id: "01a154f0-kiosk-1", has_pin: true, message: "Terminal PIN saved." } },
+      },
+    ],
+  },
+  {
+    id: "kiosk-settings-get",
+    group: "Branches & POS Terminals",
+    method: "GET",
+    path: "/api/v1/stores/{store}/kiosk-settings",
+    title: "Get Branch Kiosk & QR Printing Configuration",
+    description: "Retrieves all self-ordering kiosk settings, allowed order types, payment methods, hero banner media, and dual-receipt QR printing rules for the branch.",
+    auth: "Session Cookie",
+    parameters: [
+      { name: "store", type: "string", required: true, description: "Branch UUID", example: "01a154f0-branch" },
+    ],
+    responses: [
+      {
+        status: 200,
+        description: "Kiosk settings for the branch",
+        example: {
+          data: {
+            store_id: "01a154f0-store",
+            branch_id: "01a154f0-branch",
+            kiosk_settings: {
+              enabled: true,
+              default_order_type: "express_pickup",
+              payment_modes: { upi_qr: true, card_tap: true, pay_at_counter: false },
+              printing: {
+                auto_print_kiosk_slip: true,
+                print_validation_qr: true,
+                auto_print_counter_handover_receipt: true,
+                single_use_qr_redemption: true,
+              },
+            },
+          },
+        },
+      },
+    ],
+  },
+  {
+    id: "kiosk-orders-create",
+    group: "Branches & POS Terminals",
+    method: "POST",
+    path: "/api/v1/kiosk/orders",
+    title: "Create Kiosk Order & Generate Prepaid QR Slip (Receipt #1)",
+    description: "Creates a self-service kiosk order, records prepaid capture, reserves stock, and returns the Kiosk Order Slip payload containing the validation QR code (KSK-...).",
+    auth: "Session Cookie",
+    requestBody: {
+      schema: [
+        { name: "branch_id", type: "string", required: true, description: "Branch UUID" },
+        { name: "terminal_id", type: "string", required: false, description: "Kiosk terminal UUID or code (e.g. K1)" },
+        { name: "order_type", type: "string", required: false, description: "express_pickup, takeaway, in_store, or delivery" },
+        { name: "payment_method", type: "string", required: false, description: "upi_qr, card_tap, or pay_at_store" },
+        { name: "payment_captured", type: "boolean", required: false, description: "True when payment is captured on the kiosk" },
+        { name: "lines", type: "array", required: true, description: "Array of { store_item_id, qty }" },
+      ],
+      example: {
+        branch_id: "01a154f0-branch",
+        terminal_id: "K1",
+        order_type: "express_pickup",
+        payment_method: "upi_qr",
+        payment_captured: true,
+        lines: [{ store_item_id: "01a154f0-item-1", qty: 2 }],
+      },
+    },
+    responses: [
+      {
+        status: 201,
+        description: "Kiosk order created with Receipt #1 (Kiosk QR Slip)",
+        example: {
+          data: {
+            qr_code: "KSK-000042-9F4A2C",
+            token_number: "K-042",
+            kiosk_receipt: {
+              receipt_type: "kiosk_order_slip",
+              token_number: "K-042",
+              qr_code: "KSK-000042-9F4A2C",
+              payment_status: "PREPAID",
+              total_paise: 52000,
+            },
+          },
+        },
+      },
+    ],
+  },
+  {
+    id: "kiosk-validate-qr",
+    group: "Branches & POS Terminals",
+    method: "POST",
+    path: "/api/v1/kiosk/validate-qr",
+    title: "Scan & Validate Kiosk QR at Counter (Prints Receipt #2)",
+    description: "Scans the customer's Kiosk QR slip at the counter, verifies QR authenticity, branch match, PAID status, and single-use redemption lock, marks the order picked_up, and returns Receipt #2 (Counter Handover & Serving Checklist Receipt).",
+    auth: "Session Cookie",
+    requestBody: {
+      schema: [
+        { name: "code", type: "string", required: true, description: "Scanned QR token (e.g. KSK-000042-9F4A2C) or order number" },
+        { name: "collect_payment", type: "boolean", required: false, description: "Pass true if collecting cash/card at the counter for an unpaid slip" },
+        { name: "reprint", type: "boolean", required: false, description: "Pass true to reprint an already-validated handover receipt" },
+      ],
+      example: { code: "KSK-000042-9F4A2C" },
+    },
+    responses: [
+      {
+        status: 200,
+        description: "QR verified and Counter Handover Receipt (#2) generated",
+        example: {
+          data: {
+            validations: {
+              qr_authentic: true,
+              branch_matched: true,
+              payment_verified: true,
+              single_use_verified: true,
+              items_count: 2,
+            },
+            receipt: {
+              receipt_type: "counter_handover_receipt",
+              order_number: "ON-000042",
+              qr_code: "KSK-000042-9F4A2C",
+              payment_status: "PAID & VERIFIED",
+              stamp_text: "QR VERIFIED AT COUNTER — READY TO SERVE",
+              auto_print: true,
+            },
+          },
+        },
       },
     ],
   },

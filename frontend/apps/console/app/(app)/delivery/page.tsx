@@ -19,6 +19,7 @@ import {
   Radio,
   RefreshCw,
   Search,
+  ShieldCheck,
   Truck,
   UserCheck,
   Volume2,
@@ -43,6 +44,8 @@ type DeliveryOrder = {
   discount_paise: number;
   payment_status: string;
   payment_method: string;
+  upi_utr?: string | null;
+  payment_submethod?: string | null;
   delivery_status: string;
   delivery_staff_id?: string | null;
   delivery_staff_name?: string | null;
@@ -54,6 +57,8 @@ type DeliveryOrder = {
   city: string;
   pincode: string;
   landmark?: string | null;
+  delivery_slot?: string | null;
+  customer_auth_mode?: "signed_in" | "guest" | null;
   order_notes?: string | null;
   store_name?: string;
   created_at: string;
@@ -146,6 +151,12 @@ export default function DeliveryManagementPage() {
   const [navModalOrder, setNavModalOrder] = useState<DeliveryOrder | null>(null);
   const [googleMapsApiKey, setGoogleMapsApiKey] = useState<string | null>(null);
 
+  // Delivery Verification OTP Modal
+  const [deliveryOtpModalOrder, setDeliveryOtpModalOrder] = useState<DeliveryOrder | null>(null);
+  const [enteredDeliveryOtp, setEnteredDeliveryOtp] = useState("");
+  const [deliveryOtpError, setDeliveryOtpError] = useState<string | null>(null);
+  const [verifyingDeliveryOtp, setVerifyingDeliveryOtp] = useState(false);
+
   const { toasts, showToast, dismissToast } = useToast();
   const knownOrderIdsRef = useRef<Set<string>>(new Set());
   const isInitialLoadRef = useRef(true);
@@ -154,22 +165,13 @@ export default function DeliveryManagementPage() {
   useEffect(() => {
     async function loadMapsConfig() {
       try {
-        const uRes = await fetch("/api/v1/user", { credentials: "include" });
-        if (uRes.ok) {
-          const uBody = await uRes.json();
-          const storeId = uBody.data?.store?.id || uBody.data?.current_store_id;
-          if (storeId) {
-            const rRes = await fetch(`/api/v1/stores/${storeId}/receipt`, { credentials: "include" });
-            if (rRes.ok) {
-              const rBody = await rRes.json();
-              const onlineConfig = rBody.data?.online_store_settings || rBody.data?.online_store;
-              const key = onlineConfig?.contact?.googleMapsApiKey || onlineConfig?.basics?.googleMapsApiKey;
-              if (key) setGoogleMapsApiKey(key);
-            }
-          }
+        const maps = await fetch("/api/v1/public/maps", { headers: { Accept: "application/json" } });
+        if (maps.ok) {
+          const body = await maps.json() as { data?: { api_key?: string | null } };
+          if (body.data?.api_key) setGoogleMapsApiKey(body.data.api_key);
         }
       } catch {
-        // ignore
+        // The map falls back to a directions link.
       }
     }
     void loadMapsConfig();
@@ -376,8 +378,22 @@ export default function DeliveryManagementPage() {
     }
   };
 
+  function computeVerificationCode(orderNumber?: string, id?: string): string {
+    const source = `${orderNumber ?? ""} ${id ?? ""}`;
+    const digits = source.replace(/\D+/g, "");
+    if (!digits) return "2045";
+    const lastFour = digits.slice(-4);
+    return lastFour.length === 4 ? lastFour : lastFour.padStart(4, "0");
+  }
+
   // Status update handler
-  const handleUpdateStatus = async (orderId: string, orderNumber: string, newStatus: string, markPaid = false) => {
+  const handleUpdateStatus = async (
+    orderId: string,
+    orderNumber: string,
+    newStatus: string,
+    markPaid = false,
+    otp?: string,
+  ): Promise<boolean> => {
     try {
       const token = getCsrfToken();
       const res = await fetch(`/api/v1/delivery/orders/${orderId}/status`, {
@@ -388,16 +404,64 @@ export default function DeliveryManagementPage() {
           "Content-Type": "application/json",
           "X-XSRF-TOKEN": token,
         },
-        body: JSON.stringify({ status: newStatus, mark_paid: markPaid }),
+        body: JSON.stringify({
+          status: newStatus,
+          mark_paid: markPaid,
+          otp: otp || undefined,
+        }),
       });
       if (!res.ok) {
-        showToast(`Could not update status to ${newStatus}`, "error");
-        return;
+        const body = await res.json().catch(() => null);
+        showToast(body?.message || `Could not update status to ${newStatus}`, "error");
+        return false;
       }
       showToast(`Order ${orderNumber} updated to ${newStatus.replace(/_/g, " ")}.`, "ok");
       await fetchOrders(false);
+      return true;
     } catch {
       showToast("Network error updating order status.", "error");
+      return false;
+    }
+  };
+
+  const handleInitiateDelivered = (order: DeliveryOrder) => {
+    if (order.fulfillment === "pickup") {
+      void handleUpdateStatus(order.id, order.number, "delivered", order.payment_method === "cod");
+      return;
+    }
+    setDeliveryOtpModalOrder(order);
+    setEnteredDeliveryOtp("");
+    setDeliveryOtpError(null);
+  };
+
+  const handleConfirmDeliveryWithOtp = async (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+    if (!deliveryOtpModalOrder) return;
+    const cleanOtp = enteredDeliveryOtp.trim();
+    if (cleanOtp.length !== 4) {
+      setDeliveryOtpError("Please enter the 4-digit Delivery OTP provided by the customer.");
+      return;
+    }
+    const expectedOtp = computeVerificationCode(deliveryOtpModalOrder.number, deliveryOtpModalOrder.id);
+    if (cleanOtp !== expectedOtp) {
+      setDeliveryOtpError("Incorrect Delivery OTP. Please enter the 4-digit code shown on the customer's tracking screen.");
+      return;
+    }
+    setVerifyingDeliveryOtp(true);
+    try {
+      const isCod = deliveryOtpModalOrder.payment_method === "cod";
+      const success = await handleUpdateStatus(
+        deliveryOtpModalOrder.id,
+        deliveryOtpModalOrder.number,
+        "delivered",
+        isCod,
+        cleanOtp,
+      );
+      if (success) {
+        setDeliveryOtpModalOrder(null);
+      }
+    } finally {
+      setVerifyingDeliveryOtp(false);
     }
   };
 
@@ -752,84 +816,206 @@ export default function DeliveryManagementPage() {
         <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
           {orders.map((order) => {
             const isCod = order.payment_method === "cod";
+            const isUpi = order.payment_method === "upi" || order.payment_method === "upi_qr";
             const isDelivered = order.delivery_status === "delivered";
+            const isFailed = order.delivery_status === "failed" || order.status === "cancelled";
             const isOut = order.delivery_status === "out_for_delivery";
             const isAssigned = !!order.delivery_staff_id;
             const isPickup = order.fulfillment === "pickup";
 
+            // Dynamic status theme configuration for the card header & accents
+            const statusTheme = isDelivered
+              ? {
+                  label: isPickup ? "Picked Up" : "Delivered",
+                  topBorder: "border-t-emerald-500",
+                  headerBg: "bg-gradient-to-r from-emerald-50/90 via-emerald-50/40 to-white",
+                  headerBorder: "border-b-emerald-100",
+                  badge: "bg-emerald-100/90 text-emerald-800 border-emerald-200",
+                  dot: "bg-emerald-500",
+                  pulse: false,
+                  icon: <CheckCircle2 size={13} className="text-emerald-600 shrink-0" />,
+                }
+              : isFailed
+              ? {
+                  label: "Delivery Failed",
+                  topBorder: "border-t-rose-500",
+                  headerBg: "bg-gradient-to-r from-rose-50/90 via-rose-50/40 to-white",
+                  headerBorder: "border-b-rose-100",
+                  badge: "bg-rose-100/90 text-rose-800 border-rose-200",
+                  dot: "bg-rose-500",
+                  pulse: false,
+                  icon: <AlertCircle size={13} className="text-rose-600 shrink-0" />,
+                }
+              : isOut
+              ? {
+                  label: "Out for Delivery",
+                  topBorder: "border-t-indigo-600",
+                  headerBg: "bg-gradient-to-r from-indigo-50/95 via-indigo-50/45 to-white",
+                  headerBorder: "border-b-indigo-100",
+                  badge: "bg-indigo-100/90 text-indigo-800 border-indigo-200",
+                  dot: "bg-indigo-600",
+                  pulse: true,
+                  icon: <Truck size={13} className="text-indigo-600 shrink-0" />,
+                }
+              : isPickup
+              ? {
+                  label: "In-Store Pickup",
+                  topBorder: "border-t-orange-500",
+                  headerBg: "bg-gradient-to-r from-orange-50/90 via-orange-50/40 to-white",
+                  headerBorder: "border-b-orange-100",
+                  badge: "bg-orange-100/90 text-orange-800 border-orange-200",
+                  dot: "bg-orange-500",
+                  pulse: false,
+                  icon: <QrCode size={13} className="text-orange-600 shrink-0" />,
+                }
+              : isAssigned
+              ? {
+                  label: "Rider Assigned",
+                  topBorder: "border-t-sky-500",
+                  headerBg: "bg-gradient-to-r from-sky-50/90 via-sky-50/40 to-white",
+                  headerBorder: "border-b-sky-100",
+                  badge: "bg-sky-100/90 text-sky-800 border-sky-200",
+                  dot: "bg-sky-500",
+                  pulse: false,
+                  icon: <UserCheck size={13} className="text-sky-600 shrink-0" />,
+                }
+              : {
+                  label: "Pending Dispatch",
+                  topBorder: "border-t-amber-500",
+                  headerBg: "bg-gradient-to-r from-amber-50/90 via-amber-50/40 to-white",
+                  headerBorder: "border-b-amber-100",
+                  badge: "bg-amber-100/90 text-amber-800 border-amber-200",
+                  dot: "bg-amber-500",
+                  pulse: true,
+                  icon: <Clock size={13} className="text-amber-600 shrink-0" />,
+                };
+
+            const customerInitials = (order.customer_name || "C")
+              .split(" ")
+              .filter(Boolean)
+              .slice(0, 2)
+              .map((part) => part[0]?.toUpperCase())
+              .join("");
+
             return (
               <div
                 key={order.id}
-                className="flex flex-col justify-between rounded-[16px] border border-line bg-surface p-4 shadow-[0_2px_8px_rgba(15,23,42,0.03)] hover:shadow-md transition"
+                className={`group flex flex-col justify-between overflow-hidden rounded-[16px] border border-slate-200/90 border-t-[3.5px] ${statusTheme.topBorder} bg-surface shadow-[0_2px_10px_rgba(15,23,42,0.04)] hover:shadow-[0_8px_24px_rgba(15,23,42,0.08)] hover:border-slate-300/90 transition-all duration-200`}
               >
-                {/* Header info */}
                 <div>
-                  <div className="flex items-start justify-between gap-2 border-b border-line pb-3">
-                    <div>
-                      <div className="flex items-center gap-2">
-                        <span className="font-semibold text-sm text-ink">{order.number}</span>
+                  {/* Status-tinted Card Header */}
+                  <div className={`px-4 py-3 border-b ${statusTheme.headerBorder} ${statusTheme.headerBg}`}>
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span className="font-bold text-[13.5px] tracking-tight text-slate-900">
+                            {order.number}
+                          </span>
+                          <span
+                            className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-0.5 text-[10.5px] font-semibold tracking-tight ${statusTheme.badge}`}
+                          >
+                            <span className="relative flex h-1.5 w-1.5">
+                              {statusTheme.pulse && (
+                                <span
+                                  className={`animate-ping absolute inline-flex h-full w-full rounded-full opacity-75 ${statusTheme.dot}`}
+                                />
+                              )}
+                              <span className={`relative inline-flex rounded-full h-1.5 w-1.5 ${statusTheme.dot}`} />
+                            </span>
+                            {statusTheme.label}
+                          </span>
+                        </div>
+                        <div className="mt-1 flex items-center gap-1.5 text-[11px] text-slate-500 font-medium">
+                          <Clock size={11} className="text-slate-400" />
+                          <span>
+                            {order.created_at
+                              ? new Date(order.created_at).toLocaleTimeString([], {
+                                  hour: "2-digit",
+                                  minute: "2-digit",
+                                })
+                              : "Recently placed"}
+                          </span>
+                          {order.store_name && (
+                            <>
+                              <span className="text-slate-300">•</span>
+                              <span className="truncate max-w-[150px] text-slate-600">{order.store_name}</span>
+                            </>
+                          )}
+                          {order.delivery_slot && (
+                            <span className="inline-flex items-center gap-1 rounded-md bg-indigo-50 border border-indigo-200/80 px-2 py-0.5 text-[10px] font-semibold text-indigo-700">
+                              <Clock size={10} /> {order.delivery_slot}
+                            </span>
+                          )}
+                        </div>
+                      </div>
+
+                      {/* Amount, View button & Payment mode */}
+                      <div className="text-right shrink-0">
+                        <div className="flex items-center justify-end gap-1.5">
+                          <span className="text-[15px] font-bold tracking-tight text-slate-900">
+                            {formatInr(order.total_paise)}
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => handleViewReceipt(order)}
+                            title="View Order Details & Receipt"
+                            className="inline-flex h-7 w-7 items-center justify-center rounded-lg bg-white/90 border border-slate-200/90 text-slate-600 hover:bg-indigo-600 hover:border-indigo-600 hover:text-white transition shadow-2xs cursor-pointer"
+                          >
+                            <Eye size={13} />
+                          </button>
+                        </div>
                         <span
-                          className={`rounded-full px-2 py-0.5 text-[10.5px] font-semibold capitalize ${
-                            isDelivered
-                              ? "bg-emerald-50 text-emerald-700 border border-emerald-200"
-                              : isOut
-                              ? "bg-indigo-50 text-indigo-700 border border-indigo-200 animate-pulse"
-                              : isAssigned
-                              ? "bg-amber-50 text-amber-700 border border-amber-200"
+                          className={`mt-1 inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[9.5px] font-bold uppercase tracking-wider ${
+                            isCod
+                              ? "bg-amber-100/90 text-amber-800 border border-amber-200/70"
                               : isPickup
-                              ? "bg-orange-50 text-orange-700 border border-orange-200"
-                              : "bg-slate-100 text-slate-700 border border-slate-200"
+                              ? "bg-orange-100/90 text-orange-800 border border-orange-200/70"
+                              : isUpi
+                              ? "bg-purple-100/90 text-purple-800 border border-purple-200/70"
+                              : "bg-emerald-100/90 text-emerald-800 border border-emerald-200/70"
                           }`}
                         >
-                          {isPickup ? "In-Store Pickup" : order.delivery_status.replace(/_/g, " ")}
+                          {isCod ? "Cash on Delivery" : isPickup ? "Pay at Store" : isUpi ? "Direct UPI" : "Prepaid"}
                         </span>
+                        {order.upi_utr ? (
+                          <span className="mt-0.5 inline-block font-mono text-[9px] text-purple-700 bg-purple-50 px-1 rounded border border-purple-200" title="UTR Reference">
+                            UTR: {order.upi_utr}
+                          </span>
+                        ) : null}
                       </div>
-                      <span className="text-[11px] text-muted">
-                        {order.created_at ? new Date(order.created_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "Recently placed"}
-                        {order.store_name ? ` · ${order.store_name}` : ""}
-                      </span>
-                    </div>
-
-                    {/* Amount, View button & Payment mode */}
-                    <div className="text-right">
-                      <div className="flex items-center justify-end gap-1.5">
-                        <span className="text-sm font-semibold text-ink">{formatInr(order.total_paise)}</span>
-                        <button
-                          type="button"
-                          onClick={() => handleViewReceipt(order)}
-                          title="View Order Details"
-                          className="inline-flex h-7 w-7 items-center justify-center rounded-[7px] bg-indigo-50 border border-indigo-200 text-indigo-600 hover:bg-indigo-600 hover:text-white transition shadow-2xs cursor-pointer"
-                        >
-                          <Eye size={13} />
-                        </button>
-                      </div>
-                      <span
-                        className={`inline-block rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase ${
-                          isCod ? "bg-amber-100 text-amber-800" : "bg-emerald-100 text-emerald-800"
-                        }`}
-                      >
-                        {isCod ? "Cash on Delivery" : isPickup ? "Pay at store" : "Prepaid"}
-                      </span>
                     </div>
                   </div>
 
-                  {/* Customer details */}
-                  <div className="mt-3 space-y-2 text-xs">
-                    <div className="flex items-center justify-between">
-                      <span className="font-semibold text-ink">{order.customer_name}</span>
+                  {/* Card Body */}
+                  <div className="p-4 space-y-3 text-xs">
+                    {/* Customer Row */}
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="flex items-center gap-2.5 min-w-0">
+                        <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-slate-100 border border-slate-200/80 text-[11px] font-bold text-slate-700">
+                          {customerInitials || "CU"}
+                        </div>
+                        <div className="min-w-0">
+                          <div className="font-semibold text-slate-900 truncate text-[12.5px]">
+                            {order.customer_name}
+                          </div>
+                          <div className="text-[11px] text-slate-500">
+                            {order.customer_phone || "Walk-in / Online Customer"}
+                          </div>
+                        </div>
+                      </div>
                       {order.customer_phone && (
-                        <div className="flex items-center gap-1.5">
+                        <div className="flex items-center gap-1.5 shrink-0">
                           <a
                             href={`tel:${order.customer_phone}`}
-                            className="inline-flex items-center gap-1 rounded-md bg-slate-100 px-2 py-1 text-[11px] font-semibold text-slate-700 hover:bg-slate-200"
+                            className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-2.5 py-1 text-[11px] font-semibold text-slate-700 hover:bg-slate-50 hover:border-slate-300 transition shadow-2xs"
                           >
-                            <Phone size={11} /> Call
+                            <Phone size={11} className="text-slate-500" /> Call
                           </a>
                           <a
                             href={`https://wa.me/91${order.customer_phone.replace(/\D/g, "")}`}
                             target="_blank"
                             rel="noopener noreferrer"
-                            className="inline-flex items-center gap-1 rounded-md bg-emerald-50 px-2 py-1 text-[11px] font-semibold text-emerald-700 hover:bg-emerald-100"
+                            className="inline-flex items-center gap-1 rounded-lg border border-emerald-200 bg-emerald-50/80 px-2.5 py-1 text-[11px] font-semibold text-emerald-700 hover:bg-emerald-100 transition shadow-2xs"
                           >
                             WhatsApp
                           </a>
@@ -839,10 +1025,12 @@ export default function DeliveryManagementPage() {
 
                     {/* Address & GPS */}
                     {!isPickup ? (
-                      <div className="rounded-[10px] bg-bg p-2.5 text-xs text-muted space-y-1.5">
-                        <div className="flex items-start gap-1.5">
-                          <MapPin size={13} className="text-indigo-600 shrink-0 mt-0.5" />
-                          <span className="text-slate-700 font-medium leading-relaxed">
+                      <div className="rounded-xl border border-slate-200/75 bg-slate-50/75 p-2.5 text-xs space-y-2">
+                        <div className="flex items-start gap-2">
+                          <div className="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-md bg-indigo-50 text-indigo-600">
+                            <MapPin size={12} />
+                          </div>
+                          <span className="text-slate-700 font-medium leading-relaxed text-[11.5px]">
                             {order.address}
                             {order.landmark ? ` (Near ${order.landmark})` : ""}
                             {order.pincode ? ` - ${order.pincode}` : ""}
@@ -851,45 +1039,59 @@ export default function DeliveryManagementPage() {
 
                         {/* 1-Click Live Location button & Live Map Modal */}
                         {order.live_location_url || (order.latitude && order.longitude) ? (
-                          <div className="pt-1.5 flex flex-wrap items-center justify-between gap-2 border-t border-line/60">
-                            <span className="text-[11px] text-indigo-700 font-semibold flex items-center gap-1">
-                              <Navigation size={12} />
-                              GPS: {order.latitude?.toFixed(4)}, {order.longitude?.toFixed(4)}
+                          <div className="pt-2 flex flex-wrap items-center justify-between gap-2 border-t border-slate-200/70">
+                            <span className="text-[10.5px] text-indigo-700 font-semibold flex items-center gap-1 bg-indigo-50/80 px-2 py-0.5 rounded-md border border-indigo-100">
+                              <Navigation size={10} />
+                              {order.latitude?.toFixed(4)}, {order.longitude?.toFixed(4)}
                             </span>
                             <div className="flex items-center gap-1.5">
                               <button
                                 type="button"
                                 onClick={() => setNavModalOrder(order)}
-                                className="inline-flex items-center gap-1 rounded bg-indigo-50 border border-indigo-200 px-2 py-1 text-[11px] font-semibold text-indigo-700 hover:bg-indigo-100 transition cursor-pointer"
+                                className="inline-flex items-center gap-1 rounded-lg bg-white border border-indigo-200 px-2 py-1 text-[10.5px] font-semibold text-indigo-700 hover:bg-indigo-50 transition cursor-pointer shadow-2xs"
                               >
-                                <Navigation size={11} />
+                                <Navigation size={10} />
                                 <span>Live Map</span>
                               </button>
                               <a
-                                href={order.live_location_url || `https://www.google.com/maps/dir/?api=1&destination=${order.latitude},${order.longitude}&travelmode=driving`}
+                                href={
+                                  order.live_location_url ||
+                                  `https://www.google.com/maps/dir/?api=1&destination=${order.latitude},${order.longitude}&travelmode=driving`
+                                }
                                 target="_blank"
                                 rel="noopener noreferrer"
-                                className="inline-flex items-center gap-1 rounded bg-indigo-600 px-2.5 py-1 text-[11px] font-semibold text-white hover:bg-indigo-700 shadow-xs transition"
+                                className="inline-flex items-center gap-1 rounded-lg bg-indigo-600 px-2.5 py-1 text-[10.5px] font-semibold text-white hover:bg-indigo-700 shadow-2xs transition"
                               >
-                                <span>Google Maps</span>
+                                <span>Directions</span>
                                 <ExternalLink size={10} />
                               </a>
                             </div>
                           </div>
                         ) : (
-                          <div className="text-[11px] text-amber-600">No live GPS pinned. Using text address.</div>
+                          <div className="flex items-center gap-1.5 pt-1 border-t border-slate-200/60 text-[10.5px] text-amber-700 font-medium">
+                            <AlertCircle size={11} className="text-amber-500 shrink-0" />
+                            <span>Standard text address (No live GPS pin attached)</span>
+                          </div>
                         )}
                       </div>
                     ) : (
-                      <div className="rounded-[10px] bg-orange-50/60 border border-orange-200/80 p-2.5 text-xs text-orange-950 flex items-center justify-between">
+                      <div className="rounded-xl bg-orange-50/70 border border-orange-200/80 p-2.5 text-xs text-orange-950 flex items-center justify-between">
                         <div className="flex items-center gap-2">
-                          <QrCode size={15} className="text-orange-600" />
-                          <span className="font-medium">In-Store Pickup Order</span>
+                          <div className="flex h-6 w-6 items-center justify-center rounded-lg bg-orange-100 text-orange-600">
+                            <QrCode size={14} />
+                          </div>
+                          <div>
+                            <div className="font-semibold text-[11.5px]">In-Store Counter Pickup</div>
+                            <div className="text-[10px] text-orange-700">Customer will present QR code at POS</div>
+                          </div>
                         </div>
                         <button
                           type="button"
-                          onClick={() => setQrModalOpen(true)}
-                          className="text-[11px] font-semibold text-orange-700 underline"
+                          onClick={() => {
+                            setPickupQrCode(order.number);
+                            setQrModalOpen(true);
+                          }}
+                          className="rounded-lg bg-white border border-orange-200 px-2.5 py-1 text-[11px] font-semibold text-orange-700 hover:bg-orange-100 transition cursor-pointer shadow-2xs"
                         >
                           Verify QR
                         </button>
@@ -897,37 +1099,45 @@ export default function DeliveryManagementPage() {
                     )}
 
                     {/* Order items snapshot */}
-                    <div className="border-t border-line/70 pt-2 text-[11.5px] text-muted">
-                      <div className="font-semibold text-ink mb-1">Items ({order.lines.length}):</div>
-                      <div className="space-y-0.5">
+                    <div className="rounded-xl border border-slate-100 bg-white p-2.5 text-[11.5px]">
+                      <div className="flex items-center justify-between mb-1.5">
+                        <span className="font-semibold text-slate-700 flex items-center gap-1.5 text-[11px] uppercase tracking-wider">
+                          <Package size={12} className="text-slate-400" />
+                          Order Items ({order.lines.length})
+                        </span>
+                        <span className="text-[10.5px] font-medium text-slate-400">
+                          {order.lines.reduce((acc, item) => acc + item.qty, 0)} units
+                        </span>
+                      </div>
+                      <div className="space-y-1 max-h-24 overflow-y-auto pr-1">
                         {order.lines.map((l, i) => (
-                          <div key={i} className="flex justify-between text-slate-600">
-                            <span>
-                              {l.qty}x {l.name}
+                          <div key={i} className="flex items-center justify-between text-slate-600 py-0.5">
+                            <span className="truncate pr-2">
+                              <span className="font-semibold text-slate-800">{l.qty}×</span> {l.name}
                             </span>
-                            <span className="font-medium">{formatInr(l.total_paise)}</span>
+                            <span className="font-semibold text-slate-800 shrink-0">{formatInr(l.total_paise)}</span>
                           </div>
                         ))}
                       </div>
                     </div>
 
                     {order.order_notes && (
-                      <div className="rounded bg-amber-50/80 p-1.5 text-[11px] text-amber-800">
-                        <span className="font-semibold">Note:</span> {order.order_notes}
+                      <div className="rounded-lg border border-amber-200/70 bg-amber-50/70 px-2.5 py-1.5 text-[11px] text-amber-900">
+                        <span className="font-semibold">Customer Note:</span> {order.order_notes}
                       </div>
                     )}
                   </div>
                 </div>
 
                 {/* Rider info & Actions footer */}
-                <div className="mt-4 border-t border-line pt-3 space-y-2.5">
+                <div className="px-4 py-3 border-t border-slate-100 bg-slate-50/60 space-y-2.5">
                   {!isPickup ? (
                     <>
                       <div className="flex items-center justify-between text-xs">
-                        <span className="text-muted">Assigned Rider:</span>
+                        <span className="text-slate-500 font-medium">Delivery Partner:</span>
                         {order.delivery_staff_name ? (
-                          <span className="font-semibold text-ink flex items-center gap-1">
-                            <UserCheck size={13} className="text-emerald-600" />
+                          <span className="inline-flex items-center gap-1.5 rounded-full bg-emerald-50 border border-emerald-200/80 px-2.5 py-0.5 font-semibold text-emerald-800 text-[11px]">
+                            <UserCheck size={12} className="text-emerald-600" />
                             {order.delivery_staff_name}
                           </span>
                         ) : (
@@ -937,23 +1147,23 @@ export default function DeliveryManagementPage() {
                               setAssigningOrder(order);
                               setSelectedStaffId(availableRiders[0]?.id || "");
                             }}
-                            className="text-xs font-semibold text-indigo-600 hover:underline"
+                            className="inline-flex items-center gap-1 text-xs font-semibold text-indigo-600 hover:text-indigo-700 cursor-pointer"
                           >
-                            + Assign Rider
+                            <span>+ Assign Rider</span>
                           </button>
                         )}
                       </div>
 
                       {/* Cash to collect reminder */}
                       {isCod && !isDelivered && (
-                        <div className="rounded-[8px] bg-amber-50 border border-amber-200 px-2.5 py-1.5 text-xs flex items-center justify-between text-amber-900">
-                          <span className="font-medium">Collect Cash on Delivery:</span>
-                          <span className="font-semibold text-sm">{formatInr(order.total_paise)}</span>
+                        <div className="rounded-lg bg-amber-50/90 border border-amber-200/90 px-2.5 py-1.5 text-xs flex items-center justify-between text-amber-950">
+                          <span className="font-medium text-[11px]">Cash to Collect (COD):</span>
+                          <span className="font-bold text-xs">{formatInr(order.total_paise)}</span>
                         </div>
                       )}
 
                       {/* Status transition buttons */}
-                      <div className="flex items-center gap-2 pt-1">
+                      <div className="flex items-center gap-2 pt-0.5">
                         {!isAssigned && !isDelivered && (
                           <Button
                             type="button"
@@ -963,9 +1173,9 @@ export default function DeliveryManagementPage() {
                               setAssigningOrder(order);
                               setSelectedStaffId(availableRiders[0]?.id || "");
                             }}
-                            className="w-full text-xs font-semibold"
+                            className="w-full text-xs font-semibold border-amber-300 bg-amber-50/80 text-amber-900 hover:bg-amber-100"
                           >
-                            Assign Rider
+                            Assign Delivery Rider
                           </Button>
                         )}
 
@@ -977,7 +1187,8 @@ export default function DeliveryManagementPage() {
                             onClick={() => handleUpdateStatus(order.id, order.number, "out_for_delivery")}
                             className="w-full text-xs font-semibold bg-indigo-600 hover:bg-indigo-700"
                           >
-                            Start Delivery
+                            <Truck size={13} className="mr-1.5" />
+                            Dispatch / Start Delivery
                           </Button>
                         )}
 
@@ -987,11 +1198,13 @@ export default function DeliveryManagementPage() {
                               type="button"
                               size="sm"
                               variant="primary"
-                              onClick={() => handleUpdateStatus(order.id, order.number, "delivered", isCod)}
+                              onClick={() => handleInitiateDelivered(order)}
                               className="flex-1 text-xs font-semibold bg-emerald-600 hover:bg-emerald-700"
                             >
-                              <Check size={14} className="mr-1" />
-                              Mark Delivered {isCod ? "(Paid)" : ""}
+                              <ShieldCheck size={14} className="mr-1" />
+                              {order.fulfillment === "pickup"
+                                ? "Mark Picked Up"
+                                : `Verify OTP & Deliver ${isCod ? "(COD)" : ""}`}
                             </Button>
                             <Button
                               type="button"
@@ -1006,16 +1219,16 @@ export default function DeliveryManagementPage() {
                         )}
 
                         {isDelivered && (
-                          <div className="w-full text-center py-1 rounded bg-emerald-50 text-emerald-700 text-xs font-semibold flex items-center justify-center gap-1">
-                            <CheckCircle2 size={13} />
-                            Successfully Delivered
+                          <div className="w-full text-center py-1.5 rounded-lg bg-emerald-50 border border-emerald-200/80 text-emerald-800 text-xs font-semibold flex items-center justify-center gap-1.5">
+                            <CheckCircle2 size={13} className="text-emerald-600" />
+                            Order Delivered &amp; Completed
                           </div>
                         )}
                       </div>
                     </>
                   ) : (
                     /* In-Store Pickup quick action */
-                    <div className="flex items-center justify-between pt-1">
+                    <div className="flex items-center justify-between pt-0.5">
                       <Button
                         type="button"
                         size="sm"
@@ -1024,10 +1237,10 @@ export default function DeliveryManagementPage() {
                           setPickupQrCode(order.number);
                           setQrModalOpen(true);
                         }}
-                        className="w-full text-xs font-semibold text-orange-700 bg-orange-50 border border-orange-200 hover:bg-orange-100"
+                        className="w-full text-xs font-semibold text-orange-800 bg-orange-50 border border-orange-200 hover:bg-orange-100"
                       >
                         <QrCode size={13} className="mr-1.5" />
-                        Verify &amp; Print Receipt
+                        Verify Pickup QR &amp; Handover
                       </Button>
                     </div>
                   )}
@@ -1171,19 +1384,114 @@ export default function DeliveryManagementPage() {
         orderType={selectedDetailReceipt?.order_type || "Online Order"}
       />
 
+      {/* Delivery Verification OTP Modal for Riders / Delivery Staff */}
+      {deliveryOtpModalOrder && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-xs animate-in fade-in duration-200">
+          <div className="relative w-full max-w-sm rounded-2xl bg-white p-6 shadow-2xl space-y-4">
+            <button
+              type="button"
+              onClick={() => {
+                setDeliveryOtpModalOrder(null);
+                setDeliveryOtpError(null);
+              }}
+              className="absolute right-4 top-4 rounded-lg p-1.5 text-slate-400 hover:bg-slate-100 hover:text-slate-700"
+            >
+              <X size={18} />
+            </button>
+
+            <div className="text-center space-y-1">
+              <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-2xl bg-emerald-100 text-emerald-700 mb-2">
+                <ShieldCheck size={26} />
+              </div>
+              <h3 className="text-base font-bold text-slate-900">Delivery Verification</h3>
+              <p className="text-xs text-slate-500">
+                Order #{deliveryOtpModalOrder.number} · {deliveryOtpModalOrder.customer_name || "Customer"}
+              </p>
+            </div>
+
+            {deliveryOtpModalOrder.payment_method === "cod" ? (
+              <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-center space-y-1">
+                <div className="text-xs font-bold text-amber-900">
+                  Cash on Delivery · Collect {formatInr(deliveryOtpModalOrder.total_paise || 0)}
+                </div>
+                <p className="text-[11px] text-amber-700">
+                  Ensure you collect cash or receive UPI payment before completing delivery.
+                </p>
+              </div>
+            ) : (
+              <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-2.5 text-center text-xs font-semibold text-emerald-800">
+                Prepaid Order · Payment Verified
+              </div>
+            )}
+
+            <form onSubmit={handleConfirmDeliveryWithOtp} className="space-y-4">
+              <div>
+                <label className="block text-center text-xs font-bold uppercase tracking-wider text-slate-700 mb-2">
+                  Enter 4-Digit Customer OTP
+                </label>
+                <input
+                  type="text"
+                  inputMode="numeric"
+                  pattern="[0-9]*"
+                  maxLength={4}
+                  autoFocus
+                  value={enteredDeliveryOtp}
+                  onChange={(e) => {
+                    setEnteredDeliveryOtp(e.target.value.replace(/\D/g, "").slice(0, 4));
+                    setDeliveryOtpError(null);
+                  }}
+                  placeholder="• • • •"
+                  className="w-full h-14 rounded-2xl border-2 border-slate-300 bg-slate-50 text-center font-mono text-3xl font-black tracking-widest text-slate-900 outline-none focus:border-emerald-600 focus:bg-white transition"
+                />
+                <p className="text-[11px] text-center text-slate-400 mt-1.5">
+                  The customer can view this code on their live tracking screen
+                </p>
+              </div>
+
+              {deliveryOtpError && (
+                <div className="rounded-xl border border-rose-200 bg-rose-50 p-2.5 text-center text-xs font-semibold text-rose-700 animate-in fade-in">
+                  {deliveryOtpError}
+                </div>
+              )}
+
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  onClick={() => setDeliveryOtpModalOrder(null)}
+                  className="flex-1 h-11 rounded-xl border border-slate-200 bg-white text-xs font-bold text-slate-700 hover:bg-slate-50 transition"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={verifyingDeliveryOtp || enteredDeliveryOtp.length !== 4}
+                  className="flex-1 h-11 rounded-xl bg-emerald-600 text-xs font-bold text-white shadow-sm hover:bg-emerald-700 disabled:opacity-50 transition"
+                >
+                  {verifyingDeliveryOtp ? "Verifying..." : "Verify & Complete"}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
       {/* Live Navigation & Map Modal for Delivery Person */}
       <DeliveryOrderMapModal
         isOpen={Boolean(navModalOrder)}
         onClose={() => setNavModalOrder(null)}
         order={navModalOrder}
         googleMapsApiKey={googleMapsApiKey}
-        onStatusTransition={async (orderId, toStatus) => {
-          await handleUpdateStatus(orderId, navModalOrder?.number || orderId, toStatus);
-          setNavModalOrder((prev) =>
-            prev && prev.id === orderId
-              ? { ...prev, delivery_status: toStatus, status: toStatus }
-              : prev,
-          );
+        onStatusTransition={async (orderId, toStatus, otp) => {
+          const isCod = navModalOrder?.payment_method === "cod";
+          const success = await handleUpdateStatus(orderId, navModalOrder?.number || orderId, toStatus, isCod, otp);
+          if (success) {
+            setNavModalOrder((prev) =>
+              prev && prev.id === orderId
+                ? { ...prev, delivery_status: toStatus, status: toStatus }
+                : prev,
+            );
+          }
+          return success;
         }}
       />
     </div>

@@ -1046,7 +1046,7 @@ function CatalogIntegrationDetailView({
 
   const webhookBase = typeof window !== "undefined"
     ? `${window.location.origin}/api/v1/platform/catalog/webhooks`
-    : "http://localhost:8000/api/v1/platform/catalog/webhooks";
+    : "https://retail.sirixo.com/api/v1/platform/catalog/webhooks";
 
   // Setup checklist count
   const step1 = enabled;

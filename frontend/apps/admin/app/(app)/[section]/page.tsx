@@ -1,6 +1,7 @@
 "use client";
 
 import { formatInr } from "@selfx/types";
+import { SmsSettingsPanel } from "../sms-settings-panel";
 import {
   Activity,
   AlertCircle,
@@ -204,6 +205,9 @@ type PlatformSettingsData = {
     enabled: boolean;
     webhook_url?: string;
   };
+  sms_providers: Record<string, Record<string, string | boolean>>;
+  auth_methods: { email_password: boolean; phone_otp: boolean };
+  maps: { api_key: string };
   whatsapp: {
     provider: string;
     phone_number_id: string;
@@ -1428,62 +1432,67 @@ function PaymentsSection({ mode }: { mode: string }) {
  * 5. IMPERSONATION LOGS (/impersonation-logs)
  * ========================================================================== */
 function ImpersonationLogsSection() {
-  const [logs, setLogs] = useState<LogEntry[]>([]);
+  const [logs, setLogs] = useState<{
+    id: string;
+    admin_email?: string;
+    tenant_name?: string;
+    user_email?: string | null;
+    status?: string;
+    created_at?: string;
+    used_at?: string | null;
+    stopped_at?: string | null;
+  }[]>([]);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    void api<{ data: { logs: LogEntry[] } }>("/api/v1/platform/logs")
-      .then((res) => {
-        const all = res.data?.logs ?? [];
-        const imp = all.filter(
-          (l) =>
-            l.action.includes("impersonat") ||
-            l.action.includes("tenant") ||
-            l.actor_kind === "platform",
-        );
-        setLogs(imp);
-      })
-      .catch(() => {});
+    void api<{ data: { impersonation_logs: typeof logs } }>("/api/v1/platform/logs")
+      .then((res) => setLogs(res.data?.impersonation_logs ?? []))
+      .catch((err: { error?: { message?: string } }) => {
+        setError(err?.error?.message ?? "The impersonation log could not be loaded.");
+      });
   }, []);
+
+  function when(value?: string | null) {
+    return value ? new Date(value).toLocaleString("en-IN") : "—";
+  }
 
   return (
     <div className="space-y-5">
       <div>
-        <h1 className="text-xl font-semibold tracking-tight text-slate-900">
-          Impersonation &amp; Support Audit Logs
-        </h1>
+        <h1 className="text-xl font-semibold tracking-tight text-slate-900">Impersonation logs</h1>
         <p className="mt-0.5 text-xs text-slate-500">
-          Every Super Admin tenant support session and control-plane action is recorded here.
+          Each support session is listed from the moment it is issued until the super admin leaves the store.
         </p>
       </div>
-
+      {error ? <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">{error}</div> : null}
       <div className="overflow-hidden rounded-xl border border-slate-200 bg-white">
         <table className="w-full text-left text-xs">
           <thead>
-            <tr className="border-b border-slate-200 bg-slate-50/70 text-[10px] font-semibold uppercase tracking-wider text-slate-400">
-              <th className="px-4 py-3">Action</th>
-              <th className="px-4 py-3">Details</th>
-              <th className="px-4 py-3">Actor</th>
-              <th className="px-4 py-3">IP Address</th>
-              <th className="px-4 py-3">Timestamp</th>
+            <tr className="border-b border-slate-200 bg-slate-50 text-[10px] font-semibold uppercase tracking-wider text-slate-400">
+              <th className="px-4 py-3">Store</th>
+              <th className="px-4 py-3">Administrator</th>
+              <th className="px-4 py-3">Owner</th>
+              <th className="px-4 py-3">Issued</th>
+              <th className="px-4 py-3">Entered</th>
+              <th className="px-4 py-3">Exited</th>
+              <th className="px-4 py-3">Status</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-100">
             {logs.map((log) => (
-              <tr key={log.id} className="hover:bg-slate-50/60">
-                <td className="px-4 py-3 font-mono text-[11px] font-semibold text-blue-700">
-                  {log.action}
-                </td>
-                <td className="px-4 py-3 font-medium text-slate-900">{log.message}</td>
-                <td className="px-4 py-3 capitalize text-slate-600">{log.actor_kind}</td>
-                <td className="num px-4 py-3 text-slate-500">{log.ip ?? "127.0.0.1"}</td>
-                <td className="num px-4 py-3 text-slate-500">
-                  {log.created_at ? new Date(log.created_at).toLocaleString("en-IN") : "—"}
-                </td>
+              <tr key={log.id}>
+                <td className="px-4 py-3 font-medium text-slate-900">{log.tenant_name}</td>
+                <td className="px-4 py-3 text-slate-600">{log.admin_email}</td>
+                <td className="px-4 py-3 text-slate-600">{log.user_email ?? "—"}</td>
+                <td className="num px-4 py-3 text-slate-500">{when(log.created_at)}</td>
+                <td className="num px-4 py-3 text-slate-500">{when(log.used_at)}</td>
+                <td className="num px-4 py-3 text-slate-500">{when(log.stopped_at)}</td>
+                <td className="px-4 py-3 font-semibold capitalize text-slate-700">{log.status}</td>
               </tr>
             ))}
-            {logs.length === 0 ? (
+            {logs.length === 0 && !error ? (
               <tr>
-                <td colSpan={5} className="px-4 py-10 text-center text-xs text-slate-400">
+                <td colSpan={7} className="px-4 py-10 text-center text-xs text-slate-400">
                   No impersonation sessions recorded yet.
                 </td>
               </tr>
@@ -1505,8 +1514,8 @@ const DEFAULT_PLATFORM_SETTINGS: PlatformSettingsData = {
   },
   general: {
     platform_name: "SelfX Retail Cloud",
-    support_email: "support@selfx.in",
-    support_phone: "+91 80 4568 1200",
+    support_email: "",
+    support_phone: "",
     default_currency: "INR",
     default_timezone: "Asia/Kolkata",
     trial_days: 14,
@@ -1518,11 +1527,11 @@ const DEFAULT_PLATFORM_SETTINGS: PlatformSettingsData = {
     copyright_text: "© 2026 SelfX Retail Technologies Private Limited. All rights reserved.",
   },
   profile: {
-    name: "Platform Administrator",
-    email: "admin@selfx.in",
-    phone: "+91 80 4568 1200",
-    designation: "Principal Infrastructure Lead",
-    role: "Global Root Super Admin",
+    name: "",
+    email: "",
+    phone: "",
+    designation: "",
+    role: "",
   },
   languages: {
     default_language: "en",
@@ -1566,44 +1575,54 @@ const DEFAULT_PLATFORM_SETTINGS: PlatformSettingsData = {
   },
   mail: {
     driver: "smtp",
-    host: "smtp.postmarkapp.com",
+    host: "",
     port: 587,
-    username: "platform-mailer@selfx.in",
+    username: "",
     password: "",
     encryption: "tls",
-    from_address: "no-reply@selfx.in",
-    from_name: "SelfX Retail Cloud",
-    reply_to: "support@selfx.in",
+    from_address: "",
+    from_name: "SelfX Retail",
+    reply_to: "",
   },
   sms: {
-    provider: "msg91",
-    sender_id: "SELFXR",
-    api_key: "msg91_live_98a7bc65d43e21",
-    dlt_entity_id: "1201159876543210001",
-    enabled: true,
-    webhook_url: "https://api.selfx.in/api/v1/webhooks/sms/delivery-report",
+    provider: "",
+    sender_id: "",
+    api_key: "",
+    dlt_entity_id: "",
+    enabled: false,
+    webhook_url: "",
   },
+  sms_providers: {
+    log: { enabled: false, active: false },
+    twilio: { enabled: false, active: false, account_sid: "", auth_token: "", from: "" },
+    firebase: { enabled: false, active: false, api_key: "", auth_domain: "", project_id: "", app_id: "", messaging_sender_id: "" },
+    msg91: { enabled: false, active: false, auth_key: "", sender_id: "", template_id: "", dlt_entity_id: "", route: "4" },
+    fast2sms: { enabled: false, active: false, api_key: "", sender_id: "", template_id: "", route: "q" },
+    sns: { enabled: false, active: false, access_key: "", secret: "", region: "ap-south-1", sender_id: "" },
+  },
+  auth_methods: { email_password: true, phone_otp: true },
+  maps: { api_key: "" },
   whatsapp: {
     provider: "Meta Cloud API",
-    phone_number_id: "109823471293841",
-    business_account_id: "998127364518273",
-    access_token: "EAAGm0PX4ZCpsBA...",
-    enabled: true,
-    verify_token: "selfx_wa_verify_prod_token",
+    phone_number_id: "",
+    business_account_id: "",
+    access_token: "",
+    enabled: false,
+    verify_token: "",
   },
   gateways: {
-    stripe: { enabled: true, publishable_key: "pk_live_51SelfXPlatform", secret_key: "sk_live_51SelfXPlatformSecret", webhook_secret: "whsec_stripe_platform", mode: "live", currency: "INR" },
-    razorpay: { enabled: true, key_id: "rzp_live_SelfXPlatform01", key_secret: "rzp_sec_live_98a7bc65d43e21", webhook_secret: "whsec_rzp_platform", mode: "live", currency: "INR" },
-    phonepe: { enabled: false, merchant_id: "SELFXONLINE", salt_key: "salt_key_live_phonepe", salt_index: "1", mode: "test", currency: "INR" },
-    paytm: { enabled: false, mid: "SELFXR98172635", merchant_key: "paytm_sec_key_platform", website: "DEFAULT", mode: "test", currency: "INR" },
-    cashfree: { enabled: false, app_id: "CF_APP_SELFX_LIVE", secret_key: "cf_sec_key_platform", mode: "test", currency: "INR" },
-    payu: { enabled: false, merchant_key: "PAYU_SELFX_KEY", merchant_salt: "payu_salt_live_98a7bc", mode: "test", currency: "INR" },
-    paypal: { enabled: false, client_id: "AY_SELFX_PAYPAL_CLIENT", client_secret: "paypal_sec_platform", mode: "test", currency: "USD" },
-    paystack: { enabled: false, public_key: "pk_live_paystack_selfx", secret_key: "sk_live_paystack_selfx", mode: "test", currency: "NGN" },
-    flutterwave: { enabled: false, public_key: "FLWPUBK-selfx-live", secret_key: "FLWSECK-selfx-live", encryption_key: "flw_enc_key_98a", mode: "test", currency: "USD" },
-    mollie: { enabled: false, api_key: "live_mollie_selfx_platform", mode: "test", currency: "EUR" },
-    dodopayments: { enabled: false, api_key: "dodo_live_selfx_key", webhook_secret: "whsec_dodo_platform", mode: "test", currency: "USD" },
-    bank_transfer: { enabled: true, bank_name: "HDFC Bank Ltd", account_name: "SelfX Retail Technologies Pvt Ltd", account_number: "50200087654321", ifsc: "HDFC0000240", mode: "live", currency: "INR", instructions: "Include your Tenant Subdomain and Invoice Number in NEFT/RTGS transaction remarks." },
+    stripe: { enabled: false, publishable_key: "", secret_key: "", webhook_secret: "", mode: "test", currency: "INR" },
+    razorpay: { enabled: false, key_id: "", key_secret: "", webhook_secret: "", mode: "test", currency: "INR" },
+    phonepe: { enabled: false, merchant_id: "", salt_key: "", salt_index: "1", mode: "test", currency: "INR" },
+    paytm: { enabled: false, mid: "", merchant_key: "", website: "DEFAULT", mode: "test", currency: "INR" },
+    cashfree: { enabled: false, app_id: "", secret_key: "", mode: "test", currency: "INR" },
+    payu: { enabled: false, merchant_key: "", merchant_salt: "", mode: "test", currency: "INR" },
+    paypal: { enabled: false, client_id: "", client_secret: "", mode: "test", currency: "USD" },
+    paystack: { enabled: false, public_key: "", secret_key: "", mode: "test", currency: "NGN" },
+    flutterwave: { enabled: false, public_key: "", secret_key: "", encryption_key: "", mode: "test", currency: "USD" },
+    mollie: { enabled: false, api_key: "", mode: "test", currency: "EUR" },
+    dodopayments: { enabled: false, api_key: "", webhook_secret: "", mode: "test", currency: "USD" },
+    bank_transfer: { enabled: false, bank_name: "", account_name: "", account_number: "", ifsc: "", mode: "test", currency: "INR", instructions: "" },
   },
   email_templates: [
     {
@@ -1696,6 +1715,9 @@ function normalizePlatformSettings(raw?: Partial<PlatformSettingsData> | null): 
     security: { ...DEFAULT_PLATFORM_SETTINGS.security, ...(raw?.security ?? {}) },
     mail: { ...DEFAULT_PLATFORM_SETTINGS.mail, ...(raw?.mail ?? {}) },
     sms: { ...DEFAULT_PLATFORM_SETTINGS.sms, ...(raw?.sms ?? {}) },
+    sms_providers: { ...DEFAULT_PLATFORM_SETTINGS.sms_providers, ...(raw?.sms_providers ?? {}) },
+    auth_methods: { ...DEFAULT_PLATFORM_SETTINGS.auth_methods, ...(raw?.auth_methods ?? {}) },
+    maps: { ...DEFAULT_PLATFORM_SETTINGS.maps, ...(raw?.maps ?? {}) },
     whatsapp: { ...DEFAULT_PLATFORM_SETTINGS.whatsapp, ...(raw?.whatsapp ?? {}) },
     gateways: {
       ...DEFAULT_PLATFORM_SETTINGS.gateways,
@@ -1823,34 +1845,54 @@ function SettingsAndTemplatesSection({ mode }: { mode: string }) {
     }
   }
 
-  function handleScanUnusedFiles() {
+  async function handleScanUnusedFiles() {
     setScanningStorage(true);
     setScanResult(null);
     setDeleteNotice(null);
-    setTimeout(() => {
-      setScanningStorage(false);
-      setScanResult({
-        scannedFiles: 1482,
-        unusedFiles: 47,
-        reclaimableBytes: "184.6 MB",
-        completedAt: new Date().toLocaleTimeString(),
+    try {
+      const res = await api<{
+        data: {
+          scannedFiles: number;
+          unusedFiles: number;
+          reclaimableBytes: string;
+          reclaimableBytesRaw: number;
+          completedAt: string;
+        };
+      }>("/api/v1/platform/storage/scan", {
+        method: "POST",
       });
-    }, 1200);
+      setScanResult(res.data);
+    } catch (err: any) {
+      setToast(err?.message || "Storage scan failed.");
+    } finally {
+      setScanningStorage(false);
+    }
   }
 
-  function handleDeleteUnusedFiles() {
+  async function handleDeleteUnusedFiles() {
     if (!scanResult || scanResult.unusedFiles === 0) {
       setToast("Run a scan first to identify unused files eligible for deletion.");
       return;
     }
     setDeletingStorage(true);
-    setTimeout(() => {
-      setDeletingStorage(false);
-      const reclaimed = scanResult.reclaimableBytes;
+    try {
+      const res = await api<{
+        data: {
+          purgedCount: number;
+          reclaimedBytes: string;
+          message: string;
+        };
+      }>("/api/v1/platform/storage/purge", {
+        method: "POST",
+      });
       setScanResult(null);
-      setDeleteNotice(`Successfully purged 47 unreferenced files, reclaiming ${reclaimed} of server disk space.`);
-      setToast(`Storage cleanup complete: ${reclaimed} reclaimed.`);
-    }, 1500);
+      setDeleteNotice(res.data.message);
+      setToast(`Storage cleanup complete: ${res.data.reclaimedBytes} reclaimed.`);
+    } catch (err: any) {
+      setToast(err?.message || "Storage cleanup failed.");
+    } finally {
+      setDeletingStorage(false);
+    }
   }
 
   useEffect(() => {
@@ -2228,6 +2270,22 @@ function SettingsAndTemplatesSection({ mode }: { mode: string }) {
                         }
                         placeholder="© 2026 SelfX Retail Technologies Private Limited. All rights reserved."
                         className="mt-1.5 h-9 w-full rounded-lg border border-slate-200 px-3 text-xs text-slate-900 focus:outline-none focus:border-orange-500"
+                      />
+                    </label>
+                  </div>
+
+                  <div className="rounded-xl border border-slate-200 bg-white p-4">
+                    <h4 className="text-xs font-semibold text-slate-900">Google Maps</h4>
+                    <p className="mt-0.5 text-[11px] text-slate-500">
+                      One key for every store. Tenants cannot set their own key. Restrict it by HTTP referrer in Google Cloud.
+                    </p>
+                    <label className="mt-3 block text-xs font-semibold text-slate-700">
+                      Maps JavaScript API key
+                      <input
+                        value={settings.maps?.api_key ?? ""}
+                        onChange={(e) => setSettings({ ...settings, maps: { api_key: e.target.value.trim() } })}
+                        placeholder="AIza..."
+                        className="mt-1.5 h-9 w-full rounded-lg border border-slate-200 bg-white px-3 font-mono text-xs text-slate-900 focus:outline-none focus:border-orange-500"
                       />
                     </label>
                   </div>
@@ -3935,18 +3993,18 @@ function SettingsAndTemplatesSection({ mode }: { mode: string }) {
           <div className="border-b border-slate-200 bg-white rounded-t-xl px-2 pt-2">
             <div className="flex space-x-1 overflow-x-auto pb-2 scrollbar-thin">
               {[
-                { id: "stripe", name: "Stripe", logo: "/logos/stripe.png" },
-                { id: "razorpay", name: "Razorpay", logo: "/logos/razorpay.png" },
-                { id: "phonepe", name: "PhonePe", logo: "/logos/phonepe.svg" },
-                { id: "paytm", name: "Paytm", logo: "/logos/paytm.svg" },
-                { id: "cashfree", name: "Cashfree", logo: "/logos/cashfree.svg" },
-                { id: "payu", name: "PayU", logo: "/logos/payu.svg" },
-                { id: "paypal", name: "PayPal", logo: "/logos/paypal.svg" },
-                { id: "paystack", name: "Paystack", logo: "/logos/paystack.svg" },
-                { id: "flutterwave", name: "Flutterwave", logo: "/logos/flutterwave.svg" },
-                { id: "mollie", name: "Mollie", logo: "/logos/mollie.svg" },
-                { id: "dodopayments", name: "Dodo Payments", logo: "/logos/dodopayments.svg" },
-                { id: "bank_transfer", name: "Bank Transfer", logo: "/logos/bank.svg" },
+                { id: "stripe", name: "Stripe", logo: "/superadmin/logos/stripe.png" },
+                { id: "razorpay", name: "Razorpay", logo: "/superadmin/logos/razorpay.png" },
+                { id: "phonepe", name: "PhonePe", logo: "/superadmin/logos/phonepe.svg" },
+                { id: "paytm", name: "Paytm", logo: "/superadmin/logos/paytm.svg" },
+                { id: "cashfree", name: "Cashfree", logo: "/superadmin/logos/cashfree.svg" },
+                { id: "payu", name: "PayU", logo: "/superadmin/logos/payu.svg" },
+                { id: "paypal", name: "PayPal", logo: "/superadmin/logos/paypal.svg" },
+                { id: "paystack", name: "Paystack", logo: "/superadmin/logos/paystack.svg" },
+                { id: "flutterwave", name: "Flutterwave", logo: "/superadmin/logos/flutterwave.svg" },
+                { id: "mollie", name: "Mollie", logo: "/superadmin/logos/mollie.svg" },
+                { id: "dodopayments", name: "Dodo Payments", logo: "/superadmin/logos/dodopayments.svg" },
+                { id: "bank_transfer", name: "Bank Transfer", logo: "/superadmin/logos/bank.svg" },
               ].map((gw) => {
                 const isSelected = activeGateway === gw.id;
                 const isEnabled = Boolean(settings.gateways[gw.id]?.enabled);
@@ -3996,7 +4054,7 @@ function SettingsAndTemplatesSection({ mode }: { mode: string }) {
             > = {
               stripe: {
                 name: "Stripe",
-                logo: "/logos/stripe.png",
+                logo: "/superadmin/logos/stripe.png",
                 desc: "Global card checkout, 3D Secure, Apple Pay, Google Pay, and recurring subscription mandates.",
                 currencies: ["INR", "USD", "EUR", "GBP", "AED", "SGD", "AUD", "CAD"],
                 fields: [
@@ -4014,7 +4072,7 @@ function SettingsAndTemplatesSection({ mode }: { mode: string }) {
               },
               razorpay: {
                 name: "Razorpay",
-                logo: "/logos/razorpay.png",
+                logo: "/superadmin/logos/razorpay.png",
                 desc: "India standard UPI, Netbanking, Cards, Wallets, and recurring e-mandates with instant webhooks.",
                 currencies: ["INR", "USD", "EUR", "GBP", "AED", "SGD"],
                 fields: [
@@ -4032,7 +4090,7 @@ function SettingsAndTemplatesSection({ mode }: { mode: string }) {
               },
               phonepe: {
                 name: "PhonePe PG",
-                logo: "/logos/phonepe.svg",
+                logo: "/superadmin/logos/phonepe.svg",
                 desc: "Direct UPI intent, dynamic QR, cards, and netbanking for high-conversion retail checkouts in India.",
                 currencies: ["INR"],
                 fields: [
@@ -4050,7 +4108,7 @@ function SettingsAndTemplatesSection({ mode }: { mode: string }) {
               },
               paytm: {
                 name: "Paytm Business",
-                logo: "/logos/paytm.svg",
+                logo: "/superadmin/logos/paytm.svg",
                 desc: "Paytm All-In-One payment gateway, wallet, postpaid, and dynamic UPI QR soundbox integration.",
                 currencies: ["INR"],
                 fields: [
@@ -4068,7 +4126,7 @@ function SettingsAndTemplatesSection({ mode }: { mode: string }) {
               },
               cashfree: {
                 name: "Cashfree",
-                logo: "/logos/cashfree.svg",
+                logo: "/superadmin/logos/cashfree.svg",
                 desc: "Instant payment gateway checkout, UPI auto-collect, payment links, and multi-vendor splits.",
                 currencies: ["INR", "USD"],
                 fields: [
@@ -4085,7 +4143,7 @@ function SettingsAndTemplatesSection({ mode }: { mode: string }) {
               },
               payu: {
                 name: "PayU",
-                logo: "/logos/payu.svg",
+                logo: "/superadmin/logos/payu.svg",
                 desc: "Enterprise payment suite with 100+ payment options, EMI, and international card processing.",
                 currencies: ["INR"],
                 fields: [
@@ -4102,7 +4160,7 @@ function SettingsAndTemplatesSection({ mode }: { mode: string }) {
               },
               paypal: {
                 name: "PayPal",
-                logo: "/logos/paypal.svg",
+                logo: "/superadmin/logos/paypal.svg",
                 desc: "Global cross-border digital payments with PayPal wallet balances and international credit cards.",
                 currencies: ["USD", "EUR", "GBP", "AUD", "CAD", "SGD"],
                 fields: [
@@ -4119,7 +4177,7 @@ function SettingsAndTemplatesSection({ mode }: { mode: string }) {
               },
               paystack: {
                 name: "Paystack",
-                logo: "/logos/paystack.svg",
+                logo: "/superadmin/logos/paystack.svg",
                 desc: "Modern payments across Africa (Nigeria, Ghana, Kenya, South Africa) with local cards and mobile money.",
                 currencies: ["NGN", "GHS", "KES", "ZAR", "USD"],
                 fields: [
@@ -4136,7 +4194,7 @@ function SettingsAndTemplatesSection({ mode }: { mode: string }) {
               },
               flutterwave: {
                 name: "Flutterwave",
-                logo: "/logos/flutterwave.svg",
+                logo: "/superadmin/logos/flutterwave.svg",
                 desc: "Pan-African and global multi-currency checkout, mobile money, and cross-border bank settlements.",
                 currencies: ["USD", "NGN", "KES", "GHS", "ZAR", "EUR", "GBP"],
                 fields: [
@@ -4154,7 +4212,7 @@ function SettingsAndTemplatesSection({ mode }: { mode: string }) {
               },
               mollie: {
                 name: "Mollie",
-                logo: "/logos/mollie.svg",
+                logo: "/superadmin/logos/mollie.svg",
                 desc: "European localized payment processing: iDEAL, Bancontact, SEPA Direct Debit, and cards.",
                 currencies: ["EUR", "GBP", "USD"],
                 fields: [
@@ -4170,7 +4228,7 @@ function SettingsAndTemplatesSection({ mode }: { mode: string }) {
               },
               dodopayments: {
                 name: "Dodo Payments",
-                logo: "/logos/dodopayments.svg",
+                logo: "/superadmin/logos/dodopayments.svg",
                 desc: "Modern merchant-of-record payments built for digital platforms and automated subscription billing.",
                 currencies: ["USD", "EUR", "GBP", "INR"],
                 fields: [
@@ -4187,7 +4245,7 @@ function SettingsAndTemplatesSection({ mode }: { mode: string }) {
               },
               bank_transfer: {
                 name: "Direct Bank Transfer",
-                logo: "/logos/bank.svg",
+                logo: "/superadmin/logos/bank.svg",
                 desc: "Direct offline NEFT / RTGS / IMPS wire transfers with manual UTR submission and reconciliation.",
                 currencies: ["INR", "USD", "EUR", "GBP", "AED"],
                 fields: [
@@ -4550,17 +4608,26 @@ function SettingsAndTemplatesSection({ mode }: { mode: string }) {
                       <button
                         type="button"
                         disabled={testStatus?.status === "testing"}
-                        onClick={() => {
+                        onClick={async () => {
                           setGatewayTestStatus((prev) => ({
                             ...prev,
-                            [gwId]: { status: "testing", msg: "Testing API handshake..." },
+                            [gwId]: { status: "testing", msg: "Testing API handshake with gateway..." },
                           }));
-                          setTimeout(() => {
+                          try {
+                            const res = await api<{ data: { success: boolean; message: string } }>(
+                              `/api/v1/platform/gateways/${gwId}/test`,
+                              { method: "POST" }
+                            );
                             setGatewayTestStatus((prev) => ({
                               ...prev,
-                              [gwId]: { status: "success", msg: "Credentials verified. API returned 200 OK." },
+                              [gwId]: { status: "success", msg: res.data.message },
                             }));
-                          }, 800);
+                          } catch (err: any) {
+                            setGatewayTestStatus((prev) => ({
+                              ...prev,
+                              [gwId]: { status: "error", msg: err?.message || "Gateway test failed. Please verify credentials." },
+                            }));
+                          }
                         }}
                         className="inline-flex h-8 w-full items-center justify-center gap-2 rounded-lg border border-slate-200 bg-slate-50 text-xs font-semibold text-slate-700 hover:bg-slate-100 disabled:opacity-50"
                       >
@@ -4956,12 +5023,12 @@ function SettingsAndTemplatesSection({ mode }: { mode: string }) {
 
                 <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-3 pt-1">
                   {[
-                    { name: "Postmark", host: "smtp.postmarkapp.com", port: 587, enc: "tls" },
-                    { name: "SendGrid", host: "smtp.sendgrid.net", port: 587, enc: "tls" },
-                    { name: "AWS SES", host: "email-smtp.us-east-1.amazonaws.com", port: 587, enc: "tls" },
-                    { name: "Google Workspace", host: "smtp.gmail.com", port: 587, enc: "tls" },
-                    { name: "Microsoft 365", host: "smtp.office365.com", port: 587, enc: "tls" },
-                    { name: "Mailgun", host: "smtp.mailgun.org", port: 587, enc: "tls" },
+                    { name: "Postmark", host: "smtp.postmarkapp.com", port: 587, enc: "tls", logo: "/superadmin/brands/postmark.svg" },
+                    { name: "SendGrid", host: "smtp.sendgrid.net", port: 587, enc: "tls", logo: "/superadmin/brands/sendgrid.png" },
+                    { name: "AWS SES", host: "email-smtp.us-east-1.amazonaws.com", port: 587, enc: "tls", logo: "/superadmin/brands/amazon.svg" },
+                    { name: "Google Workspace", host: "smtp.gmail.com", port: 587, enc: "tls", logo: "/superadmin/brands/google.svg" },
+                    { name: "Microsoft 365", host: "smtp.office365.com", port: 587, enc: "tls", logo: "/superadmin/brands/microsoft.svg" },
+                    { name: "Mailgun", host: "smtp.mailgun.org", port: 587, enc: "tls", logo: "/superadmin/brands/mailgun.svg" },
                   ].map((pr) => (
                     <button
                       key={pr.name}
@@ -4978,13 +5045,19 @@ function SettingsAndTemplatesSection({ mode }: { mode: string }) {
                         });
                         setToast(`Loaded ${pr.name} server settings.`);
                       }}
-                      className="rounded-lg border border-slate-200 bg-slate-50/50 p-2.5 text-left hover:bg-white hover:border-blue-400 hover:shadow-sm transition"
+                      className="flex items-center gap-2 rounded-lg border border-slate-200 bg-white p-2.5 text-left hover:border-slate-400"
                     >
-                      <span className="font-semibold text-xs text-slate-800 block">
-                        {pr.name}
-                      </span>
-                      <span className="font-mono text-[10px] text-slate-400 block truncate mt-0.5">
-                        {pr.host}:{pr.port}
+                      <img
+                        src={pr.logo}
+                        alt={pr.name}
+                        className="h-5 w-10 shrink-0 object-contain"
+                        onError={(e) => {
+                          (e.currentTarget as HTMLElement).style.display = "none";
+                        }}
+                      />
+                      <span>
+                        <span className="block text-xs font-semibold text-slate-800">{pr.name}</span>
+                        <span className="mt-0.5 block truncate font-mono text-[10px] text-slate-400">{pr.host}:{pr.port}</span>
                       </span>
                     </button>
                   ))}
@@ -5236,10 +5309,15 @@ function SettingsAndTemplatesSection({ mode }: { mode: string }) {
                   onClick={() => {
                     setTestingMail(true);
                     setTestMailNotice(null);
-                    setTimeout(() => {
-                      setTestingMail(false);
-                      setTestMailNotice(`Test message dispatched to ${testMailRecipient} via ${settings.mail.host}:${settings.mail.port}.`);
-                    }, 900);
+                    void api<{ data?: { sent?: boolean } }>("/api/v1/platform/mail/test", {
+                      method: "POST",
+                      body: JSON.stringify({ to: testMailRecipient }),
+                    })
+                      .then(() => setTestMailNotice(`The mail server accepted a test for ${testMailRecipient}.`))
+                      .catch((err: { error?: { message?: string } }) => {
+                        setTestMailNotice(err?.error?.message ?? "The mail server did not accept the test.");
+                      })
+                      .finally(() => setTestingMail(false));
                   }}
                   className="inline-flex h-9 w-full items-center justify-center gap-2 rounded-lg bg-slate-900 px-4 text-xs font-semibold text-white hover:bg-slate-800 disabled:opacity-50"
                 >
@@ -5295,200 +5373,12 @@ function SettingsAndTemplatesSection({ mode }: { mode: string }) {
        * 4. SMS GATEWAY SETTINGS (mode === "sms-settings")
        * ==================================================================== */}
       {mode === "sms-settings" ? (
-        <div className="space-y-6">
-          <div className="flex flex-wrap items-center justify-between gap-4">
-            <div>
-              <h1 className="text-xl font-semibold tracking-tight text-slate-900">
-                SMS Gateway &amp; DLT Compliance Settings
-              </h1>
-              <p className="mt-0.5 text-xs text-slate-500">
-                Configure SMS routing providers, TRAI DLT Entity registration, and transactional headers for customer OTPs and bills.
-              </p>
-            </div>
-            <div className="flex items-center gap-2">
-              <span className="inline-flex items-center gap-1.5 rounded-full bg-emerald-50 px-3 py-1 text-xs font-semibold text-emerald-700 border border-emerald-200">
-                <CheckCircle2 className="h-3.5 w-3.5" />
-                DLT Compliant Header Active
-              </span>
-            </div>
-          </div>
-
-          <div className="grid gap-6 lg:grid-cols-3">
-            <div className="space-y-6 lg:col-span-2">
-              <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm space-y-4">
-                <h2 className="text-sm font-semibold text-slate-900 border-b border-slate-100 pb-3">
-                  SMS Provider Configuration
-                </h2>
-
-                <div className="grid gap-4 sm:grid-cols-2">
-                  <div>
-                    <label className="block text-xs font-semibold text-slate-700">
-                      SMS Gateway Provider
-                    </label>
-                    <select
-                      value={settings.sms.provider}
-                      onChange={(e) =>
-                        setSettings({
-                          ...settings,
-                          sms: { ...settings.sms, provider: e.target.value },
-                        })
-                      }
-                      className="mt-1 h-9 w-full rounded-lg border border-slate-200 bg-white px-3 text-xs text-slate-900 focus:border-blue-500 focus:outline-none"
-                    >
-                      <option value="msg91">MSG91 Enterprise (DLT India)</option>
-                      <option value="twilio">Twilio Programmable SMS</option>
-                      <option value="fast2sms">Fast2SMS (Quick DLT)</option>
-                      <option value="awssns">Amazon SNS Worldwide</option>
-                    </select>
-                  </div>
-
-                  <div>
-                    <label className="block text-xs font-semibold text-slate-700">
-                      Approved Sender ID (Header)
-                    </label>
-                    <input
-                      maxLength={6}
-                      value={settings.sms.sender_id}
-                      onChange={(e) =>
-                        setSettings({
-                          ...settings,
-                          sms: { ...settings.sms, sender_id: e.target.value.toUpperCase() },
-                        })
-                      }
-                      placeholder="e.g. SELFXR"
-                      className="mt-1 h-9 w-full rounded-lg border border-slate-200 px-3 text-xs font-mono uppercase text-slate-900 focus:border-blue-500 focus:outline-none"
-                    />
-                    <span className="mt-1 block text-[11px] text-slate-400">
-                      Exactly 6 alpha characters registered on the telecom DLT portal.
-                    </span>
-                  </div>
-
-                  <div>
-                    <label className="block text-xs font-semibold text-slate-700">
-                      DLT Principal Entity ID (19 Digits)
-                    </label>
-                    <input
-                      value={settings.sms.dlt_entity_id}
-                      onChange={(e) =>
-                        setSettings({
-                          ...settings,
-                          sms: { ...settings.sms, dlt_entity_id: e.target.value },
-                        })
-                      }
-                      placeholder="e.g. 1201159876543210001"
-                      className="num mt-1 h-9 w-full rounded-lg border border-slate-200 px-3 text-xs font-mono text-slate-900 focus:border-blue-500 focus:outline-none"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="block text-xs font-semibold text-slate-700">
-                      API Auth Key
-                    </label>
-                    <input
-                      type="password"
-                      value={settings.sms.api_key}
-                      onChange={(e) =>
-                        setSettings({
-                          ...settings,
-                          sms: { ...settings.sms, api_key: e.target.value },
-                        })
-                      }
-                      placeholder="Enter SMS API Key..."
-                      className="mt-1 h-9 w-full rounded-lg border border-slate-200 px-3 text-xs font-mono text-slate-900 focus:border-blue-500 focus:outline-none"
-                    />
-                  </div>
-
-                  <div className="sm:col-span-2">
-                    <label className="block text-xs font-semibold text-slate-700">
-                      Delivery Report (DLR) Webhook
-                    </label>
-                    <div className="flex items-center gap-2 mt-1">
-                      <input
-                        readOnly
-                        value={settings.sms.webhook_url ?? "https://api.selfx.in/api/v1/webhooks/sms/delivery-report"}
-                        className="h-9 w-full rounded-lg border border-slate-200 bg-slate-50 px-3 text-xs font-mono text-slate-700"
-                      />
-                      <button
-                        type="button"
-                        onClick={() => {
-                          void navigator.clipboard.writeText(settings.sms.webhook_url ?? "https://api.selfx.in/api/v1/webhooks/sms/delivery-report");
-                          setToast("Copied SMS Webhook URL.");
-                        }}
-                        className="h-9 shrink-0 rounded-lg border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-700 hover:bg-slate-50"
-                      >
-                        Copy
-                      </button>
-                    </div>
-                  </div>
-                </div>
-
-                <div className="flex justify-end pt-2">
-                  <button
-                    type="button"
-                    disabled={saving}
-                    onClick={() => void saveSettings(settings, "SMS gateway settings")}
-                    className="inline-flex h-9 items-center gap-1.5 rounded-lg bg-blue-600 px-4 text-xs font-semibold text-white hover:bg-blue-700 disabled:opacity-50"
-                  >
-                    <Save className="h-3.5 w-3.5" />
-                    <span>Save SMS Settings</span>
-                  </button>
-                </div>
-              </div>
-            </div>
-
-            {/* Test SMS Box */}
-            <div className="space-y-6">
-              <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm space-y-4">
-                <div className="flex items-center gap-2 border-b border-slate-100 pb-3">
-                  <Smartphone className="h-4 w-4 text-blue-600" />
-                  <h3 className="text-sm font-semibold text-slate-900">
-                    Send Test SMS
-                  </h3>
-                </div>
-
-                <p className="text-xs text-slate-500">
-                  Verify carrier delivery and sender ID approval by sending an instant verification SMS.
-                </p>
-
-                <div>
-                  <label className="block text-xs font-semibold text-slate-700">
-                    Mobile Number (With Country Code)
-                  </label>
-                  <input
-                    type="tel"
-                    value={testSmsPhone}
-                    onChange={(e) => setTestSmsPhone(e.target.value)}
-                    placeholder="+919876543210"
-                    className="mt-1 h-9 w-full rounded-lg border border-slate-200 px-3 text-xs text-slate-900 focus:border-blue-500 focus:outline-none"
-                  />
-                </div>
-
-                <button
-                  type="button"
-                  disabled={testingSms || !testSmsPhone}
-                  onClick={() => {
-                    setTestingSms(true);
-                    setTestSmsNotice(null);
-                    setTimeout(() => {
-                      setTestingSms(false);
-                      setTestSmsNotice(`Test SMS dispatched to ${testSmsPhone} using header ${settings.sms.sender_id}.`);
-                    }, 800);
-                  }}
-                  className="inline-flex h-9 w-full items-center justify-center gap-2 rounded-lg bg-slate-900 px-4 text-xs font-semibold text-white hover:bg-slate-800 disabled:opacity-50"
-                >
-                  <Send className={`h-3.5 w-3.5 ${testingSms ? "animate-pulse" : ""}`} />
-                  <span>{testingSms ? "Sending..." : "Dispatch Test SMS"}</span>
-                </button>
-
-                {testSmsNotice ? (
-                  <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-3 text-xs font-semibold text-emerald-800">
-                    {testSmsNotice}
-                  </div>
-                ) : null}
-              </div>
-            </div>
-          </div>
-        </div>
+        <SmsSettingsPanel
+          settings={settings}
+          setSettings={(next) => setSettings(next as PlatformSettingsData)}
+          saveSettings={(next, label) => saveSettings(next as PlatformSettingsData, label)}
+          saving={saving}
+        />
       ) : null}
 
       {/* ====================================================================
@@ -5506,9 +5396,9 @@ function SettingsAndTemplatesSection({ mode }: { mode: string }) {
               </p>
             </div>
             <div className="flex items-center gap-2">
-              <span className="inline-flex items-center gap-1.5 rounded-full bg-emerald-50 px-3 py-1 text-xs font-semibold text-emerald-700 border border-emerald-200">
+              <span className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-semibold border ${settings.whatsapp.enabled && settings.whatsapp.access_token ? "bg-emerald-50 text-emerald-700 border-emerald-200" : "bg-slate-50 text-slate-600 border-slate-200"}`}>
                 <CheckCircle2 className="h-3.5 w-3.5" />
-                Meta Graph API v19.0 Active
+                {settings.whatsapp.enabled && settings.whatsapp.access_token ? "WhatsApp credentials saved" : "WhatsApp is not connected"}
               </span>
             </div>
           </div>
@@ -5645,13 +5535,20 @@ function SettingsAndTemplatesSection({ mode }: { mode: string }) {
                 <button
                   type="button"
                   disabled={testingWa || !testWaPhone}
-                  onClick={() => {
+                  onClick={async () => {
                     setTestingWa(true);
                     setTestWaNotice(null);
-                    setTimeout(() => {
+                    try {
+                      const res = await api<{ data: { message: string } }>("/api/v1/platform/whatsapp/test", {
+                        method: "POST",
+                        body: JSON.stringify({ phone: testWaPhone }),
+                      });
+                      setTestWaNotice(res.data.message);
+                    } catch (err: any) {
+                      setTestWaNotice(err?.message || "WhatsApp dispatch test failed.");
+                    } finally {
                       setTestingWa(false);
-                      setTestWaNotice(`Test template message dispatched to ${testWaPhone} via Phone Number ID ${settings.whatsapp.phone_number_id}.`);
-                    }, 800);
+                    }
                   }}
                   className="inline-flex h-9 w-full items-center justify-center gap-2 rounded-lg bg-emerald-600 px-4 text-xs font-semibold text-white hover:bg-emerald-700 disabled:opacity-50"
                 >

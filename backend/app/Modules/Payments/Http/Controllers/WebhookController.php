@@ -29,6 +29,10 @@ class WebhookController
 
     public function testCapture(Request $request, string $payment): JsonResponse
     {
+        if (! app()->environment('local', 'testing') && ! $request->user()) {
+            return ApiResponse::error('permission.denied', 'Test capture endpoint is disabled in production.', 403);
+        }
+
         $data = $request->validate([
             'token' => ['required', 'string'],
         ]);

@@ -50,8 +50,11 @@ const groups: NavGroup[] = [
     ],
   },
   {
-    label: "Catalog",
-    items: [{ href: "/catalog", label: "Products", icon: Package }],
+    label: "Catalog & Hardware",
+    items: [
+      { href: "/catalog", label: "Products", icon: Package },
+      { href: "/hardware", label: "SelfX Hardware", icon: Cpu },
+    ],
   },
   {
     label: "Payments",
@@ -78,6 +81,7 @@ const groups: NavGroup[] = [
     items: [
       { href: "/ai-settings", label: "AI & LLM Gateway", icon: Cpu },
       { href: "/general-settings", label: "General Settings", icon: Settings },
+      { href: "/push-notifications", label: "Push Notifications", icon: Bell },
       { href: "/legal", label: "Legal Entity", icon: Landmark },
       { href: "/email-templates", label: "Email Templates", icon: Mail },
       { href: "/sms-templates", label: "SMS Templates", icon: MessageSquareCode },
@@ -107,18 +111,26 @@ export function AdminShell({ children }: { children: ReactNode }) {
   const pathname = usePathname();
   const [userName, setUserName] = useState("Super Admin");
   const [authState, setAuthState] = useState<"checking" | "authenticated" | "unauthenticated">("checking");
-  const [platformLogo, setPlatformLogo] = useState<string>("/logo.png");
+  const [platformLogo, setPlatformLogo] = useState<string>("/superadmin/logo.png");
 
   useEffect(() => {
+    function normalizeLogo(url: string | null) {
+      if (!url) return "/superadmin/logo.png";
+      if (url.startsWith("/logo") || url.startsWith("/brands") || url.startsWith("/logos")) {
+        return `/superadmin${url}`;
+      }
+      return url;
+    }
+
     const stored = window.localStorage.getItem("selfx.logo");
-    if (stored) setPlatformLogo(stored);
+    if (stored) setPlatformLogo(normalizeLogo(stored));
 
     function onLogoChange(e: Event) {
       const custom = e as CustomEvent<string>;
-      if (custom.detail) setPlatformLogo(custom.detail);
+      if (custom.detail) setPlatformLogo(normalizeLogo(custom.detail));
       else {
         const next = window.localStorage.getItem("selfx.logo");
-        if (next) setPlatformLogo(next);
+        setPlatformLogo(normalizeLogo(next));
       }
     }
     window.addEventListener("selfx-logo-changed", onLogoChange);
