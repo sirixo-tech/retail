@@ -79,7 +79,7 @@ const GATEWAY_CATALOG: GatewayMeta[] = [
       {
         name: "key_id",
         label: "Merchant ID",
-        placeholder: "SIRIXO01",
+        placeholder: "e.g. SIRIXO01 / MERCHANT_ID",
         required: true,
         helper: "Issued in your PhonePe Business Dashboard under Developer Settings.",
       },
@@ -100,7 +100,7 @@ const GATEWAY_CATALOG: GatewayMeta[] = [
       {
         name: "provider_id",
         label: "Provider ID (X-PROVIDER-ID)",
-        placeholder: "SIRIXOPOS",
+        placeholder: "e.g. SIRIXOPOS / PROVIDER_ID",
         helper: "Required for PhonePe Mercury Dynamic UPI QR POS terminals.",
       },
       {
@@ -118,7 +118,7 @@ const GATEWAY_CATALOG: GatewayMeta[] = [
       {
         name: "upi_vpa",
         label: "UPI ID (optional fallback)",
-        placeholder: "SIRIXO01@ybl",
+        placeholder: "e.g. merchant@ybl",
         helper: "Optional fallback VPA if DQR service is unreachable.",
       },
       {

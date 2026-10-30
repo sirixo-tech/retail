@@ -56,11 +56,15 @@ class PaymentGatewayService
                         if (empty($config['provider_id'])) {
                             $config['provider_id'] = $config['x_provider_id'] ?? ($config['store_terminal_id'] ?? null);
                         }
-                        if (empty($config['provider_id']) && ($keyId === 'SIRIXO01' || $keyId === 'SIRIX001')) {
-                            $config['provider_id'] = 'SIRIXOPOS';
-                        }
-                        if (empty($config['upi_vpa']) && ($keyId === 'SIRIXO01' || $keyId === 'SIRIX001')) {
-                            $config['upi_vpa'] = 'SIRIXO01@ybl';
+                        // Smart auto-fill: if user has not explicitly typed VPA, derive or leave for dynamic extraction
+                        if (empty($config['upi_vpa']) && ! empty($keyId)) {
+                            // If it's SIRIXO01, map to its registered VPA; otherwise leave blank so PhonePe signed response provides it
+                            if ($keyId === 'SIRIXO01' || $keyId === 'SIRIX001') {
+                                if (empty($config['provider_id'])) {
+                                    $config['provider_id'] = 'SIRIXOPOS';
+                                }
+                                $config['upi_vpa'] = 'SIRIXO01@ybl';
+                            }
                         }
                     }
 
@@ -89,10 +93,10 @@ class PaymentGatewayService
                 if (! empty($mid) && ! empty($salt)) {
                     $config = array_merge($gwConfig, [
                         'salt_index' => $ph['saltIndex'] ?? ($gwConfig['salt_index'] ?? '1'),
-                        'provider_id' => $gwConfig['provider_id'] ?? ($gwConfig['x_provider_id'] ?? ($gwConfig['store_terminal_id'] ?? 'SIRIXOPOS')),
-                        'store_id' => $gwConfig['store_id'] ?? 'STORE01',
-                        'terminal_id' => $gwConfig['terminal_id'] ?? 'TERM01',
-                        'upi_vpa' => $gwConfig['upi_vpa'] ?? ($store->settings['online_store']['payments']['upiQr']['vpa'] ?? 'SIRIXO01@ybl'),
+                        'provider_id' => $gwConfig['provider_id'] ?? ($gwConfig['x_provider_id'] ?? ($gwConfig['store_terminal_id'] ?? null)),
+                        'store_id' => $gwConfig['store_id'] ?? ($ph['storeId'] ?? 'STORE01'),
+                        'terminal_id' => $gwConfig['terminal_id'] ?? ($ph['terminalId'] ?? 'TERM01'),
+                        'upi_vpa' => $gwConfig['upi_vpa'] ?? ($store->settings['online_store']['payments']['upiQr']['vpa'] ?? null),
                     ]);
                     return [
                         'key_id' => (string) $mid,
@@ -166,10 +170,10 @@ class PaymentGatewayService
                             'mode' => (string) ($platGw['mode'] ?? 'test'),
                             'config' => [
                                 'salt_index' => (string) ($platGw['salt_index'] ?? '1'),
-                                'provider_id' => (string) ($platGw['provider_id'] ?? 'SIRIXOPOS'),
+                                'provider_id' => (string) ($platGw['provider_id'] ?? ''),
                                 'store_id' => (string) ($platGw['store_id'] ?? 'STORE01'),
                                 'terminal_id' => (string) ($platGw['terminal_id'] ?? 'TERM01'),
-                                'upi_vpa' => (string) ($platGw['upi_vpa'] ?? 'SIRIXO01@ybl'),
+                                'upi_vpa' => (string) ($platGw['upi_vpa'] ?? ''),
                             ],
                         ];
                     }
@@ -240,7 +244,7 @@ class PaymentGatewayService
             $providerId = trim((string) (
                 $creds['config']['provider_id']
                 ?? ($creds['config']['x_provider_id']
-                ?? ($creds['config']['store_terminal_id'] ?? 'SIRIXOPOS'))
+                ?? ($creds['config']['store_terminal_id'] ?? ''))
             ));
             $storeDqrId = (string) ($creds['config']['store_id'] ?? 'STORE01');
             $terminalDqrId = (string) ($creds['config']['terminal_id'] ?? 'TERM01');
@@ -517,7 +521,7 @@ class PaymentGatewayService
             $providerId = trim((string) (
                 $creds['config']['provider_id']
                 ?? ($creds['config']['x_provider_id']
-                ?? ($creds['config']['store_terminal_id'] ?? 'SIRIXOPOS'))
+                ?? ($creds['config']['store_terminal_id'] ?? ''))
             ));
             $storeDqrId = (string) ($creds['config']['store_id'] ?? 'STORE01');
             $terminalDqrId = (string) ($creds['config']['terminal_id'] ?? 'TERM01');
@@ -558,9 +562,13 @@ class PaymentGatewayService
                     $body = $res->json();
                     if (! empty($body['success']) && ! empty($body['data']['qrString'])) {
                         $qrString = (string) $body['data']['qrString'];
-                        $vpa = 'SIRIXO01@ybl';
+                        $vpa = (string) ($creds['config']['upi_vpa'] ?? '');
                         if (preg_match('/[?&]pa=([^&]+)/', $qrString, $m)) {
                             $vpa = urldecode($m[1]);
+                        }
+                        $payeeName = (string) ($creds['config']['merchant_name'] ?? ($store->name ?: 'Store'));
+                        if (preg_match('/[?&]pn=([^&]+)/', $qrString, $m)) {
+                            $payeeName = urldecode($m[1]);
                         }
 
                         return [
@@ -569,7 +577,7 @@ class PaymentGatewayService
                             'transaction_id' => $txnId,
                             'qr_string' => $qrString,
                             'vpa' => $vpa,
-                            'payee_name' => 'SIRIXO',
+                            'payee_name' => $payeeName,
                         ];
                     }
                 }
@@ -582,9 +590,10 @@ class PaymentGatewayService
         $vpa = trim((string) (
             ($creds['config']['upi_vpa'] ?? null)
             ?: ($store->settings['gateway_configs']['phonepe']['upi_vpa']
-            ?? 'SIRIXO01@ybl')
+            ?? ($store->settings['online_store']['payments']['upiQr']['vpa']
+            ?? ''))
         ));
-        $payee = $store->name ?: 'SIRIXO';
+        $payee = (string) ($creds['config']['merchant_name'] ?? ($store->name ?: 'Store'));
         $formattedAmount = number_format($amountPaise / 100, 2, '.', '');
         $genericUri = "upi://pay?pa={$vpa}&pn=" . rawurlencode($payee) . "&am={$formattedAmount}&cu=INR&tn=" . rawurlencode("POS Counter Bill {$orderRef}");
 
@@ -615,7 +624,7 @@ class PaymentGatewayService
             $providerId = trim((string) (
                 $creds['config']['provider_id']
                 ?? ($creds['config']['x_provider_id']
-                ?? ($creds['config']['store_terminal_id'] ?? 'SIRIXOPOS'))
+                ?? ($creds['config']['store_terminal_id'] ?? ''))
             ));
 
             $endpoint = "/v3/transaction/{$merchantId}/{$transactionId}/status";
@@ -696,7 +705,7 @@ class PaymentGatewayService
                 $providerId = trim((string) (
                     $creds['config']['provider_id']
                     ?? ($creds['config']['x_provider_id']
-                    ?? ($creds['config']['store_terminal_id'] ?? 'SIRIXOPOS'))
+                    ?? ($creds['config']['store_terminal_id'] ?? ''))
                 ));
 
                 $txnId = 'TXN_' . $order->number . '_' . substr(str_replace('-', '', (string) $order->id), 0, 8);

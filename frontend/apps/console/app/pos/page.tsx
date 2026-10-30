@@ -279,8 +279,8 @@ function PosScreen() {
   const [countedRupees, setCountedRupees] = useState("");
   const [noteCounts, setNoteCounts] = useState<Record<number, string>>({});
   const [page, setPage] = useState(1);
-  const [storeUpiVpa, setStoreUpiVpa] = useState<string>("SIRIXO01@ybl");
-  const [storePayeeName, setStorePayeeName] = useState<string>("SIRIXO");
+  const [storeUpiVpa, setStoreUpiVpa] = useState<string>("");
+  const [storePayeeName, setStorePayeeName] = useState<string>("");
   const [posUpiQrUrl, setPosUpiQrUrl] = useState<string | null>(null);
   const [activePosTxnId, setActivePosTxnId] = useState<string | null>(null);
   const [qrGenerating, setQrGenerating] = useState(false);
@@ -1234,8 +1234,8 @@ function PosScreen() {
     const w = window.open("", "_blank", "width=320,height=480");
     if (!w) return;
     const totalStr = (totalDuePaise / 100).toFixed(2);
-    const vpaStr = storeUpiVpa || "SIRIXO01@ybl";
-    const nameStr = storePayeeName || "SIRIXO";
+    const vpaStr = storeUpiVpa || "";
+    const nameStr = storePayeeName || storeName || "Store";
     w.document.write(`
       <!DOCTYPE html>
       <html>
@@ -1308,10 +1308,12 @@ function PosScreen() {
           if (!cancelled) setPosUpiQrUrl(url);
         } else {
           // Local fallback
-          const vpa = storeUpiVpa || "SIRIXO01@ybl";
+          const vpa = storeUpiVpa || "";
           const amount = (totalDuePaise / 100).toFixed(2);
-          const payee = encodeURIComponent(storePayeeName || "SIRIXO");
-          const uri = `upi://pay?pa=${encodeURIComponent(vpa)}&pn=${payee}&am=${amount}&cu=INR&tn=${encodeURIComponent(posTempOrderRef)}`;
+          const payee = encodeURIComponent(storePayeeName || storeName || "Store");
+          const uri = vpa
+            ? `upi://pay?pa=${encodeURIComponent(vpa)}&pn=${payee}&am=${amount}&cu=INR&tn=${encodeURIComponent(posTempOrderRef)}`
+            : `upi://pay?pn=${payee}&am=${amount}&cu=INR&tn=${encodeURIComponent(posTempOrderRef)}`;
           const url = await QRCode.toDataURL(uri, {
             width: 280,
             margin: 1,
@@ -1322,10 +1324,12 @@ function PosScreen() {
       })
       .catch(async () => {
         if (cancelled) return;
-        const vpa = storeUpiVpa || "SIRIXO01@ybl";
+        const vpa = storeUpiVpa || "";
         const amount = (totalDuePaise / 100).toFixed(2);
-        const payee = encodeURIComponent(storePayeeName || "SIRIXO");
-        const uri = `upi://pay?pa=${encodeURIComponent(vpa)}&pn=${payee}&am=${amount}&cu=INR&tn=${encodeURIComponent(posTempOrderRef)}`;
+        const payee = encodeURIComponent(storePayeeName || storeName || "Store");
+        const uri = vpa
+          ? `upi://pay?pa=${encodeURIComponent(vpa)}&pn=${payee}&am=${amount}&cu=INR&tn=${encodeURIComponent(posTempOrderRef)}`
+          : `upi://pay?pn=${payee}&am=${amount}&cu=INR&tn=${encodeURIComponent(posTempOrderRef)}`;
         const url = await QRCode.toDataURL(uri, {
           width: 280,
           margin: 1,
@@ -3939,29 +3943,33 @@ function PosScreen() {
             </div>
 
             {/* UPI ID */}
-            <div className="mt-3 text-xs text-slate-600">
-              <span className="text-slate-400">UPI ID: </span>
-              <span className="font-mono font-bold text-slate-800">
-                {storeUpiVpa || "SIRIX001@ybl"}
-              </span>
-            </div>
+            {storeUpiVpa && (
+              <div className="mt-3 text-xs text-slate-600">
+                <span className="text-slate-400">UPI ID: </span>
+                <span className="font-mono font-bold text-slate-800">
+                  {storeUpiVpa}
+                </span>
+              </div>
+            )}
 
             {/* Open UPI App link */}
-            <a
-              href={`upi://pay?pa=${encodeURIComponent(
-                storeUpiVpa || "SIRIX001@ybl"
-              )}&pn=${encodeURIComponent(
-                storePayeeName || "Retail Store"
-              )}&am=${(totalDuePaise / 100).toFixed(2)}&cu=INR&tn=${encodeURIComponent(
-                posTempOrderRef
-              )}`}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="mt-1.5 inline-flex items-center gap-1 text-xs font-semibold text-indigo-600 hover:text-indigo-700 hover:underline cursor-pointer"
-            >
-              <span>Open UPI app</span>
-              <ExternalLink className="h-3 w-3" />
-            </a>
+            {storeUpiVpa && (
+              <a
+                href={`upi://pay?pa=${encodeURIComponent(
+                  storeUpiVpa
+                )}&pn=${encodeURIComponent(
+                  storePayeeName || storeName || "Retail Store"
+                )}&am=${(totalDuePaise / 100).toFixed(2)}&cu=INR&tn=${encodeURIComponent(
+                  posTempOrderRef
+                )}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="mt-1.5 inline-flex items-center gap-1 text-xs font-semibold text-indigo-600 hover:text-indigo-700 hover:underline cursor-pointer"
+              >
+                <span>Open UPI app</span>
+                <ExternalLink className="h-3 w-3" />
+              </a>
+            )}
 
             {/* Waiting status */}
             <div className="mt-3 flex items-center justify-center gap-1.5 text-xs text-slate-400">
