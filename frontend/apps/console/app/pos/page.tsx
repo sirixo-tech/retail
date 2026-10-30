@@ -3,6 +3,7 @@
 import { formatInr } from "@selfx/types";
 import {
   AlertCircle,
+  Banknote,
   BarChart3,
   Building2,
   Calculator,
@@ -11,7 +12,9 @@ import {
   ChevronDown,
   ChevronLeft,
   ChevronRight,
+  CircleDot,
   Clock,
+  CreditCard,
   ExternalLink,
   FileText,
   Filter,
@@ -28,6 +31,7 @@ import {
   Phone,
   Plus,
   Printer,
+  QrCode,
   RefreshCw,
   RotateCcw,
   Scale,
@@ -37,6 +41,7 @@ import {
   Settings,
   ShoppingBag,
   ShoppingCart,
+  Smartphone,
   Store,
   Tag,
   Trash2,
@@ -257,9 +262,14 @@ function PosScreen() {
   const [customers, setCustomers] = useState<{ id: string; name: string; phone_e164: string | null }[]>([]);
   const [todayPaise, setTodayPaise] = useState(0);
   const [tenderRupees, setTenderRupees] = useState("");
-  const [payMethod, setPayMethod] = useState<"cash" | "upi" | "card" | "khata">("cash");
+  const [payMethod, setPayMethod] = useState<"cash" | "upi" | "card" | "wallet" | "other" | "khata" | "upi_qr">("cash");
+  const [tipPercent, setTipPercent] = useState<number | null>(0);
+  const [customTipRupees, setCustomTipRupees] = useState("");
+  const [upiQrModalOpen, setUpiQrModalOpen] = useState(false);
+  const [qrTimerSeconds, setQrTimerSeconds] = useState(300);
+  const [activeGateways, setActiveGateways] = useState<string[]>([]);
   const [isSplitTender, setIsSplitTender] = useState(false);
-  const [splitPayments, setSplitPayments] = useState<{ method: "cash" | "upi" | "card" | "khata"; amountRupees: string }[]>([
+  const [splitPayments, setSplitPayments] = useState<{ method: "cash" | "upi" | "card" | "wallet" | "other" | "khata"; amountRupees: string }[]>([
     { method: "cash", amountRupees: "" },
     { method: "upi", amountRupees: "" },
   ]);
@@ -386,10 +396,11 @@ function PosScreen() {
         setShiftOpen(shift.data?.status === "open");
       }
       if (receiptRes.ok) {
-        const rData = ((await receiptRes.json()) as { data?: { receipt_footer?: string; pos_settings?: Partial<PosSettings> | null; upi_vpa?: string; payee_name?: string } }).data;
+        const rData = ((await receiptRes.json()) as { data?: { receipt_footer?: string; pos_settings?: Partial<PosSettings> | null; upi_vpa?: string; payee_name?: string; active_payment_gateways?: string[] } }).data;
         if (rData?.receipt_footer != null) setReceiptFooter(rData.receipt_footer);
         if (rData?.upi_vpa) setStoreUpiVpa(rData.upi_vpa);
         if (rData?.payee_name) setStorePayeeName(rData.payee_name);
+        if (rData?.active_payment_gateways) setActiveGateways(rData.active_payment_gateways);
         if (rData?.pos_settings) {
           const merged = { ...loadPosSettings(), ...rData.pos_settings, allowOversell: rData.pos_settings.allowOversell ?? true };
           setSettings(merged);
@@ -785,16 +796,18 @@ function PosScreen() {
       });
     }
     const discountPaise = manualDiscountPaise;
-    const payable = netPayablePaise;
+    const payable = totalDuePaise;
 
     let finalPayments: { method: string; amount_paise: number }[] | undefined = undefined;
     let cashTender = 0;
+
+    const actualMethod = payMethod === "upi_qr" ? "upi" : payMethod;
 
     if (isSplitTender) {
       const activeRows = splitPayments
         .filter((row) => Number(row.amountRupees) > 0)
         .map((row) => ({
-          method: row.method,
+          method: (row.method as string) === "upi_qr" ? "upi" : row.method,
           amount_paise: Math.round(Number(row.amountRupees) * 100),
         }));
       const enteredTotal = activeRows.reduce((sum, r) => sum + r.amount_paise, 0);
@@ -807,9 +820,9 @@ function PosScreen() {
       finalPayments = activeRows;
     } else {
       const typed = Math.round(Number(tenderRupees || 0) * 100);
-      cashTender = method === "cash" ? Math.max(typed, payable) : 0;
-      if (method !== "cash") {
-        finalPayments = [{ method, amount_paise: payable }];
+      cashTender = actualMethod === "cash" ? Math.max(typed, payable) : 0;
+      if (actualMethod !== "cash") {
+        finalPayments = [{ method: actualMethod, amount_paise: payable }];
       }
     }
 
@@ -1165,19 +1178,107 @@ function PosScreen() {
   );
   const netPayablePaise = Math.max(0, total - manualDiscountPaise + extraTaxPaise + shippingPaise);
 
+  const tipPaise = useMemo(() => {
+    if (customTipRupees !== "" && !isNaN(Number(customTipRupees))) {
+      return Math.round(Number(customTipRupees) * 100);
+    }
+    if (tipPercent && tipPercent > 0) {
+      return Math.round((netPayablePaise * tipPercent) / 100);
+    }
+    return 0;
+  }, [netPayablePaise, tipPercent, customTipRupees]);
+
+  const totalDuePaise = netPayablePaise + tipPaise;
+
+  const posTempOrderRef = useMemo(() => {
+    const d = new Date();
+    const y = d.getFullYear();
+    const m = String(d.getMonth() + 1).padStart(2, "0");
+    const day = String(d.getDate()).padStart(2, "0");
+    const rand = Math.floor(100000 + Math.random() * 900000);
+    return `ORD-${y}${m}${day}${rand}`;
+  }, [panel]);
+
+  const hasOnlineGateway = useMemo(() => {
+    return (
+      activeGateways.some((g) =>
+        ["phonepe", "paytm", "razorpay", "cashfree", "stripe"].includes(g.toLowerCase())
+      ) || Boolean(storeUpiVpa)
+    );
+  }, [activeGateways, storeUpiVpa]);
+
+  // UPI QR Countdown timer
   useEffect(() => {
-    if (payMethod !== "upi" || netPayablePaise <= 0) {
+    if (!upiQrModalOpen) {
+      setQrTimerSeconds(300);
+      return;
+    }
+    const timer = setInterval(() => {
+      setQrTimerSeconds((prev) => {
+        if (prev <= 1) {
+          clearInterval(timer);
+          return 0;
+        }
+        return prev - 1;
+      });
+    }, 1000);
+    return () => clearInterval(timer);
+  }, [upiQrModalOpen]);
+
+  // Thermal QR Slip Print function
+  const printPosUpiQrSlip = () => {
+    if (!posUpiQrUrl) return;
+    const w = window.open("", "_blank", "width=320,height=480");
+    if (!w) return;
+    const totalStr = (totalDuePaise / 100).toFixed(2);
+    const vpaStr = storeUpiVpa || "SIRIX001@ybl";
+    const nameStr = storePayeeName || "Retail Store";
+    w.document.write(`
+      <!DOCTYPE html>
+      <html>
+        <head>
+          <title>UPI QR Slip</title>
+          <style>
+            body { font-family: monospace; text-align: center; margin: 0; padding: 12px; font-size: 12px; }
+            .store { font-weight: bold; font-size: 15px; margin-bottom: 4px; }
+            .amount { font-size: 20px; font-weight: bold; margin: 8px 0; }
+            .qr { width: 180px; height: 180px; margin: 6px auto; display: block; }
+            .vpa { font-weight: bold; word-break: break-all; margin-top: 6px; }
+            .footer { font-size: 10px; color: #555; margin-top: 10px; border-top: 1px dashed #999; padding-top: 6px; }
+          </style>
+        </head>
+        <body>
+          <div class="store">${nameStr}</div>
+          <div>SCAN TO PAY VIA UPI</div>
+          <div class="amount">₹${totalStr}</div>
+          <img class="qr" src="${posUpiQrUrl}" />
+          <div class="vpa">UPI ID: ${vpaStr}</div>
+          <div class="footer">Scan with GPay, PhonePe, Paytm, BHIM</div>
+          <script>
+            window.onload = function() {
+              window.print();
+              setTimeout(function() { window.close(); }, 500);
+            };
+          </script>
+        </body>
+      </html>
+    `);
+    w.document.close();
+  };
+
+  useEffect(() => {
+    if ((payMethod !== "upi" && payMethod !== "upi_qr") || totalDuePaise <= 0) {
       setPosUpiQrUrl(null);
       return;
     }
-    const vpa = storeUpiVpa || "merchant@ybl";
-    const amount = (netPayablePaise / 100).toFixed(2);
+    const vpa = storeUpiVpa || "SIRIX001@ybl";
+    const amount = (totalDuePaise / 100).toFixed(2);
     const payee = encodeURIComponent(storePayeeName || "Retail Store");
-    const uri = `upi://pay?pa=${encodeURIComponent(vpa)}&pn=${payee}&am=${amount}&cu=INR&tn=${encodeURIComponent("POS Counter Bill")}`;
-    QRCode.toDataURL(uri, { width: 220, margin: 1, color: { dark: "#0f172a", light: "#ffffff" } })
+    const uri = `upi://pay?pa=${encodeURIComponent(vpa)}&pn=${payee}&am=${amount}&cu=INR&tn=${encodeURIComponent(posTempOrderRef)}`;
+    QRCode.toDataURL(uri, { width: 280, margin: 1, color: { dark: "#0f172a", light: "#ffffff" } })
       .then((url) => setPosUpiQrUrl(url))
       .catch(() => {});
-  }, [payMethod, netPayablePaise, storeUpiVpa, storePayeeName]);
+  }, [payMethod, totalDuePaise, storeUpiVpa, storePayeeName, posTempOrderRef]);
 
   useEffect(() => {
     try {
@@ -2740,209 +2841,348 @@ function PosScreen() {
             ) : null}
 
             {panel === "pay" ? (
-              <div>
-                <div className="flex items-center justify-between border-b border-slate-100 bg-slate-900 px-5 py-3.5 text-white">
-                  <div className="flex items-center gap-3">
-                    <h2 className="text-sm font-semibold tracking-tight">Checkout Payment</h2>
-                    <div className="flex rounded-md bg-slate-800 p-0.5 text-xs font-semibold">
-                      <button
-                        type="button"
-                        onClick={() => setIsSplitTender(false)}
-                        className={`rounded px-2.5 py-1 transition ${!isSplitTender ? "bg-indigo-600 text-white" : "text-slate-400 hover:text-white"}`}
-                      >
-                        Single Tender
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setIsSplitTender(true);
-                          if (splitPayments.length === 0 || !splitPayments.some(p => Number(p.amountRupees) > 0)) {
-                            const half = Math.round(netPayablePaise / 200);
-                            setSplitPayments([
-                              { method: "cash", amountRupees: String(half) },
-                              { method: "upi", amountRupees: String((netPayablePaise / 100) - half) },
-                            ]);
-                          }
-                        }}
-                        className={`rounded px-2.5 py-1 transition ${isSplitTender ? "bg-indigo-600 text-white" : "text-slate-400 hover:text-white"}`}
-                      >
-                        Split Tender (Multi-Pay)
-                      </button>
-                    </div>
+              <div className="p-6 sm:p-8">
+                {/* Top Header */}
+                <div className="flex items-center justify-between pb-5 border-b border-slate-100">
+                  <div>
+                    <h2 className="text-xl font-extrabold text-slate-900 tracking-tight">Take payment</h2>
+                    <p className="text-xs text-slate-500 mt-0.5">Select method and complete</p>
                   </div>
-                  <button type="button" onClick={() => setPanel(null)} className="cursor-pointer text-xs text-slate-400 hover:text-white">
-                    Close (Esc)
+                  <button
+                    type="button"
+                    onClick={() => setPanel(null)}
+                    className="h-8 w-8 rounded-full bg-rose-50 hover:bg-rose-100 text-rose-500 flex items-center justify-center transition cursor-pointer"
+                  >
+                    <X className="h-4 w-4" />
                   </button>
                 </div>
 
-                <div className="grid gap-4 p-5 md:grid-cols-[15rem_1fr]">
-                  {/* Summary Sidebar */}
-                  <aside className="rounded-xl border border-indigo-100 bg-indigo-50/50 p-4 space-y-3">
-                    <div>
-                      <p className="text-[10px] font-semibold uppercase tracking-wider text-slate-500">Net Payable</p>
-                      <p className="num mt-0.5 text-2xl font-semibold text-slate-900">{formatInr(netPayablePaise)}</p>
+                {/* 2-Column Grid */}
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6 pt-6">
+                  {/* LEFT COLUMN */}
+                  <div className="space-y-4">
+                    {/* Amount Due Card */}
+                    <div className="rounded-2xl bg-[#0f172a] text-white text-center py-7 px-4 shadow-sm">
+                      <p className="text-[11px] font-bold uppercase tracking-widest text-slate-400">AMOUNT DUE</p>
+                      <p className="num text-4xl font-extrabold tracking-tight mt-1 text-white">
+                        {formatInr(totalDuePaise)}
+                      </p>
                     </div>
 
-                    <div className="border-t border-indigo-100 pt-2 text-xs text-slate-600 space-y-1">
-                      <div className="flex justify-between">
-                        <span>Items Subtotal:</span>
-                        <span className="font-semibold">{formatInr(total)}</span>
+                    {/* TIP Selector */}
+                    <div className="rounded-2xl border border-slate-200/90 p-4 bg-slate-50/40 space-y-3">
+                      <div className="flex items-center gap-1.5 text-slate-500">
+                        <svg className="w-3.5 h-3.5 stroke-[2.5]" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                          <path d="M12 2v20M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6" />
+                        </svg>
+                        <span className="text-[11px] font-bold uppercase tracking-wider">TIP</span>
                       </div>
-                      {manualDiscountPaise > 0 ? (
-                        <div className="flex justify-between text-emerald-700">
-                          <span>Discount ({discountMode === "percent" ? `${discountRupees}%` : "Flat"}):</span>
-                          <span className="font-semibold">-₹{(manualDiscountPaise / 100).toFixed(2)}</span>
+                      <div className="flex items-center gap-1.5">
+                        {[
+                          { label: "None", percent: 0 },
+                          { label: "10%", percent: 10 },
+                          { label: "15%", percent: 15 },
+                          { label: "18%", percent: 18 },
+                          { label: "20%", percent: 20 },
+                        ].map((t) => {
+                          const isSel = (tipPercent === t.percent && customTipRupees === "") || (t.percent === 0 && tipPercent === 0 && customTipRupees === "");
+                          return (
+                            <button
+                              key={t.label}
+                              type="button"
+                              onClick={() => {
+                                setCustomTipRupees("");
+                                setTipPercent(t.percent);
+                              }}
+                              className={`flex-1 py-2 rounded-xl text-xs font-bold transition cursor-pointer ${
+                                isSel
+                                  ? "bg-[#0f172a] text-white shadow-xs"
+                                  : "bg-white border border-slate-200 text-slate-700 hover:bg-slate-100"
+                              }`}
+                            >
+                              {t.label}
+                            </button>
+                          );
+                        })}
+                      </div>
+                      <div className="flex items-center gap-2 pt-1">
+                        <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">CUSTOM</span>
+                        <div className="relative flex-1">
+                          <input
+                            type="text"
+                            value={customTipRupees}
+                            onChange={(e) => {
+                              setCustomTipRupees(e.target.value.replace(/[^0-9.]/g, ""));
+                              setTipPercent(null);
+                            }}
+                            placeholder="0.00"
+                            className="w-full h-9 rounded-xl border border-slate-200 bg-white px-3 text-xs font-bold text-slate-800 outline-none focus:border-indigo-500"
+                          />
                         </div>
-                      ) : null}
-                      {extraTaxPaise > 0 ? (
-                        <div className="flex justify-between">
-                          <span>Tax ({taxPercent}%):</span>
-                          <span className="font-semibold">+{formatInr(extraTaxPaise)}</span>
-                        </div>
-                      ) : null}
-                      {shippingPaise > 0 ? (
-                        <div className="flex justify-between">
-                          <span>Shipping:</span>
-                          <span className="font-semibold">+{formatInr(shippingPaise)}</span>
-                        </div>
-                      ) : null}
+                      </div>
                     </div>
 
-                    <div className="border-t border-indigo-100 pt-2">
-                      {!isSplitTender ? (
-                        <div>
-                          <p className="text-[10px] font-semibold uppercase tracking-wider text-slate-500">Change Due</p>
-                          <p className="num text-lg font-semibold text-slate-800">
-                            {formatInr(Math.max(0, Math.round(Number(tenderRupees || 0) * 100) - netPayablePaise))}
-                          </p>
-                        </div>
-                      ) : (
-                        <div>
-                          {(() => {
-                            const enteredPaise = splitPayments.reduce((sum, p) => sum + Math.round((Number(p.amountRupees) || 0) * 100), 0);
-                            const remainingPaise = Math.max(0, netPayablePaise - enteredPaise);
-                            const changePaise = Math.max(0, enteredPaise - netPayablePaise);
-                            return (
-                              <div className="space-y-1">
-                                <div className="flex justify-between text-xs">
-                                  <span>Total Entered:</span>
-                                  <span className="font-semibold text-slate-900">{formatInr(enteredPaise)}</span>
-                                </div>
-                                {remainingPaise > 0 ? (
-                                  <div className="flex justify-between text-xs font-semibold text-amber-600">
-                                    <span>Remaining:</span>
-                                    <span>{formatInr(remainingPaise)}</span>
-                                  </div>
-                                ) : (
-                                  <div className="flex justify-between text-xs font-semibold text-emerald-600">
-                                    <span>Change Due:</span>
-                                    <span>{formatInr(changePaise)}</span>
-                                  </div>
-                                )}
-                              </div>
-                            );
-                          })()}
-                        </div>
-                      )}
-                    </div>
-                  </aside>
+                    {/* Pay Later (Open tab / Khata) */}
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setPayMethod("khata");
+                        if (!customer) {
+                          setPanel("customer");
+                        }
+                      }}
+                      className={`w-full rounded-2xl border-2 border-dashed p-4 flex items-center gap-3.5 transition text-left cursor-pointer ${
+                        payMethod === "khata"
+                          ? "border-amber-500 bg-amber-50/60 ring-2 ring-amber-500/20"
+                          : "border-slate-300 bg-white hover:bg-slate-50 hover:border-slate-400"
+                      }`}
+                    >
+                      <div className="h-10 w-10 rounded-full bg-amber-100 text-amber-600 flex items-center justify-center shrink-0">
+                        <Clock className="h-5 w-5" />
+                      </div>
+                      <div>
+                        <div className="text-sm font-bold text-slate-900">Pay later</div>
+                        <div className="text-xs text-slate-500">Open tab — charge when ready</div>
+                      </div>
+                    </button>
 
-                  {/* Payment Inputs */}
+                    {/* Multi-tender toggle */}
+                    <div className="pt-1 flex items-center justify-between text-xs text-slate-500 px-1">
+                      <span>Need split billing?</span>
+                      <button
+                        type="button"
+                        onClick={() => setIsSplitTender(!isSplitTender)}
+                        className="text-xs font-bold text-indigo-600 hover:underline cursor-pointer"
+                      >
+                        {isSplitTender ? "Single Tender" : "Split Tender (Multi-Pay)"}
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* RIGHT COLUMN */}
                   <div>
                     {!isSplitTender ? (
                       <div>
-                        <label className="block text-xs font-semibold text-slate-700">
-                          Cash Tender Amount (₹)
-                          <input
-                            value={tenderRupees}
-                            onChange={(event) => setTenderRupees(event.target.value)}
-                            placeholder={(netPayablePaise / 100).toFixed(2)}
-                            className="num mt-1 h-11 w-full rounded-lg border border-slate-200 px-3 text-base font-semibold text-slate-900 outline-none focus:border-indigo-500"
-                          />
-                        </label>
-
-                        {/* Quick Presets */}
-                        <div className="mt-2 flex flex-wrap gap-1.5">
-                          {[
-                            { label: "Exact", val: (netPayablePaise / 100).toFixed(2) },
-                            { label: "+₹100", val: String(Math.ceil((netPayablePaise / 100) / 100) * 100) },
-                            { label: "+₹500", val: String(Math.ceil((netPayablePaise / 100) / 500) * 500) },
-                            { label: "₹2,000", val: "2000" },
-                          ].map((b) => (
-                            <button
-                              key={b.label}
-                              type="button"
-                              onClick={() => setTenderRupees(b.val)}
-                              className="rounded-md border border-slate-200 bg-slate-50 px-2 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-100 cursor-pointer"
-                            >
-                              {b.label}
-                            </button>
-                          ))}
+                        <div className="text-[11px] font-bold uppercase tracking-wider text-slate-500 mb-2.5">
+                          PAYMENT METHOD
                         </div>
 
-                        {/* Method grid */}
-                        <div className="mt-4 grid grid-cols-4 gap-2">
-                          {(["cash", "upi", "card", "khata"] as const).map((method) => (
+                        {/* 6-Grid Method Selector */}
+                        <div className="grid grid-cols-2 gap-3">
+                          {/* 1. Cash */}
+                          <button
+                            type="button"
+                            data-testid="cash-payment"
+                            onClick={() => {
+                              if (settings.tapSound) playPosSound("click", settings.soundVolume);
+                              setPayMethod("cash");
+                            }}
+                            className={`p-3.5 rounded-2xl border text-left transition flex flex-col justify-between cursor-pointer min-h-[92px] ${
+                              payMethod === "cash"
+                                ? "border-indigo-600 ring-2 ring-indigo-500/20 bg-indigo-50/40"
+                                : "border-slate-200 bg-white hover:bg-slate-50"
+                            }`}
+                          >
+                            <div className="h-8 w-8 rounded-lg bg-indigo-100/60 text-indigo-600 flex items-center justify-center">
+                              <Banknote className="h-5 w-5" />
+                            </div>
+                            <div className="mt-2">
+                              <div className="text-sm font-bold text-slate-900">Cash</div>
+                              <div className="text-[11px] text-slate-500">Tender &amp; change</div>
+                            </div>
+                          </button>
+
+                          {/* 2. Card */}
+                          <button
+                            type="button"
+                            onClick={() => {
+                              if (settings.tapSound) playPosSound("click", settings.soundVolume);
+                              setPayMethod("card");
+                            }}
+                            className={`p-3.5 rounded-2xl border text-left transition flex flex-col justify-between cursor-pointer min-h-[92px] ${
+                              payMethod === "card"
+                                ? "border-indigo-600 ring-2 ring-indigo-500/20 bg-indigo-50/40"
+                                : "border-slate-200 bg-white hover:bg-slate-50"
+                            }`}
+                          >
+                            <div className="h-8 w-8 rounded-lg bg-slate-100 text-slate-600 flex items-center justify-center">
+                              <CreditCard className="h-5 w-5" />
+                            </div>
+                            <div className="mt-2">
+                              <div className="text-sm font-bold text-slate-900">Card</div>
+                              <div className="text-[11px] text-slate-500">Terminal</div>
+                            </div>
+                          </button>
+
+                          {/* 3. UPI (Soundbox / Standee - Manual settlement) */}
+                          <button
+                            type="button"
+                            onClick={() => {
+                              if (settings.tapSound) playPosSound("click", settings.soundVolume);
+                              setPayMethod("upi");
+                            }}
+                            className={`p-3.5 rounded-2xl border text-left transition flex flex-col justify-between cursor-pointer min-h-[92px] ${
+                              payMethod === "upi"
+                                ? "border-indigo-600 ring-2 ring-indigo-500/20 bg-indigo-50/40"
+                                : "border-slate-200 bg-white hover:bg-slate-50"
+                            }`}
+                          >
+                            <div className="h-8 w-8 rounded-lg bg-emerald-100/60 text-emerald-600 flex items-center justify-center">
+                              <Smartphone className="h-5 w-5" />
+                            </div>
+                            <div className="mt-2">
+                              <div className="text-sm font-bold text-slate-900">UPI</div>
+                              <div className="text-[11px] text-slate-500 leading-tight">Soundbox / standee — mark paid after guest pays</div>
+                            </div>
+                          </button>
+
+                          {/* 4. Wallet */}
+                          <button
+                            type="button"
+                            onClick={() => {
+                              if (settings.tapSound) playPosSound("click", settings.soundVolume);
+                              setPayMethod("wallet");
+                            }}
+                            className={`p-3.5 rounded-2xl border text-left transition flex flex-col justify-between cursor-pointer min-h-[92px] ${
+                              payMethod === "wallet"
+                                ? "border-indigo-600 ring-2 ring-indigo-500/20 bg-indigo-50/40"
+                                : "border-slate-200 bg-white hover:bg-slate-50"
+                            }`}
+                          >
+                            <div className="h-8 w-8 rounded-lg bg-amber-100/60 text-amber-600 flex items-center justify-center">
+                              <Wallet className="h-5 w-5" />
+                            </div>
+                            <div className="mt-2">
+                              <div className="text-sm font-bold text-slate-900">Wallet</div>
+                              <div className="text-[11px] text-slate-500">Digital pay</div>
+                            </div>
+                          </button>
+
+                          {/* 5. Other */}
+                          <button
+                            type="button"
+                            onClick={() => {
+                              if (settings.tapSound) playPosSound("click", settings.soundVolume);
+                              setPayMethod("other");
+                            }}
+                            className={`p-3.5 rounded-2xl border text-left transition flex flex-col justify-between cursor-pointer min-h-[92px] ${
+                              payMethod === "other"
+                                ? "border-indigo-600 ring-2 ring-indigo-500/20 bg-indigo-50/40"
+                                : "border-slate-200 bg-white hover:bg-slate-50"
+                            }`}
+                          >
+                            <div className="h-8 w-8 rounded-lg bg-slate-100 text-slate-600 flex items-center justify-center">
+                              <CircleDot className="h-5 w-5" />
+                            </div>
+                            <div className="mt-2">
+                              <div className="text-sm font-bold text-slate-900">Other</div>
+                              <div className="text-[11px] text-slate-500">Voucher, etc.</div>
+                            </div>
+                          </button>
+
+                          {/* 6. UPI QR (Dynamic QR modal trigger - Only shown if online gateway is active) */}
+                          {hasOnlineGateway && (
                             <button
-                              key={method}
                               type="button"
-                              data-testid={method === "cash" ? "cash-payment" : undefined}
                               onClick={() => {
                                 if (settings.tapSound) playPosSound("click", settings.soundVolume);
-                                setPayMethod(method);
+                                setPayMethod("upi_qr");
+                                setUpiQrModalOpen(true);
                               }}
-                              className={`h-14 cursor-pointer rounded-xl border text-xs font-semibold uppercase tracking-wider transition-all ${
-                                payMethod === method
-                                  ? "border-indigo-600 bg-indigo-50/80 text-indigo-700 ring-2 ring-indigo-500/20"
-                                  : "border-slate-200 text-slate-700 hover:bg-slate-50"
+                              className={`p-3.5 rounded-2xl border text-left transition flex flex-col justify-between cursor-pointer min-h-[92px] ${
+                                payMethod === "upi_qr"
+                                  ? "border-[#5f259f] ring-2 ring-[#5f259f]/20 bg-[#5f259f]/5"
+                                  : "border-slate-200 bg-white hover:bg-slate-50"
                               }`}
                             >
-                              {method === "upi" ? "UPI QR" : method}
+                              <div className="h-8 w-8 rounded-lg bg-[#5f259f]/10 flex items-center justify-center p-1">
+                                <img src="/logos/phonepe.svg" alt="PhonePe" className="h-full w-full object-contain" />
+                              </div>
+                              <div className="mt-2">
+                                <div className="text-sm font-bold text-slate-900">UPI QR</div>
+                                <div className="text-[11px] text-slate-500">Scan &amp; Pay</div>
+                              </div>
                             </button>
-                          ))}
+                          )}
                         </div>
 
-                        {/* Integrated Dynamic UPI QR Display */}
-                        {payMethod === "upi" && (
-                          <div className="mt-3 rounded-2xl border border-indigo-200 bg-indigo-50/50 p-3.5 space-y-2.5 animate-in fade-in duration-150">
-                            <div className="flex items-center justify-between">
-                              <div className="flex items-center gap-2">
-                                <div className="h-2 w-2 rounded-full bg-emerald-500 animate-pulse" />
-                                <span className="text-xs font-bold text-slate-900">
-                                  Counter Dynamic UPI QR
-                                </span>
-                              </div>
-                              <span className="text-xs font-bold text-indigo-700 font-mono">
-                                ₹{(netPayablePaise / 100).toFixed(2)}
-                              </span>
+                        {/* Cash Tender Shortcuts */}
+                        {payMethod === "cash" && (
+                          <div className="mt-5 space-y-2">
+                            <div className="text-[11px] font-bold uppercase tracking-wider text-slate-500">CASH TENDER</div>
+                            <div className="grid grid-cols-3 gap-2">
+                              <button
+                                type="button"
+                                onClick={() => setTenderRupees((totalDuePaise / 100).toFixed(2))}
+                                className="h-10 rounded-xl bg-slate-50 hover:bg-slate-100 border border-slate-200 text-xs font-bold text-slate-700 transition cursor-pointer"
+                              >
+                                Exact
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  const cur = Number(tenderRupees || totalDuePaise / 100);
+                                  setTenderRupees(String(cur + 5));
+                                }}
+                                className="h-10 rounded-xl bg-slate-50 hover:bg-slate-100 border border-slate-200 text-xs font-bold text-slate-700 transition cursor-pointer"
+                              >
+                                +5
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  const cur = Number(tenderRupees || totalDuePaise / 100);
+                                  setTenderRupees(String(cur + 10));
+                                }}
+                                className="h-10 rounded-xl bg-slate-50 hover:bg-slate-100 border border-slate-200 text-xs font-bold text-slate-700 transition cursor-pointer"
+                              >
+                                +10
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  const cur = Number(tenderRupees || totalDuePaise / 100);
+                                  setTenderRupees(String(cur + 20));
+                                }}
+                                className="h-10 rounded-xl bg-slate-50 hover:bg-slate-100 border border-slate-200 text-xs font-bold text-slate-700 transition cursor-pointer"
+                              >
+                                +20
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  const cur = Number(tenderRupees || totalDuePaise / 100);
+                                  setTenderRupees(String(cur + 50));
+                                }}
+                                className="h-10 rounded-xl bg-slate-50 hover:bg-slate-100 border border-slate-200 text-xs font-bold text-slate-700 transition cursor-pointer"
+                              >
+                                +50
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => setTenderRupees("")}
+                                className="h-10 rounded-xl bg-slate-50 hover:bg-slate-100 border border-slate-200 text-xs font-bold text-slate-500 hover:text-rose-600 transition cursor-pointer"
+                              >
+                                Clear
+                              </button>
                             </div>
-
-                            <div className="flex items-center gap-3 bg-white p-2.5 rounded-xl border border-indigo-100 shadow-2xs">
-                              <div className="h-24 w-24 shrink-0 bg-white border border-slate-200 rounded-lg p-1 flex items-center justify-center">
-                                {posUpiQrUrl ? (
-                                  <img src={posUpiQrUrl} alt="UPI QR" className="h-full w-full object-contain" />
-                                ) : (
-                                  <div className="text-[10px] text-slate-400 text-center">Generating QR...</div>
-                                )}
+                            <div className="pt-2">
+                              <div className="text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1">RECEIVED</div>
+                              <div className="relative">
+                                <span className="absolute left-3.5 top-3.5 text-sm font-bold text-slate-400">₹</span>
+                                <input
+                                  value={tenderRupees}
+                                  onChange={(e) => setTenderRupees(e.target.value.replace(/[^0-9.]/g, ""))}
+                                  placeholder={(totalDuePaise / 100).toFixed(2)}
+                                  className="num h-12 w-full rounded-xl border border-slate-200 pl-8 pr-4 text-base font-bold text-slate-900 outline-none focus:border-indigo-600 focus:ring-1 focus:ring-indigo-600/30"
+                                />
                               </div>
-
-                              <div className="flex-1 space-y-1 text-xs min-w-0">
-                                <div>
-                                  <span className="text-[10px] text-slate-500 block">VPA</span>
-                                  <span className="font-mono font-bold text-slate-800 text-[11px] truncate block">
-                                    {storeUpiVpa || "merchant@ybl"}
-                                  </span>
+                              {Number(tenderRupees) * 100 > totalDuePaise ? (
+                                <div className="mt-1.5 flex justify-between items-center px-1 text-xs font-bold text-emerald-600">
+                                  <span>Change Due:</span>
+                                  <span className="text-sm">{formatInr(Math.round(Number(tenderRupees) * 100) - totalDuePaise)}</span>
                                 </div>
-                                <div>
-                                  <span className="text-[10px] text-slate-500 block">Payee</span>
-                                  <span className="font-semibold text-slate-700 text-[11px] truncate block">
-                                    {storePayeeName || "Retail Store"}
-                                  </span>
-                                </div>
-                                <p className="text-[10px] text-slate-400 pt-0.5">
-                                  Customer scans with PhonePe, GPay, or Paytm.
-                                </p>
-                              </div>
+                              ) : null}
                             </div>
                           </div>
                         )}
@@ -2977,6 +3217,8 @@ function PosScreen() {
                                 <option value="cash">Cash</option>
                                 <option value="upi">UPI</option>
                                 <option value="card">Card</option>
+                                <option value="wallet">Wallet</option>
+                                <option value="other">Other</option>
                                 <option value="khata">Khata</option>
                               </select>
 
@@ -3000,7 +3242,7 @@ function PosScreen() {
                                   const otherTotalPaise = splitPayments
                                     .filter((_, i) => i !== idx)
                                     .reduce((sum, p) => sum + Math.round((Number(p.amountRupees) || 0) * 100), 0);
-                                  const remRupees = Math.max(0, (netPayablePaise - otherTotalPaise) / 100);
+                                  const remRupees = Math.max(0, (totalDuePaise - otherTotalPaise) / 100);
                                   setSplitPayments((prev) => prev.map((item, i) => (i === idx ? { ...item, amountRupees: String(remRupees) } : item)));
                                 }}
                                 className="h-9 px-2.5 rounded-md border border-slate-200 text-[11px] font-semibold text-slate-600 hover:bg-slate-50 cursor-pointer"
@@ -3025,17 +3267,28 @@ function PosScreen() {
 
                     {receipt && receiptTone === "error" ? <p className="mt-3 text-xs font-medium text-rose-600">{receipt}</p> : null}
 
-                    <div className="mt-5 flex justify-end gap-2 border-t border-slate-100 pt-3">
-                      <button type="button" onClick={() => setPanel(null)} className="h-10 cursor-pointer rounded-lg border border-slate-200 px-4 text-xs font-semibold text-slate-600 hover:bg-slate-50">
+                    {/* Action Buttons */}
+                    <div className="mt-6 flex items-center gap-3">
+                      <button
+                        type="button"
+                        onClick={() => setPanel(null)}
+                        className="h-12 px-6 rounded-xl border border-slate-200 text-sm font-bold text-slate-700 hover:bg-slate-50 transition cursor-pointer"
+                      >
                         Cancel
                       </button>
                       <button
                         type="button"
                         data-testid="complete-sale"
-                        onClick={() => void pay()}
-                        className="h-10 cursor-pointer rounded-lg bg-emerald-600 px-5 text-xs font-semibold text-white shadow-xs hover:bg-emerald-700 transition"
+                        onClick={() => {
+                          if (payMethod === "upi_qr") {
+                            setUpiQrModalOpen(true);
+                          } else {
+                            void pay();
+                          }
+                        }}
+                        className="flex-1 h-12 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-sm font-bold text-white shadow-md shadow-indigo-600/20 transition cursor-pointer flex items-center justify-center gap-2"
                       >
-                        Complete Payment ({formatInr(netPayablePaise)})
+                        Complete payment
                       </button>
                     </div>
                   </div>
@@ -3539,6 +3792,128 @@ function PosScreen() {
           </button>
         </div>
       ) : null}
+
+      {/* Dedicated UPI QR Modal matching Image 2 */}
+      {upiQrModalOpen && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-xs p-4 animate-in fade-in duration-150"
+          onClick={() => setUpiQrModalOpen(false)}
+        >
+          <div
+            className="w-full max-w-sm bg-white rounded-3xl shadow-2xl p-6 relative border border-slate-100 flex flex-col items-center text-center animate-in zoom-in-95 duration-150"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Close button at top right */}
+            <button
+              type="button"
+              onClick={() => setUpiQrModalOpen(false)}
+              className="absolute right-5 top-5 h-8 w-8 rounded-full bg-rose-50 hover:bg-rose-100 text-rose-500 flex items-center justify-center transition cursor-pointer"
+            >
+              <X className="h-4 w-4" />
+            </button>
+
+            {/* Title & Subtitle */}
+            <h3 className="text-base font-extrabold text-slate-900 tracking-tight">
+              Scan to pay with UPI QR
+            </h3>
+            <p className="text-xs text-slate-500 mt-1">
+              Order {posTempOrderRef} · {formatInr(totalDuePaise)}
+            </p>
+
+            {/* Provider Badge + Countdown */}
+            <div className="mt-4 flex items-center justify-center gap-2">
+              <div className="h-7 w-7 rounded-full bg-[#5f259f] flex items-center justify-center p-1 text-white">
+                <img src="/logos/phonepe.svg" alt="PhonePe" className="h-full w-full object-contain" />
+              </div>
+              <span className="text-xs font-semibold text-slate-500">
+                {Math.floor(qrTimerSeconds / 60)}:
+                {String(qrTimerSeconds % 60).padStart(2, "0")}
+              </span>
+            </div>
+
+            {/* Dynamic QR Code Card */}
+            <div className="mt-4 p-3 bg-white rounded-2xl border border-slate-200 shadow-2xs">
+              {posUpiQrUrl ? (
+                <img
+                  src={posUpiQrUrl}
+                  alt="UPI QR Code"
+                  className="h-56 w-56 object-contain rounded-lg"
+                />
+              ) : (
+                <div className="h-56 w-56 flex flex-col items-center justify-center text-xs text-slate-400 gap-2">
+                  <QrCode className="h-12 w-12 animate-pulse text-slate-300" />
+                  <span>Generating QR...</span>
+                </div>
+              )}
+            </div>
+
+            {/* UPI ID */}
+            <div className="mt-3 text-xs text-slate-600">
+              <span className="text-slate-400">UPI ID: </span>
+              <span className="font-mono font-bold text-slate-800">
+                {storeUpiVpa || "SIRIX001@ybl"}
+              </span>
+            </div>
+
+            {/* Open UPI App link */}
+            <a
+              href={`upi://pay?pa=${encodeURIComponent(
+                storeUpiVpa || "SIRIX001@ybl"
+              )}&pn=${encodeURIComponent(
+                storePayeeName || "Retail Store"
+              )}&am=${(totalDuePaise / 100).toFixed(2)}&cu=INR&tn=${encodeURIComponent(
+                posTempOrderRef
+              )}`}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="mt-1.5 inline-flex items-center gap-1 text-xs font-semibold text-indigo-600 hover:text-indigo-700 hover:underline cursor-pointer"
+            >
+              <span>Open UPI app</span>
+              <ExternalLink className="h-3 w-3" />
+            </a>
+
+            {/* Waiting status */}
+            <div className="mt-3 flex items-center justify-center gap-1.5 text-xs text-slate-400">
+              <span className="h-2 w-2 rounded-full bg-amber-400 animate-pulse" />
+              <span>Waiting for payment confirmation...</span>
+            </div>
+
+            {/* Action Buttons */}
+            <div className="mt-5 w-full flex items-center justify-between gap-2 border-t border-slate-100 pt-4">
+              <button
+                type="button"
+                onClick={printPosUpiQrSlip}
+                className="h-10 px-3.5 rounded-xl border border-slate-200 text-xs font-bold text-slate-700 hover:bg-slate-50 flex items-center gap-1.5 transition cursor-pointer"
+              >
+                <Printer className="h-3.5 w-3.5" />
+                <span>Print QR</span>
+              </button>
+
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setUpiQrModalOpen(false)}
+                  className="h-10 px-3 rounded-xl text-xs font-bold text-slate-600 hover:text-slate-900 hover:bg-slate-100 transition cursor-pointer"
+                >
+                  Cancel payment
+                </button>
+                <button
+                  type="button"
+                  onClick={async () => {
+                    setPayMethod("upi");
+                    setUpiQrModalOpen(false);
+                    await pay();
+                  }}
+                  className="h-10 px-3.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-xs font-bold text-white shadow-xs transition cursor-pointer flex items-center gap-1"
+                >
+                  <Check className="h-3.5 w-3.5 stroke-[3]" />
+                  <span>Payment Received</span>
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* On-Screen Receipt Modal matching Image 3 */}
       <ReceiptModal

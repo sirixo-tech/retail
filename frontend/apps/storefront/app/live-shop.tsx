@@ -435,6 +435,7 @@ export function LiveShop() {
   const [tenantSettings, setTenantSettings] = useState<TenantSettingsPayload | null>(null);
   const [items, setItems] = useState<StorefrontProduct[]>([]);
   const [storeCategories, setStoreCategories] = useState<string[]>([]);
+  const [storeUpiVpa, setStoreUpiVpa] = useState<string>("");
   const [qty, setQty] = useState<Record<string, number>>({});
   const [activeCategory, setActiveCategory] = useState("All");
   const [sortBy, setSortBy] = useState<"relevance" | "price_asc" | "price_desc" | "name">("relevance");
@@ -1197,6 +1198,9 @@ export function LiveShop() {
         if (sData.data.gateway_configs && typeof sData.data.gateway_configs === "object") {
           setGatewayConfigs(sData.data.gateway_configs);
         }
+        if ((sData.data as any).upi_vpa) {
+          setStoreUpiVpa((sData.data as any).upi_vpa);
+        }
         const loadedSettings = sData.data.online_store_settings ?? null;
         setOnlineSettings(loadedSettings);
         setTenantSettings(sData.data.tenant_settings ?? null);
@@ -1638,17 +1642,34 @@ export function LiveShop() {
     isPaytmActiveInGateway ||
     ((paymentsConfig as any).paytm?.enabled === true && Boolean((paymentsConfig as any).paytm?.merchantId));
 
-  // Resolve Static UPI configuration (Standee / Direct VPA)
+  // Resolve UPI configuration from store & gateways (PhonePe, Paytm, or direct)
   const upiConfig = useMemo(() => {
-    const gw = gatewayConfigs["upi_qr"] || {};
-    const vpa = (gw.upi_vpa || paymentsConfig.upiQr?.vpa || "").trim();
-    const payee = (gw.payee_name || storeName || "Selfx Retail").trim();
-    const standeeImg = gw.standee_image_url || null;
+    const phonepeGw = gatewayConfigs["phonepe"] || {};
+    const paytmGw = gatewayConfigs["paytm"] || {};
+    const upiGw = gatewayConfigs["upi_qr"] || {};
+    const vpa = (
+      storeUpiVpa ||
+      phonepeGw.upi_vpa ||
+      paytmGw.upi_vpa ||
+      upiGw.upi_vpa ||
+      paymentsConfig.upiQr?.vpa ||
+      ""
+    ).trim();
+    const payee = (
+      phonepeGw.payee_name ||
+      phonepeGw.merchant_name ||
+      paytmGw.payee_name ||
+      upiGw.payee_name ||
+      storeName ||
+      "Selfx Retail"
+    ).trim();
+    const standeeImg = upiGw.standee_image_url || null;
     const instructions =
-      gw.instructions ||
-      "Scan the UPI QR code using Google Pay, PhonePe, Paytm, or BHIM and enter the 12-digit UTR.";
+      phonepeGw.instructions ||
+      upiGw.instructions ||
+      "Scan the UPI QR code using Google Pay, PhonePe, Paytm, or BHIM.";
     return { vpa, payee, standeeImg, instructions };
-  }, [gatewayConfigs, paymentsConfig.upiQr, storeName]);
+  }, [gatewayConfigs, paymentsConfig.upiQr, storeUpiVpa, storeName]);
 
   // Generate dynamic client-side UPI payment QR Code Data URL
   useEffect(() => {
@@ -2123,33 +2144,41 @@ export function LiveShop() {
       const pickupQrCode = orderData.pickup_qr || `SELFX-ORD-${orderData.number}`;
 
       // Check if prepaid gateway returned a redirect URL (PhonePe, Paytm, etc.)
-      const paymentUrl = orderData.payment?.payment_url || orderData.payment?.redirect_url;
+      const paymentUrl = orderData.payment?.payment_url || orderData.payment?.redirect_url || orderData.payment?.upi_intent_url;
       const isPrepaidMethod = ["phonepe", "paytm", "razorpay"].includes(resolvedMethod);
 
-      if (isPrepaidMethod && paymentUrl) {
-        try {
-          window.localStorage.setItem(
-            "selfx_pending_payment_order",
-            JSON.stringify({
-              orderId: orderData.id,
-              orderNumber: orderData.number,
-              totalPaise: grandTotalPaise,
-              fulfillment,
-              payment: resolvedMethod,
-              deliverySlot: resolvedSlot ?? null,
-              address: address || "Store Counter",
-              pickupQr: pickupQrCode,
-              name,
-              phone,
-              timestamp: Date.now(),
-            }),
-          );
-        } catch {
-          // ignore
-        }
+      if (isPrepaidMethod) {
+        if (paymentUrl) {
+          try {
+            window.localStorage.setItem(
+              "selfx_pending_payment_order",
+              JSON.stringify({
+                orderId: orderData.id,
+                orderNumber: orderData.number,
+                totalPaise: grandTotalPaise,
+                fulfillment,
+                payment: resolvedMethod,
+                deliverySlot: resolvedSlot ?? null,
+                address: address || "Store Counter",
+                pickupQr: pickupQrCode,
+                name,
+                phone,
+                timestamp: Date.now(),
+              }),
+            );
+          } catch {
+            // ignore
+          }
 
-        window.location.href = paymentUrl;
-        return;
+          window.location.href = paymentUrl;
+          return;
+        } else {
+          setMessage(
+            `Unable to initiate ${resolvedMethod.toUpperCase()} payment session. Please check gateway credentials in settings or select an alternate payment option.`
+          );
+          setSubmittingOrder(false);
+          return;
+        }
       }
 
       // Generate visual QR code Data URL ONLY for In-Store Pickup / Pay at Store

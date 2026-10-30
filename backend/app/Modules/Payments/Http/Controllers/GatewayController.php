@@ -14,7 +14,7 @@ use Illuminate\Support\Str;
 class GatewayController
 {
     /** @var list<string> */
-    public const OFFLINE = ['cod', 'pay_at_store', 'upi_qr'];
+    public const OFFLINE = ['cod', 'pay_at_store'];
 
     /** @var list<string> */
     public const PREPAID = ['razorpay', 'cashfree', 'phonepe', 'paytm', 'stripe'];

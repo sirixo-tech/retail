@@ -392,48 +392,6 @@ const GATEWAY_CATALOG: GatewayMeta[] = [
       { name: "priority_packing", label: "Auto-send pickup orders to Pick List immediately", defaultChecked: true },
     ],
   },
-  {
-    provider: "upi_qr",
-    title: "Static UPI QR (Standee / Direct VPA)",
-    subtitle: "Customers scan your physical UPI QR standee or tap to pay via GPay, PhonePe, Paytm, BHIM.",
-    badgeText: "UPI",
-    badgeBg: "#0c831f",
-    badgeColor: "#ffffff",
-    isPrepaid: true,
-    modeLabel: "Direct Bank UPI",
-    fields: [
-      {
-        name: "upi_vpa",
-        label: "Merchant UPI ID / VPA Handle",
-        placeholder: "e.g. yourstore@okaxis, merchant@paytm, 9876543210@ybl",
-        required: true,
-        helper: "The VPA linked to your current account or printed on your physical counter QR standee.",
-      },
-      {
-        name: "payee_name",
-        label: "Merchant / Payee Name",
-        placeholder: "e.g. Sri Krishna Supermarket",
-        required: true,
-        helper: "Displayed as payee name inside the customer's UPI payment app.",
-      },
-      {
-        name: "standee_image_url",
-        label: "Standee QR Stand Image URL (Optional)",
-        placeholder: "https://assets.yourstore.com/qr-standee.png",
-        helper: "Optional photo of your printed counter QR standee to display on desktop checkout.",
-      },
-      {
-        name: "instructions",
-        label: "Customer Payment Instructions",
-        placeholder: "Scan QR or tap to pay via any UPI app, then submit the 12-digit UPI UTR reference number.",
-      },
-    ],
-    toggles: [
-      { name: "require_utr", label: "Require customer to enter 12-digit UPI UTR reference number", defaultChecked: true },
-      { name: "enable_mobile_intent", label: "Enable direct One-Click UPI Intent buttons (GPay, PhonePe, Paytm) on mobile", defaultChecked: true },
-      { name: "auto_accept_on_utr", label: "Auto-confirm order once valid 12-digit UTR is entered", defaultChecked: true },
-    ],
-  },
 ];
 
 type TenantSettings = {

@@ -1915,20 +1915,26 @@ class SaleController
             ->pluck('provider')
             ->toArray();
 
+        $phonepeCreds = app(PaymentGatewayService::class)->resolveCredentials($model->id, 'phonepe');
+        $paytmCreds = app(PaymentGatewayService::class)->resolveCredentials($model->id, 'paytm');
+
         $upiVpa = trim((string) (
-            $model->settings['gateway_configs']['phonepe']['upi_vpa']
-            ?? ($model->settings['gateway_configs']['upi_qr']['upi_vpa']
+            ($phonepeCreds['config']['upi_vpa'] ?? null)
+            ?: (($paytmCreds['config']['upi_vpa'] ?? null)
+            ?: ($model->settings['gateway_configs']['phonepe']['upi_vpa']
+            ?? ($model->settings['gateway_configs']['paytm']['upi_vpa']
+            ?? ($model->settings['online_store']['payments']['phonepe']['upi_vpa']
             ?? ($model->settings['online_store']['payments']['upiQr']['vpa']
-            ?? ($model->settings['online_store']['payments']['upiVpaId']
-            ?? '')))
+            ?? '')))))
         ));
 
         $payeeName = trim((string) (
-            $model->settings['gateway_configs']['phonepe']['merchant_name']
-            ?? ($model->settings['gateway_configs']['upi_qr']['payee_name']
-            ?? ($model->settings['online_store']['payments']['upiQr']['merchantName']
+            ($phonepeCreds['config']['merchant_name'] ?? null)
+            ?: (($paytmCreds['config']['merchant_name'] ?? null)
+            ?: ($model->settings['gateway_configs']['phonepe']['merchant_name']
+            ?? ($model->settings['gateway_configs']['paytm']['merchant_name']
             ?? ($model->settings['tenant']['tradeName']
-            ?? $model->name)))
+            ?? $model->name))))
         ));
 
         return ApiResponse::ok([
@@ -2091,6 +2097,25 @@ class SaleController
             ]));
         }
 
+        $phonepeCreds = app(PaymentGatewayService::class)->resolveCredentials($store->id, 'phonepe');
+        if ($phonepeCreds && ! empty($phonepeCreds['config']['upi_vpa'])) {
+            $sanitizedConfigs['phonepe']['upi_vpa'] = $phonepeCreds['config']['upi_vpa'];
+        }
+        $paytmCreds = app(PaymentGatewayService::class)->resolveCredentials($store->id, 'paytm');
+        if ($paytmCreds && ! empty($paytmCreds['config']['upi_vpa'])) {
+            $sanitizedConfigs['paytm']['upi_vpa'] = $paytmCreds['config']['upi_vpa'];
+        }
+
+        $resolvedUpiVpa = trim((string) (
+            ($phonepeCreds['config']['upi_vpa'] ?? null)
+            ?: (($paytmCreds['config']['upi_vpa'] ?? null)
+            ?: ($store->settings['gateway_configs']['phonepe']['upi_vpa']
+            ?? ($store->settings['gateway_configs']['paytm']['upi_vpa']
+            ?? ($store->settings['online_store']['payments']['phonepe']['upi_vpa']
+            ?? ($store->settings['online_store']['payments']['upiQr']['vpa']
+            ?? '')))))
+        ));
+
         return ApiResponse::ok([
             'name' => is_string($displayName) && trim($displayName) !== '' ? $displayName : $store->name,
             'slug' => $store->public_slug,
@@ -2109,6 +2134,7 @@ class SaleController
             'active_payment_gateways' => $activeGateways,
             'payment_gateways_status' => $gatewayStatuses,
             'gateway_configs' => $sanitizedConfigs,
+            'upi_vpa' => $resolvedUpiVpa,
             'online_store_settings' => \App\Support\PlatformConfig::injectMaps(is_array($store->settings['online_store'] ?? null) ? $store->settings['online_store'] : null),
             'tenant_settings' => $store->settings['tenant'] ?? null,
         ]);
