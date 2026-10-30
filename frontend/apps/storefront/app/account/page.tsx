@@ -593,7 +593,7 @@ export default function AccountPage() {
               <ShoppingCart className="h-3.5 w-3.5" />
               <span className="hidden sm:inline">Cart</span>
               {cartCount > 0 && (
-                <span className="flex h-5 w-5 items-center justify-center rounded-full bg-white text-[10px] font-black text-orange-600">
+                <span className="flex h-5 w-5 items-center justify-center rounded-full bg-white text-[10px] font-bold text-orange-600">
                   {cartCount}
                 </span>
               )}
@@ -713,7 +713,7 @@ export default function AccountPage() {
 
               <div className="relative flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 pb-4">
                 <div className="min-w-0 space-y-1">
-                  <h2 className="text-2xl sm:text-3xl font-black tracking-tight truncate leading-snug">
+                  <h2 className="text-2xl sm:text-3xl font-bold tracking-tight truncate leading-snug">
                     {userName || "Customer"}
                   </h2>
                   <p className="text-xs sm:text-sm font-semibold text-white/95 font-mono">
@@ -758,15 +758,15 @@ export default function AccountPage() {
             <div className="-mt-8 rounded-2xl border border-slate-100 bg-white p-4 sm:p-5 shadow-lg relative z-20 transition hover:shadow-xl">
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2">
-                  <span className="text-sm font-black text-orange-600 tracking-tight">SelfX Club</span>
-                  <span className="rounded-full bg-emerald-500 text-white px-2 py-0.5 text-[9px] font-black uppercase tracking-wider">
+                  <span className="text-sm font-bold text-orange-600 tracking-tight">SelfX Club</span>
+                  <span className="rounded-full bg-emerald-500 text-white px-2 py-0.5 text-[9px] font-bold uppercase tracking-wider">
                     {loyalty?.tier || "ACTIVE"}
                   </span>
                 </div>
                 <ChevronRight className="h-4 w-4 text-slate-400" />
               </div>
 
-              <div className="text-base sm:text-lg font-extrabold text-slate-900 mt-2">
+              <div className="text-base sm:text-lg font-bold text-slate-900 mt-2">
                 {(loyalty?.points || 0) > 0
                   ? `₹${(loyalty?.points || 0).toFixed(2)} savings & credit balance`
                   : "0 pts • ₹0.00 Credit Balance"}
@@ -879,15 +879,15 @@ export default function AccountPage() {
             {/* PAST ORDERS SECTION (Image 4 Inspiration with Swiggy Style Cards & 1-Click Reorder) */}
             <div id="past-orders-section" className="space-y-4 pt-3">
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-                <h3 className="text-xs font-black uppercase tracking-wider text-slate-900">
+                <h3 className="text-xs font-bold uppercase tracking-wider text-slate-900">
                   PAST ORDERS
                 </h3>
 
                 <div className="flex items-center gap-2">
                   {/* Category Pill Tabs (Image 4 Swiggy Style: Black Active Pill) */}
-                  <div className="flex items-center gap-1.5">
+                  <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar">
                     {[
-                      { id: "all" as const, label: "All Orders", count: pastOrders.length },
+                      { id: "all" as const, label: "All", count: pastOrders.length },
                       {
                         id: "delivery" as const,
                         label: "Delivery",
@@ -895,7 +895,7 @@ export default function AccountPage() {
                       },
                       {
                         id: "pickup" as const,
-                        label: "Store Pickup",
+                        label: "Store",
                         count: pastOrders.filter((o) => o.fulfillment !== "delivery").length,
                       },
                     ].map((tab) => {
@@ -905,7 +905,7 @@ export default function AccountPage() {
                           key={tab.id}
                           type="button"
                           onClick={() => setOrderFilter(tab.id)}
-                          className={`rounded-full px-4 py-1.5 text-xs font-bold transition cursor-pointer ${
+                          className={`rounded-full px-3.5 py-1.5 text-xs font-bold transition whitespace-nowrap shrink-0 cursor-pointer ${
                             active
                               ? "bg-slate-950 text-white shadow-xs"
                               : "bg-slate-100 text-slate-600 hover:text-slate-900"
@@ -1104,7 +1104,7 @@ export default function AccountPage() {
                             type="button"
                             disabled={reordering === ord.id}
                             onClick={() => handleReorder(ord)}
-                            className="w-full flex items-center justify-center gap-2 py-2.5 rounded-xl bg-[#fff1eb] hover:bg-[#ffe4d6] text-[#ea580c] border border-[#fed7aa]/60 font-black text-xs tracking-wide transition cursor-pointer disabled:opacity-60 shadow-2xs"
+                            className="w-full flex items-center justify-center gap-2 py-2.5 rounded-xl bg-[#fff1eb] hover:bg-[#ffe4d6] text-[#ea580c] border border-[#fed7aa]/60 font-bold text-xs tracking-wide transition cursor-pointer disabled:opacity-60 shadow-2xs"
                           >
                             <Repeat className={`h-3.5 w-3.5 ${reordering === ord.id ? "animate-spin" : ""}`} />
                             <span>{reordering === ord.id ? "Adding Items to Cart..." : "Reorder"}</span>

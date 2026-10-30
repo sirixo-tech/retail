@@ -6033,7 +6033,7 @@ export function LiveShop() {
 
                   {/* Hero Customer Information (Image 3 Style) */}
                   <div className="relative px-5 sm:px-6 pt-2 pb-2 space-y-1">
-                    <h2 className="text-2xl font-black text-white tracking-tight leading-snug">
+                    <h2 className="text-2xl font-bold text-white tracking-tight leading-snug">
                       {name || "Customer"}
                     </h2>
                     <p className="text-xs text-white/95 font-semibold flex items-center gap-1.5">
@@ -6059,15 +6059,15 @@ export function LiveShop() {
                   <div className="-mt-7 rounded-2xl border border-slate-100 bg-white p-4 sm:p-5 shadow-lg relative z-20 transition hover:shadow-xl">
                     <div className="flex items-center justify-between">
                       <div className="flex items-center gap-2">
-                        <span className="text-sm font-black text-orange-600 tracking-tight">SelfX Club</span>
-                        <span className="rounded-full bg-emerald-500 text-white px-2 py-0.5 text-[9px] font-black uppercase tracking-wider">
+                        <span className="text-sm font-bold text-orange-600 tracking-tight">SelfX Club</span>
+                        <span className="rounded-full bg-emerald-500 text-white px-2 py-0.5 text-[9px] font-bold uppercase tracking-wider">
                           ACTIVE
                         </span>
                       </div>
                       <ChevronDown size={16} className="text-slate-400" />
                     </div>
 
-                    <div className="text-base font-extrabold text-slate-900 mt-2">
+                    <div className="text-base font-bold text-slate-900 mt-2">
                       {(loyaltyPoints || 0) > 0
                         ? `₹${(loyaltyPoints || 0).toFixed(2)} savings & credit balance`
                         : "0 pts • ₹0.00 Credit Balance"}
@@ -6190,7 +6190,7 @@ export function LiveShop() {
                   {/* PAST ORDERS SECTION (Image 4 Inspiration) */}
                   <div className="space-y-3 pt-2">
                     <div className="flex items-center justify-between">
-                      <h4 className="text-xs font-black uppercase tracking-wider text-slate-900">
+                      <h4 className="text-xs font-bold uppercase tracking-wider text-slate-900">
                         PAST ORDERS
                       </h4>
                       <button
@@ -6204,9 +6204,9 @@ export function LiveShop() {
                     </div>
 
                     {/* Segment Filter Tabs (Swiggy Pill Style: Image 4) */}
-                    <div className="flex items-center gap-2 pt-0.5">
+                    <div className="flex items-center gap-2 pt-0.5 overflow-x-auto no-scrollbar">
                       {[
-                        { id: "all" as const, label: "All Orders", count: customerOrders.length },
+                        { id: "all" as const, label: "All", count: customerOrders.length },
                         {
                           id: "delivery" as const,
                           label: "Delivery",
@@ -6214,7 +6214,7 @@ export function LiveShop() {
                         },
                         {
                           id: "pickup" as const,
-                          label: "Store Pickup",
+                          label: "Store",
                           count: customerOrders.filter((o: any) => o.fulfillment !== "delivery").length,
                         },
                       ].map((tab) => {
@@ -6224,7 +6224,7 @@ export function LiveShop() {
                             key={tab.id}
                             type="button"
                             onClick={() => setProfileOrdersSegment(tab.id)}
-                            className={`rounded-full px-4 py-1.5 text-xs font-bold transition cursor-pointer ${
+                            className={`rounded-full px-3.5 py-1.5 text-xs font-bold transition whitespace-nowrap shrink-0 cursor-pointer ${
                               active
                                 ? "bg-slate-950 text-white shadow-xs"
                                 : "bg-slate-100 text-slate-600 hover:text-slate-900"
@@ -6415,7 +6415,7 @@ export function LiveShop() {
                                 <button
                                   type="button"
                                   onClick={() => handleReorder(ord)}
-                                  className="w-full py-2.5 rounded-xl bg-[#fff1eb] hover:bg-[#ffe4d6] text-[#ea580c] font-black text-xs tracking-wide transition border border-[#fed7aa]/60 flex items-center justify-center gap-2 cursor-pointer shadow-2xs"
+                                  className="w-full py-2.5 rounded-xl bg-[#fff1eb] hover:bg-[#ffe4d6] text-[#ea580c] font-bold text-xs tracking-wide transition border border-[#fed7aa]/60 flex items-center justify-center gap-2 cursor-pointer shadow-2xs"
                                 >
                                   <RefreshCw size={13} />
                                   <span>Reorder</span>
@@ -6649,7 +6649,7 @@ export function LiveShop() {
                   className="flex items-center justify-between rounded-xl border border-dashed border-orange-200 bg-orange-50/60 p-3"
                 >
                   <div>
-                    <span className="font-mono text-xs font-black text-orange-800 tracking-wider">
+                    <span className="font-mono text-xs font-bold text-orange-800 tracking-wider">
                       {c.code}
                     </span>
                     <p className="text-[11px] font-medium text-slate-700 mt-0.5">{c.desc}</p>
