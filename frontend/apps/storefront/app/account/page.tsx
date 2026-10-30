@@ -38,7 +38,12 @@ import {
   X,
 } from "lucide-react";
 import Link from "next/link";
-import { useEffect, useMemo, useState, type FormEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
+import {
+  sendFirebaseOtp,
+  humanizeFirebaseError,
+  type FirebaseConfirmationResult,
+} from "../lib/firebase-phone";
 
 const STORE_STORAGE_KEY = "selfx_active_store_slug_v1";
 const CUSTOMER_STORAGE_KEY = "selfx_storefront_customer_v2";
@@ -121,6 +126,7 @@ export default function AccountPage() {
   const [otpLoading, setOtpLoading] = useState(false);
   const [resendTimer, setResendTimer] = useState(0);
   const [verified, setVerified] = useState(false);
+  const accountFirebaseConfirmation = useRef<FirebaseConfirmationResult | null>(null);
 
   // Dashboard & Loyalty State
   const [loyalty, setLoyalty] = useState<{ name: string; points: number; tier: string } | null>(null);
@@ -296,13 +302,31 @@ export default function AccountPage() {
         body: JSON.stringify({ phone: cleaned }),
       });
       const body = (await response.json()) as {
-        data?: { status?: string; code?: string; dev_otp?: string };
+        data?: { status?: string; code?: string; dev_otp?: string; firebase?: any };
         error?: { message?: string };
       };
       if (!response.ok) {
         setStatusMsg(body.error?.message ?? "Failed to send code. Please try again.");
         return;
       }
+
+      if (body.data?.status === "firebase" && body.data.firebase?.active) {
+        try {
+          accountFirebaseConfirmation.current = await sendFirebaseOtp(
+            body.data.firebase,
+            cleaned,
+            "account-recaptcha"
+          );
+          setOtpSent(true);
+          setResendTimer(30);
+          setStatusMsg("Verification code dispatched to your phone via Google Firebase.");
+          return;
+        } catch (fbErr: any) {
+          setStatusMsg(humanizeFirebaseError(fbErr));
+          return;
+        }
+      }
+
       setOtpSent(true);
       setResendTimer(30);
       setStatusMsg("Verification code sent to your mobile number.");
@@ -318,22 +342,52 @@ export default function AccountPage() {
     const cleaned = phone.replace(/\D/g, "").slice(0, 10);
     if (!storeSlug || !otp) return;
     setOtpLoading(true);
-    try {
-      const response = await fetch(`/api/v1/public/stores/${encodeURIComponent(storeSlug)}/otp/verify`, {
-        method: "POST",
-        headers: { Accept: "application/json", "Content-Type": "application/json" },
-        body: JSON.stringify({ phone: cleaned, code: otp }),
-      });
-      const body = (await response.json()) as { error?: { message?: string } };
-      if (!response.ok) {
-        setStatusMsg(body.error?.message ?? "Invalid verification code.");
+
+    if (accountFirebaseConfirmation.current) {
+      let idToken = "";
+      try {
+        const res = await accountFirebaseConfirmation.current.confirm(otp);
+        idToken = res.idToken;
+      } catch (fbErr: any) {
+        setStatusMsg(humanizeFirebaseError(fbErr));
         setOtpLoading(false);
         return;
       }
-    } catch {
-      setStatusMsg("Error verifying code.");
-      setOtpLoading(false);
-      return;
+      try {
+        const response = await fetch(`/api/v1/public/stores/${encodeURIComponent(storeSlug)}/otp/verify`, {
+          method: "POST",
+          headers: { Accept: "application/json", "Content-Type": "application/json" },
+          body: JSON.stringify({ phone: cleaned, id_token: idToken }),
+        });
+        const body = (await response.json()) as { error?: { message?: string } };
+        if (!response.ok) {
+          setStatusMsg(body.error?.message ?? "Invalid or expired Firebase verification.");
+          setOtpLoading(false);
+          return;
+        }
+      } catch {
+        setStatusMsg("Error verifying code with server.");
+        setOtpLoading(false);
+        return;
+      }
+    } else {
+      try {
+        const response = await fetch(`/api/v1/public/stores/${encodeURIComponent(storeSlug)}/otp/verify`, {
+          method: "POST",
+          headers: { Accept: "application/json", "Content-Type": "application/json" },
+          body: JSON.stringify({ phone: cleaned, code: otp }),
+        });
+        const body = (await response.json()) as { error?: { message?: string } };
+        if (!response.ok) {
+          setStatusMsg(body.error?.message ?? "Invalid verification code.");
+          setOtpLoading(false);
+          return;
+        }
+      } catch {
+        setStatusMsg("Error verifying code.");
+        setOtpLoading(false);
+        return;
+      }
     }
 
     const defaultName = userName && userName !== "Customer" ? userName : `Customer ${cleaned.slice(-4)}`;
@@ -586,6 +640,9 @@ export default function AccountPage() {
                     />
                   </div>
                 </div>
+
+                {/* Google reCAPTCHA Container for Firebase Phone Auth */}
+                <div id="account-recaptcha" className="my-1.5" />
 
                 {otpSent && (
                   <div className="space-y-1.5 animate-in fade-in slide-in-from-top-1 duration-150">

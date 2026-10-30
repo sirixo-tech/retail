@@ -20,7 +20,12 @@ import {
   Tablet,
   KeyRound,
 } from "lucide-react";
-import { useState, useEffect, type FormEvent } from "react";
+import { useState, useEffect, useRef, type FormEvent } from "react";
+import {
+  sendFirebaseOtp,
+  humanizeFirebaseError,
+  type FirebaseConfirmationResult,
+} from "../lib/firebase-phone";
 
 type TerminalOption = {
   id: string;
@@ -115,6 +120,14 @@ export default function LoginPage() {
   const [devCode, setDevCode] = useState<string | null>(null);
   const [regOtp, setRegOtp] = useState("");
 
+  // Firebase Phone Auth refs & states
+  const staffFirebaseConfirmation = useRef<FirebaseConfirmationResult | null>(null);
+  const regFirebaseConfirmation = useRef<FirebaseConfirmationResult | null>(null);
+  const [regFirebaseToken, setRegFirebaseToken] = useState<string | null>(null);
+  const [regOtpSent, setRegOtpSent] = useState(false);
+  const [regOtpSending, setRegOtpSending] = useState(false);
+  const [regOtpVerified, setRegOtpVerified] = useState(false);
+
   useEffect(() => {
     fetch("/api/v1/public/auth/methods", { headers: { Accept: "application/json" } })
       .then((r) => (r.ok ? r.json() : null))
@@ -137,6 +150,97 @@ export default function LoginPage() {
       .replace(/^-+|-+$/g, "")
       .slice(0, 30);
     setRegSlug(generatedSlug);
+  }
+
+  async function sendRegCode() {
+    const rawDigits = phone.replace(/\D/g, "");
+    if (rawDigits.length < 10) {
+      setError("Please enter a valid 10-digit mobile number.");
+      return;
+    }
+    setError(null);
+    setRegOtpSending(true);
+    setDevCode(null);
+    try {
+      const response = await fetch("/api/v1/auth/phone/request", {
+        method: "POST",
+        headers: { Accept: "application/json", "Content-Type": "application/json" },
+        body: JSON.stringify({ phone, purpose: "register" }),
+      });
+      const body = await response.json();
+      if (!response.ok) {
+        setError(body?.error?.message ?? "The code could not be sent.");
+        return;
+      }
+      if (body?.data?.status === "firebase" && body.data.firebase?.active) {
+        try {
+          regFirebaseConfirmation.current = await sendFirebaseOtp(
+            body.data.firebase,
+            phone,
+            "reg-recaptcha"
+          );
+          setRegOtpSent(true);
+          setRegSuccess("OTP code dispatched to your phone via Google Firebase. Please enter it below.");
+          return;
+        } catch (fbErr: any) {
+          setError(humanizeFirebaseError(fbErr));
+          return;
+        }
+      }
+      setRegOtpSent(true);
+      setDevCode(body?.data?.code ?? null);
+      setRegSuccess("Enter the verification code sent to your mobile.");
+    } catch {
+      setError("Unable to send verification code. Please check your connection.");
+    } finally {
+      setRegOtpSending(false);
+    }
+  }
+
+  async function verifyRegCode() {
+    const clean = regOtp.trim();
+    if (!clean) {
+      setError("Please enter the 6-digit verification code.");
+      return;
+    }
+    setError(null);
+    setRegSubmitting(true);
+    try {
+      if (regFirebaseConfirmation.current) {
+        try {
+          const res = await regFirebaseConfirmation.current.confirm(clean);
+          setRegFirebaseToken(res.idToken);
+          // Pre-verify with backend to store in DB
+          await fetch("/api/v1/auth/phone/firebase", {
+            method: "POST",
+            headers: { Accept: "application/json", "Content-Type": "application/json" },
+            body: JSON.stringify({ id_token: res.idToken, purpose: "register" }),
+          });
+          setRegOtpVerified(true);
+          setRegSuccess("Mobile number verified successfully with Firebase!");
+        } catch (fbErr: any) {
+          setError(humanizeFirebaseError(fbErr));
+          return;
+        }
+      } else {
+        const response = await fetch("/api/v1/auth/phone/verify", {
+          method: "POST",
+          headers: { Accept: "application/json", "Content-Type": "application/json" },
+          body: JSON.stringify({ phone, code: clean, purpose: "register" }),
+        });
+        const body = await response.json();
+        if (!response.ok) {
+          setError(body?.error?.message ?? "That code is not valid.");
+          return;
+        }
+        setRegOtpVerified(true);
+        setRegSuccess("Mobile number verified successfully!");
+      }
+    } catch {
+      setError("Unable to verify code.");
+    } finally {
+      setRegSubmitting(false);
+    }
   }
 
   async function onRegister(event: FormEvent<HTMLFormElement>) {
@@ -169,6 +273,7 @@ export default function LoginPage() {
           email: regEmail,
           phone: phone || undefined,
           otp: regOtp || undefined,
+          firebase_id_token: regFirebaseToken || undefined,
           password: regPassword,
           store_type: storeType,
         }),
@@ -383,6 +488,20 @@ export default function LoginPage() {
         setError(body?.error?.message ?? "The code could not be sent.");
         return;
       }
+      if (body?.data?.status === "firebase" && body.data.firebase?.active) {
+        try {
+          staffFirebaseConfirmation.current = await sendFirebaseOtp(
+            body.data.firebase,
+            loginPhone,
+            "staff-recaptcha"
+          );
+          setLoginOtpSent(true);
+          return;
+        } catch (fbErr: any) {
+          setError(humanizeFirebaseError(fbErr));
+          return;
+        }
+      }
       setLoginOtpSent(true);
       setDevCode(body?.data?.code ?? null);
     } catch {
@@ -397,24 +516,54 @@ export default function LoginPage() {
     setError(null);
     setLoading(true);
     try {
-      const response = await fetch("/api/v1/auth/phone/verify", {
-        method: "POST",
-        credentials: "include",
-        headers: { Accept: "application/json", "Content-Type": "application/json" },
-        body: JSON.stringify({
-          phone: loginPhone,
-          code: loginOtp,
-          purpose: "staff",
-          store_id: slugValue ? slugValue.trim() : undefined,
-          branch_id: branchIdValue ? branchIdValue.trim() : undefined,
-          slug: slugValue ? slugValue.trim() : undefined,
-        }),
-      });
-      const body = await response.json();
-      if (!response.ok) {
-        setError(body?.error?.message ?? "That code is not valid.");
-        return;
+      let body: any = null;
+      if (staffFirebaseConfirmation.current) {
+        let idToken = "";
+        try {
+          const res = await staffFirebaseConfirmation.current.confirm(loginOtp);
+          idToken = res.idToken;
+        } catch (fbErr: any) {
+          setError(humanizeFirebaseError(fbErr));
+          return;
+        }
+        const response = await fetch("/api/v1/auth/phone/firebase", {
+          method: "POST",
+          credentials: "include",
+          headers: { Accept: "application/json", "Content-Type": "application/json" },
+          body: JSON.stringify({
+            id_token: idToken,
+            purpose: "staff",
+            store_id: slugValue ? slugValue.trim() : undefined,
+            branch_id: branchIdValue ? branchIdValue.trim() : undefined,
+            slug: slugValue ? slugValue.trim() : undefined,
+          }),
+        });
+        body = await response.json();
+        if (!response.ok) {
+          setError(body?.error?.message ?? "Firebase authentication failed on the server.");
+          return;
+        }
+      } else {
+        const response = await fetch("/api/v1/auth/phone/verify", {
+          method: "POST",
+          credentials: "include",
+          headers: { Accept: "application/json", "Content-Type": "application/json" },
+          body: JSON.stringify({
+            phone: loginPhone,
+            code: loginOtp,
+            purpose: "staff",
+            store_id: slugValue ? slugValue.trim() : undefined,
+            branch_id: branchIdValue ? branchIdValue.trim() : undefined,
+            slug: slugValue ? slugValue.trim() : undefined,
+          }),
+        });
+        body = await response.json();
+        if (!response.ok) {
+          setError(body?.error?.message ?? "That code is not valid.");
+          return;
+        }
       }
+
       const returnedBranches = body.data?.branches ?? body.data?.stores ?? body.data?.profile?.branches ?? [];
       if (returnedBranches.length > 0) {
         setBranches(returnedBranches);
@@ -765,17 +914,51 @@ export default function LoginPage() {
                       <form onSubmit={loginOtpSent ? verifyLoginCode : sendLoginCode} className="mt-6 space-y-4">
                         <label className="block text-xs font-semibold text-slate-700">
                           Mobile number
-                          <input value={loginPhone} onChange={(e) => setLoginPhone(e.target.value)} autoComplete="off" inputMode="tel" className="mt-1.5 h-11 w-full rounded-xl border border-slate-200 px-3 text-sm" placeholder="9876543210" />
+                          <input
+                            value={loginPhone}
+                            onChange={(e) => setLoginPhone(e.target.value)}
+                            autoComplete="off"
+                            inputMode="tel"
+                            className="mt-1.5 h-11 w-full rounded-xl border border-slate-200 px-3 text-sm text-slate-900 outline-none focus:border-slate-900"
+                            placeholder="e.g. 9876543210"
+                          />
                         </label>
+
+                        {/* reCAPTCHA Container for Firebase Phone Auth */}
+                        <div id="staff-recaptcha" className="my-1" />
+
                         {loginOtpSent ? (
-                          <label className="block text-xs font-semibold text-slate-700">
-                            Code
-                            <input value={loginOtp} onChange={(e) => setLoginOtp(e.target.value)} autoComplete="one-time-code" inputMode="numeric" className="mt-1.5 h-11 w-full rounded-xl border border-slate-200 px-3 text-sm" placeholder="6 digit code" />
-                          </label>
+                          <div className="space-y-1.5">
+                            <label className="block text-xs font-semibold text-slate-700">
+                              Verification Code
+                              <input
+                                value={loginOtp}
+                                onChange={(e) => setLoginOtp(e.target.value)}
+                                autoComplete="one-time-code"
+                                inputMode="numeric"
+                                maxLength={6}
+                                className="mt-1.5 h-11 w-full rounded-xl border border-slate-200 px-3 text-sm text-slate-900 outline-none focus:border-slate-900"
+                                placeholder="Enter 6-digit code"
+                              />
+                            </label>
+                            <div className="flex items-center justify-between text-[11px] text-slate-500">
+                              <span>Code sent to {loginPhone}</span>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setLoginOtpSent(false);
+                                  setLoginOtp("");
+                                }}
+                                className="font-semibold text-purple-700 hover:underline cursor-pointer"
+                              >
+                                Change number / Resend
+                              </button>
+                            </div>
+                          </div>
                         ) : null}
                         {devCode ? <p className="text-xs text-slate-500">SMS is not connected on this machine. The code is {devCode}.</p> : null}
-                        <button type="submit" disabled={loading} className="flex h-11 w-full items-center justify-center rounded-xl bg-slate-900 text-xs font-semibold text-white disabled:opacity-70">
-                          {loading ? "Please wait" : loginOtpSent ? "Sign in" : "Send code"}
+                        <button type="submit" disabled={loading || (loginOtpSent ? loginOtp.trim().length < 6 : loginPhone.replace(/\D/g, "").length < 10)} className="flex h-11 w-full items-center justify-center rounded-xl bg-slate-900 text-xs font-semibold text-white transition hover:bg-slate-800 disabled:opacity-50 cursor-pointer">
+                          {loading ? "Please wait..." : loginOtpSent ? "Verify & Sign In" : "Send 6-Digit Code"}
                         </button>
                       </form>
                     ) : (
@@ -988,35 +1171,56 @@ export default function LoginPage() {
                           </div>
                           {methods.phone_otp ? (
                             <div className="mt-2 space-y-2">
-                              <button
-                                type="button"
-                                onClick={() => {
-                                  setError(null);
-                                  void fetch("/api/v1/auth/phone/request", {
-                                    method: "POST",
-                                    headers: { Accept: "application/json", "Content-Type": "application/json" },
-                                    body: JSON.stringify({ phone, purpose: "register" }),
-                                  }).then(async (response) => {
-                                    const body = await response.json();
-                                    if (!response.ok) {
-                                      setError(body?.error?.message ?? "The code could not be sent.");
-                                      return;
-                                    }
-                                    setDevCode(body?.data?.code ?? null);
-                                    setRegSuccess("Enter the code sent to that mobile number.");
-                                  }).catch(() => setError("Unable to send the code."));
-                                }}
-                                className="text-[11px] font-semibold text-purple-700"
-                              >
-                                Send code to this number
-                              </button>
-                              <input
-                                value={regOtp}
-                                onChange={(e) => setRegOtp(e.target.value)}
-                                inputMode="numeric"
-                                placeholder="Code, if you requested one"
-                                className="h-9 w-full rounded-lg border border-slate-200 px-2 text-xs"
-                              />
+                              {/* reCAPTCHA Container for Registration Firebase Phone Auth */}
+                              <div id="reg-recaptcha" className="my-1" />
+
+                              {regOtpVerified ? (
+                                <div className="flex items-center gap-1.5 rounded-lg border border-emerald-200 bg-emerald-50 px-2.5 py-1.5 text-xs font-semibold text-emerald-800">
+                                  <CheckCircle2 className="h-3.5 w-3.5 text-emerald-600" />
+                                  <span>Phone verified (+91 {phone.replace(/\D/g, "").slice(-10)})</span>
+                                </div>
+                              ) : !regOtpSent ? (
+                                <button
+                                  type="button"
+                                  disabled={regOtpSending || phone.replace(/\D/g, "").length < 10}
+                                  onClick={() => void sendRegCode()}
+                                  className="text-[11px] font-semibold text-purple-700 hover:text-purple-900 disabled:opacity-50 cursor-pointer"
+                                >
+                                  {regOtpSending ? "Sending verification code..." : "Send code to this number"}
+                                </button>
+                              ) : (
+                                <div className="space-y-1.5">
+                                  <div className="flex gap-2">
+                                    <input
+                                      value={regOtp}
+                                      onChange={(e) => setRegOtp(e.target.value)}
+                                      inputMode="numeric"
+                                      maxLength={6}
+                                      placeholder="6-digit code"
+                                      className="h-9 flex-1 rounded-lg border border-slate-200 bg-white px-2.5 text-xs text-slate-900 outline-none focus:border-slate-900"
+                                    />
+                                    <button
+                                      type="button"
+                                      disabled={regSubmitting || regOtp.trim().length < 6}
+                                      onClick={() => void verifyRegCode()}
+                                      className="h-9 rounded-lg bg-purple-700 px-3 text-xs font-semibold text-white transition hover:bg-purple-800 disabled:opacity-50 cursor-pointer"
+                                    >
+                                      {regSubmitting ? "Verifying..." : "Verify Code"}
+                                    </button>
+                                  </div>
+                                  <div className="flex items-center justify-between text-[10px]">
+                                    <span className="text-slate-400">Code expires in 10 minutes</span>
+                                    <button
+                                      type="button"
+                                      disabled={regOtpSending}
+                                      onClick={() => void sendRegCode()}
+                                      className="text-slate-500 hover:text-purple-700 underline cursor-pointer"
+                                    >
+                                      Resend code
+                                    </button>
+                                  </div>
+                                </div>
+                              )}
                             </div>
                           ) : null}
                         </div>

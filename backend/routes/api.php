@@ -67,6 +67,7 @@ Route::post('public/stores/{slug}/otp', [PublicShopController::class, 'requestOt
 Route::post('public/stores/{slug}/auth/request-otp', [PublicShopController::class, 'requestOtp']);
 Route::post('public/stores/{slug}/otp/verify', [PublicShopController::class, 'verifyOtp']);
 Route::post('public/stores/{slug}/auth/verify-otp', [PublicShopController::class, 'verifyOtp']);
+Route::post('public/stores/{slug}/otp/firebase', [PublicShopController::class, 'verifyOtp']);
 Route::post('public/stores/{slug}/subscribe', [PublicShopController::class, 'subscribe']);
 Route::post('public/stores/{slug}/contact', [PublicShopController::class, 'contactMessage']);
     Route::get('public/stores/{slug}', [SaleController::class, 'publicStore']);

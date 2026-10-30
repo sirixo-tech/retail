@@ -3,6 +3,7 @@
 import { ArrowRight, Eye, EyeOff, Lock, Mail } from "lucide-react";
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { api, warmCsrf } from "../lib/api";
+import { humanizeFirebaseError } from "../lib/firebase-phone";
 
 export default function LoginPage() {
   const [error, setError] = useState<string | null>(null);
@@ -145,8 +146,8 @@ export default function LoginPage() {
       }
       setOtpSent(true);
       setDevCode(res.data?.code ?? null);
-    } catch (err) {
-      setError((err as { error?: { message?: string } })?.error?.message ?? "The code could not be sent.");
+    } catch (err: any) {
+      setError(humanizeFirebaseError(err) || (err as { error?: { message?: string } })?.error?.message || "The code could not be sent.");
     } finally {
       setPending(false);
     }

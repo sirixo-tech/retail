@@ -53,7 +53,12 @@ import {
 } from "lucide-react";
 import Link from "next/link";
 import QRCode from "qrcode";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  sendFirebaseOtp,
+  humanizeFirebaseError,
+  type FirebaseConfirmationResult,
+} from "./lib/firebase-phone";
 import { StorefrontAiWidget } from "./storefront-ai-widget";
 import { LiveOrderMap } from "./components/live-order-map";
 import { StorefrontThemedCatalog } from "./theme-layouts";
@@ -465,6 +470,7 @@ export function LiveShop() {
   const [otpLoading, setOtpLoading] = useState(false);
   const [otpError, setOtpError] = useState<string | null>(null);
   const [otpResendCountdown, setOtpResendCountdown] = useState(0);
+  const storefrontFirebaseConfirmation = useRef<FirebaseConfirmationResult | null>(null);
   const [appliedCoupon, setAppliedCoupon] = useState<{
     code: string;
     discountType: "percentage" | "fixed" | "free_shipping";
@@ -725,6 +731,10 @@ export function LiveShop() {
     setOtpRequested(false);
     setOtpCode("");
     setOtpError(null);
+    if (storefrontFirebaseConfirmation.current) {
+      storefrontFirebaseConfirmation.current.clear();
+      storefrontFirebaseConfirmation.current = null;
+    }
   };
 
   const handleRequestOtp = async () => {
@@ -750,6 +760,23 @@ export function LiveShop() {
         );
         return;
       }
+
+      if (body?.data?.status === "firebase" && body.data.firebase?.active) {
+        try {
+          storefrontFirebaseConfirmation.current = await sendFirebaseOtp(
+            body.data.firebase,
+            cleanPhone,
+            "storefront-recaptcha"
+          );
+          setOtpRequested(true);
+          setOtpResendCountdown(30);
+          return;
+        } catch (fbErr: any) {
+          setOtpError(humanizeFirebaseError(fbErr));
+          return;
+        }
+      }
+
       setOtpRequested(true);
       setOtpResendCountdown(30);
     } catch {
@@ -769,16 +796,39 @@ export function LiveShop() {
     setOtpLoading(true);
     setOtpError(null);
     try {
-      const res = await fetch(`/api/v1/public/stores/${encodeURIComponent(slug || "bangalore")}/otp/verify`, {
-        method: "POST",
-        headers: { Accept: "application/json", "Content-Type": "application/json" },
-        body: JSON.stringify({ phone: cleanPhone, code: cleanOtp, otp: cleanOtp }),
-      });
-      const body = await res.json().catch(() => ({}));
-      if (!res.ok) {
-        setOtpError(body?.error?.message || body?.message || "Invalid or expired OTP code.");
-        return;
+      let body: any = null;
+      if (storefrontFirebaseConfirmation.current) {
+        let idToken = "";
+        try {
+          const res = await storefrontFirebaseConfirmation.current.confirm(cleanOtp);
+          idToken = res.idToken;
+        } catch (fbErr: any) {
+          setOtpError(humanizeFirebaseError(fbErr));
+          return;
+        }
+        const res = await fetch(`/api/v1/public/stores/${encodeURIComponent(slug || "bangalore")}/otp/verify`, {
+          method: "POST",
+          headers: { Accept: "application/json", "Content-Type": "application/json" },
+          body: JSON.stringify({ phone: cleanPhone, id_token: idToken }),
+        });
+        body = await res.json().catch(() => ({}));
+        if (!res.ok) {
+          setOtpError(body?.error?.message || body?.message || "Invalid or expired Firebase verification.");
+          return;
+        }
+      } else {
+        const res = await fetch(`/api/v1/public/stores/${encodeURIComponent(slug || "bangalore")}/otp/verify`, {
+          method: "POST",
+          headers: { Accept: "application/json", "Content-Type": "application/json" },
+          body: JSON.stringify({ phone: cleanPhone, code: cleanOtp, otp: cleanOtp }),
+        });
+        body = await res.json().catch(() => ({}));
+        if (!res.ok) {
+          setOtpError(body?.error?.message || body?.message || "Invalid or expired OTP code.");
+          return;
+        }
       }
+
       const profile = body?.data || {};
       const resolvedName = profile.customer_name || name;
       const resolvedAddress = profile.address || address;
@@ -3948,6 +3998,9 @@ export function LiveShop() {
                                 className="w-full bg-transparent pl-3 text-sm font-semibold text-slate-900 outline-none placeholder:text-slate-400 placeholder:font-normal"
                               />
                             </div>
+
+                            {/* Google reCAPTCHA Container for Firebase Phone Auth */}
+                            <div id="storefront-recaptcha" className="my-1.5" />
 
                             <button
                               type="button"

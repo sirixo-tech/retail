@@ -79,7 +79,10 @@ class SmsGateway
             return ['status' => 'not_configured', 'detail' => 'The active SMS provider is missing credentials.'];
         }
         if ($active['key'] === 'firebase') {
-            return ['status' => 'firebase', 'detail' => 'Firebase Phone Auth sends the login code from the sign-in page.'];
+            return [
+                'status' => 'firebase',
+                'detail' => 'Firebase Phone Auth is active. Verification codes are dispatched directly via client SDK with invisible reCAPTCHA.',
+            ];
         }
 
         $to = PhoneNumber::e164((string) $phone);

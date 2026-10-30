@@ -32,25 +32,47 @@ class AuthController
             'email' => ['required', 'email', 'max:180'],
             'password' => ['required', 'string', 'min:8'],
             'phone' => ['nullable', 'string', 'max:20'],
-            'otp' => ['nullable', 'digits:6'],
+            'otp' => ['nullable', 'string', 'max:20'],
+            'firebase_id_token' => ['nullable', 'string', 'max:4000'],
             'slug' => ['nullable', 'string', 'regex:/^[a-z0-9]+(?:-[a-z0-9]+)*$/', 'max:40'],
             'store_type' => ['nullable', 'string', 'max:60'],
         ]);
 
-        if (! empty($data['otp'])) {
+        if (! empty($data['firebase_id_token'])) {
+            $firebase = app(SmsGateway::class)->publicFirebase();
+            if (! empty($firebase['active'])) {
+                $lookup = Http::timeout(12)->post(
+                    'https://identitytoolkit.googleapis.com/v1/accounts:lookup?key='.urlencode((string) $firebase['api_key']),
+                    ['idToken' => $data['firebase_id_token']],
+                );
+                $verifiedPhone = PhoneNumber::digits((string) $lookup->json('users.0.phoneNumber'));
+                if ($lookup->successful() && strlen($verifiedPhone) === 10) {
+                    $data['phone'] = $verifiedPhone;
+                } else {
+                    return ApiResponse::error('auth.invalid_code', 'That Firebase sign-in could not be verified.', 422);
+                }
+            }
+        } elseif (! empty($data['otp'])) {
             $phone = PhoneNumber::digits((string) ($data['phone'] ?? ''));
             $row = DB::table('phone_otps')
                 ->where('phone', $phone)
                 ->where('purpose', 'register')
-                ->whereNull('verified_at')
+                ->where('expires_at', '>', now())
                 ->orderByDesc('created_at')
                 ->first();
-            $expected = $row ? hash_hmac('sha256', (string) $data['otp'], (string) config('app.key')) : '';
-            if (! $row || now()->greaterThan($row->expires_at) || ! hash_equals((string) $row->code_hash, $expected)) {
+
+            if ($row && $row->verified_at) {
+                $data['phone'] = $phone;
+            } elseif ($row && ! $row->verified_at) {
+                $expected = hash_hmac('sha256', (string) $data['otp'], (string) config('app.key'));
+                if (! hash_equals((string) $row->code_hash, $expected)) {
+                    return ApiResponse::error('auth.invalid_code', 'That mobile code is not valid.', 422);
+                }
+                DB::table('phone_otps')->where('id', $row->id)->update(['verified_at' => now()]);
+                $data['phone'] = $phone;
+            } else {
                 return ApiResponse::error('auth.invalid_code', 'That mobile code is not valid.', 422);
             }
-            DB::table('phone_otps')->where('id', $row->id)->update(['verified_at' => now()]);
-            $data['phone'] = $phone;
         }
 
         $businessName = trim($data['business_name']);
@@ -409,6 +431,18 @@ class AuthController
             return ApiResponse::error('auth.invalid_code', 'That Firebase sign-in could not be checked.', 401);
         }
         if ($data['purpose'] === 'register' || $data['purpose'] === 'customer') {
+            DB::table('phone_otps')->insert([
+                'id' => (string) Str::uuid7(),
+                'phone' => $phone,
+                'purpose' => $data['purpose'],
+                'tenant_id' => null,
+                'code_hash' => hash_hmac('sha256', 'firebase_verified', (string) config('app.key')),
+                'attempts' => 0,
+                'verified_at' => now(),
+                'expires_at' => now()->addMinutes(30),
+                'created_at' => now(),
+            ]);
+
             return ApiResponse::ok(['verified' => true, 'phone' => $phone]);
         }
         $user = $this->userByPhone($phone, $data['purpose']);

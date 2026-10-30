@@ -148,36 +148,71 @@ class PublicShopController
             return ApiResponse::error('resource.not_found', 'Store not found.', 404);
         }
         $data = $request->validate([
-            'phone' => ['required', 'string', 'max:20'],
-            'code' => ['nullable', 'string', 'size:6'],
-            'otp' => ['nullable', 'string', 'size:6'],
+            'phone' => ['nullable', 'string', 'max:20'],
+            'code' => ['nullable', 'string', 'max:20'],
+            'otp' => ['nullable', 'string', 'max:20'],
+            'id_token' => ['nullable', 'string', 'max:4000'],
+            'firebase_id_token' => ['nullable', 'string', 'max:4000'],
         ]);
-        $phone = preg_replace('/\D+/', '', $data['phone']) ?? '';
-        $rawCode = (string) ($request->input('code') ?? $request->input('otp') ?? '');
-        if (strlen($rawCode) !== 6) {
-            return ApiResponse::error('validation.failed', 'Enter a 6-digit OTP code.', 422);
-        }
-        $row = DB::table('customer_otps')
-            ->where('store_id', $store->id)
-            ->where('phone', $phone)
-            ->whereNull('verified_at')
-            ->orderByDesc('created_at')
-            ->first();
-        if (! $row || now()->greaterThan($row->expires_at)) {
-            return ApiResponse::error('auth.invalid_code', 'That code is not valid.', 422);
-        }
-        if ((int) $row->attempts >= 5) {
-            return ApiResponse::error('auth.locked', 'Too many attempts.', 423);
-        }
-        $expected = hash_hmac('sha256', $rawCode, (string) config('app.key'));
-        if (! hash_equals($row->code_hash, $expected)) {
-            DB::table('customer_otps')->where('id', $row->id)->update(['attempts' => (int) $row->attempts + 1]);
 
-            return ApiResponse::error('auth.invalid_code', 'That code is not valid.', 422);
-        }
-        DB::table('customer_otps')->where('id', $row->id)->update(['verified_at' => now()]);
+        $idToken = (string) ($data['id_token'] ?? $data['firebase_id_token'] ?? '');
+        $tenDigits = '';
+        $phone = '';
 
-        $tenDigits = substr($phone, -10);
+        if ($idToken !== '') {
+            $gateway = app(\App\Modules\Notifications\SmsGateway::class);
+            $firebase = $gateway->publicFirebase();
+            if (empty($firebase['active'])) {
+                return ApiResponse::error('sms.not_configured', 'Firebase Phone Auth is not the active provider.', 422);
+            }
+            $lookup = \Illuminate\Support\Facades\Http::timeout(12)->post(
+                'https://identitytoolkit.googleapis.com/v1/accounts:lookup?key='.urlencode((string) $firebase['api_key']),
+                ['idToken' => $idToken],
+            );
+            $verifiedPhone = \App\Support\PhoneNumber::digits((string) $lookup->json('users.0.phoneNumber'));
+            if (! $lookup->successful() || strlen($verifiedPhone) !== 10) {
+                return ApiResponse::error('auth.invalid_code', 'That Firebase sign-in could not be verified.', 401);
+            }
+            $tenDigits = $verifiedPhone;
+            $phone = $verifiedPhone;
+
+            DB::table('customer_otps')->insert([
+                'id' => (string) Str::uuid7(),
+                'store_id' => $store->id,
+                'phone' => $phone,
+                'code_hash' => hash_hmac('sha256', 'firebase', (string) config('app.key')),
+                'attempts' => 0,
+                'verified_at' => now(),
+                'expires_at' => now()->addMinutes(15),
+                'created_at' => now(),
+            ]);
+        } else {
+            $phone = preg_replace('/\D+/', '', (string) ($data['phone'] ?? '')) ?? '';
+            $rawCode = (string) ($data['code'] ?? $data['otp'] ?? '');
+            if (strlen($rawCode) !== 6) {
+                return ApiResponse::error('validation.failed', 'Enter a 6-digit OTP code.', 422);
+            }
+            $row = DB::table('customer_otps')
+                ->where('store_id', $store->id)
+                ->where('phone', $phone)
+                ->whereNull('verified_at')
+                ->orderByDesc('created_at')
+                ->first();
+            if (! $row || now()->greaterThan($row->expires_at)) {
+                return ApiResponse::error('auth.invalid_code', 'That code is not valid.', 422);
+            }
+            if ((int) $row->attempts >= 5) {
+                return ApiResponse::error('auth.locked', 'Too many attempts.', 423);
+            }
+            $expected = hash_hmac('sha256', $rawCode, (string) config('app.key'));
+            if (! hash_equals($row->code_hash, $expected)) {
+                DB::table('customer_otps')->where('id', $row->id)->update(['attempts' => (int) $row->attempts + 1]);
+
+                return ApiResponse::error('auth.invalid_code', 'That code is not valid.', 422);
+            }
+            DB::table('customer_otps')->where('id', $row->id)->update(['verified_at' => now()]);
+            $tenDigits = substr($phone, -10);
+        }
         $customer = DB::table('customers')
             ->where('tenant_id', $store->tenant_id)
             ->where(function ($q) use ($phone, $tenDigits) {

@@ -21,8 +21,13 @@ import {
   Terminal,
   X,
 } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { api } from "../lib/api";
+import {
+  sendFirebaseOtp,
+  humanizeFirebaseError,
+  type FirebaseConfirmationResult,
+} from "../lib/firebase-phone";
 
 type Provider = Record<string, string | boolean>;
 
@@ -154,6 +159,10 @@ export function SmsSettingsPanel({
   const [notice, setNotice] = useState<{ type: "success" | "error"; text: string } | null>(null);
   const [testing, setTesting] = useState(false);
   const [showSecrets, setShowSecrets] = useState<Record<string, boolean>>({});
+  const [firebaseTestOtp, setFirebaseTestOtp] = useState("");
+  const [firebaseTestSent, setFirebaseTestSent] = useState(false);
+  const [firebaseConfirming, setFirebaseConfirming] = useState(false);
+  const testFirebaseConfirmation = useRef<FirebaseConfirmationResult | null>(null);
 
   const enabledCount = CARDS.filter((card) => providers[card.key]?.enabled).length;
   const activeCard = CARDS.find((card) => providers[card.key]?.active && providers[card.key]?.enabled);
@@ -235,6 +244,59 @@ export function SmsSettingsPanel({
       setNotice({ type: "error", text: message });
     } finally {
       setTesting(false);
+    }
+  }
+
+  async function dispatchLiveFirebaseTest() {
+    const raw = phone.replace(/\D/g, "");
+    if (raw.length < 10) {
+      setNotice({ type: "error", text: "Please enter a valid 10-digit mobile number." });
+      return;
+    }
+    setTesting(true);
+    setNotice(null);
+    setFirebaseTestSent(false);
+    try {
+      const fbConfig = (providers.firebase || {}) as any;
+      if (!fbConfig.api_key || !fbConfig.auth_domain || !fbConfig.project_id || !fbConfig.app_id) {
+        setNotice({
+          type: "error",
+          text: "Firebase credentials are incomplete. Please configure Web API Key, Auth Domain, Project ID, and App ID first.",
+        });
+        return;
+      }
+      testFirebaseConfirmation.current = await sendFirebaseOtp(
+        fbConfig,
+        phone,
+        "superadmin-recaptcha"
+      );
+      setFirebaseTestSent(true);
+      setNotice({
+        type: "success",
+        text: `Live Firebase SMS OTP dispatched to ${phone}! Enter the 6-digit code received on your phone to complete verification.`,
+      });
+    } catch (err: any) {
+      setNotice({ type: "error", text: humanizeFirebaseError(err) });
+    } finally {
+      setTesting(false);
+    }
+  }
+
+  async function verifyLiveFirebaseTest() {
+    if (!firebaseTestOtp.trim() || !testFirebaseConfirmation.current) return;
+    setFirebaseConfirming(true);
+    try {
+      await testFirebaseConfirmation.current.confirm(firebaseTestOtp.trim());
+      setNotice({
+        type: "success",
+        text: "✅ Phone Auth Verified! The SMS code sent by Google Firebase was successfully verified on this browser.",
+      });
+      setFirebaseTestSent(false);
+      setFirebaseTestOtp("");
+    } catch (err: any) {
+      setNotice({ type: "error", text: humanizeFirebaseError(err) });
+    } finally {
+      setFirebaseConfirming(false);
     }
   }
 
@@ -609,21 +671,69 @@ export function SmsSettingsPanel({
               type="text"
               value={phone}
               onChange={(e) => setPhone(e.target.value)}
-              placeholder="e.g. +91 98765 43210 or +1 415 555 2671"
+              placeholder="e.g. 9392353177 or +91 98765 43210"
               className="h-9 w-full rounded-lg border border-slate-200 pl-8 pr-3 text-xs text-slate-900 placeholder:text-slate-400 focus:border-slate-900 focus:ring-1 focus:ring-slate-900 focus:outline-hidden"
             />
           </div>
 
-          <button
-            type="button"
-            disabled={testing || phone.trim() === ""}
-            onClick={() => void sendTest()}
-            className="inline-flex h-9 shrink-0 items-center justify-center gap-2 rounded-lg bg-slate-900 px-4 text-xs font-semibold text-white transition hover:bg-slate-800 disabled:opacity-50 cursor-pointer"
-          >
-            <Send className="h-3.5 w-3.5" />
-            {testing ? "Transmitting SMS..." : "Dispatch Test SMS"}
-          </button>
+          {activeCard?.key === "firebase" ? (
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                disabled={testing}
+                onClick={() => void sendTest()}
+                className="inline-flex h-9 shrink-0 items-center justify-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-700 hover:bg-slate-50 transition cursor-pointer"
+              >
+                <Server className="h-3.5 w-3.5 text-slate-500" />
+                {testing ? "Validating..." : "Verify API Key"}
+              </button>
+              <button
+                type="button"
+                disabled={testing || phone.trim() === ""}
+                onClick={() => void dispatchLiveFirebaseTest()}
+                className="inline-flex h-9 shrink-0 items-center justify-center gap-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 px-3.5 text-xs font-semibold text-white transition disabled:opacity-50 cursor-pointer shadow-2xs"
+              >
+                <Send className="h-3.5 w-3.5" />
+                {testing ? "Dispatching SMS..." : "Dispatch Live Firebase SMS"}
+              </button>
+            </div>
+          ) : (
+            <button
+              type="button"
+              disabled={testing || phone.trim() === ""}
+              onClick={() => void sendTest()}
+              className="inline-flex h-9 shrink-0 items-center justify-center gap-2 rounded-lg bg-slate-900 px-4 text-xs font-semibold text-white transition hover:bg-slate-800 disabled:opacity-50 cursor-pointer"
+            >
+              <Send className="h-3.5 w-3.5" />
+              {testing ? "Transmitting SMS..." : "Dispatch Test SMS"}
+            </button>
+          )}
         </div>
+
+        {/* SuperAdmin reCAPTCHA Container for Firebase Test */}
+        <div id="superadmin-recaptcha" className="my-1.5" />
+
+        {firebaseTestSent && (
+          <div className="mt-3 flex items-center gap-2 p-3 bg-emerald-50/70 border border-emerald-200 rounded-lg">
+            <span className="text-xs font-medium text-emerald-900">Enter SMS Code:</span>
+            <input
+              type="text"
+              value={firebaseTestOtp}
+              onChange={(e) => setFirebaseTestOtp(e.target.value.replace(/\D/g, "").slice(0, 6))}
+              maxLength={6}
+              placeholder="6-digit code"
+              className="h-8.5 w-36 rounded-md border border-emerald-300 bg-white px-2.5 font-mono text-xs font-bold text-slate-900 outline-none focus:border-emerald-600"
+            />
+            <button
+              type="button"
+              disabled={firebaseConfirming || firebaseTestOtp.length < 6}
+              onClick={() => void verifyLiveFirebaseTest()}
+              className="inline-flex h-8.5 items-center justify-center rounded-md bg-emerald-600 hover:bg-emerald-700 px-3 text-xs font-semibold text-white disabled:opacity-50 cursor-pointer"
+            >
+              {firebaseConfirming ? "Checking..." : "Confirm Test Code"}
+            </button>
+          </div>
+        )}
 
         {/* Live Notice / Result Banner */}
         {notice && (

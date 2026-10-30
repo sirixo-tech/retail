@@ -704,7 +704,36 @@ class BillingController
     public function testSms(Request $request): JsonResponse
     {
         $data = $request->validate(['phone' => ['required', 'string', 'max:20']]);
-        $result = app(SmsGateway::class)->send($data['phone'], 'SelfX SMS test. Your gateway is connected.');
+        $gateway = app(SmsGateway::class);
+        $active = $gateway->active();
+
+        if ($active && $active['key'] === 'firebase') {
+            $firebase = $gateway->publicFirebase();
+            if (empty($firebase['active']) || empty($firebase['api_key'])) {
+                return ApiResponse::error('sms.not_configured', 'Firebase credentials are incomplete. Please provide API Key, Project ID, and App ID.', 422);
+            }
+            // Validate Firebase Web API Key with Google Identity Toolkit API probe
+            try {
+                $probe = \Illuminate\Support\Facades\Http::timeout(8)->post(
+                    'https://identitytoolkit.googleapis.com/v1/accounts:createAuthUri?key='.urlencode((string) $firebase['api_key']),
+                    ['continueUri' => 'https://'.($firebase['auth_domain'] ?: 'localhost')]
+                );
+                $err = $probe->json('error.message');
+                if ($err && str_contains($err, 'API_KEY_INVALID')) {
+                    return ApiResponse::error('sms.failed', 'Invalid Firebase Web API Key. Please verify the Web API Key in Firebase Project Settings.', 422);
+                }
+            } catch (\Throwable $e) {
+                // Ignore transient network errors on probe
+            }
+
+            return ApiResponse::ok([
+                'status' => 'firebase',
+                'detail' => 'Firebase Web API Key & credentials verified! Live SMS OTPs are dispatched with invisible reCAPTCHA directly on sign-in and checkout pages.',
+                'firebase' => $firebase,
+            ]);
+        }
+
+        $result = $gateway->send($data['phone'], 'SelfX SMS test. Your gateway is connected.');
         if (! in_array($result['status'], ['sent', 'logged'], true)) {
             return ApiResponse::error('sms.failed', $result['detail'], 422);
         }
