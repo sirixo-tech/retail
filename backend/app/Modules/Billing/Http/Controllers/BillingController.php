@@ -556,7 +556,14 @@ class BillingController
         $defaults = $this->defaultPlatformSettings();
         $merged = array_replace_recursive($defaults, is_array($stored) ? $stored : []);
         if (isset($stored['email_templates']) && is_array($stored['email_templates'])) {
-            $merged['email_templates'] = $stored['email_templates'];
+            $existingKeys = array_column($stored['email_templates'], 'key');
+            $allTemplates = $stored['email_templates'];
+            foreach ($defaults['email_templates'] as $dtpl) {
+                if (! in_array($dtpl['key'], $existingKeys, true)) {
+                    $allTemplates[] = $dtpl;
+                }
+            }
+            $merged['email_templates'] = $allTemplates;
         }
         if (isset($stored['sms_templates']) && is_array($stored['sms_templates'])) {
             $merged['sms_templates'] = $stored['sms_templates'];
@@ -699,6 +706,78 @@ class BillingController
         }
 
         return ApiResponse::ok(['sent' => true]);
+    }
+
+    public function testEmailTemplate(Request $request): JsonResponse
+    {
+        $data = $request->validate([
+            'template_key' => ['required', 'string'],
+            'to' => ['required', 'email'],
+        ]);
+
+        $mailer = app(\App\Modules\Notifications\PlatformMailer::class);
+        $tpl = $mailer->findTemplate($data['template_key']);
+        if (! $tpl) {
+            return ApiResponse::error('template.not_found', "Email template '{$data['template_key']}' not found.", 404);
+        }
+
+        // Realistic sample data matching all potential placeholders
+        $sampleVariables = [
+            'platform_name' => 'SelfX Retail Cloud',
+            'store_name' => 'Fresh Mart Supermarket',
+            'tenant_name' => 'Fresh Mart Pvt Ltd',
+            'owner_name' => 'Rajesh Sharma',
+            'owner_email' => $data['to'],
+            'customer_name' => 'Priya Patel',
+            'customer_phone' => '+91 98765 43210',
+            'order_number' => 'ORD-'.strtoupper(Str::random(6)),
+            'total_amount' => 'Rs. 1,450.00',
+            'amount' => 'Rs. 1,450.00',
+            'item_count' => '4',
+            'fulfillment_type' => 'Express Delivery (30 mins)',
+            'shipping_address' => 'Flat 402, Lotus Heights, Indiranagar, Bengaluru - 560038',
+            'pickup_otp' => '482910',
+            'order_status_title' => 'Package Dispatched for Delivery',
+            'order_status_message' => 'Our delivery partner is on the way to your address with your package.',
+            'tracking_url' => 'https://retail.sirixo.com/track?number=ORD-SAMPLE',
+            'invoice_url' => 'https://retail.sirixo.com/store?store=fresh-mart',
+            'console_url' => 'https://retail.sirixo.com/login',
+            'admin_tenant_url' => 'https://retail.sirixo.com/tenants',
+            'admin_billing_url' => 'https://retail.sirixo.com/billing-subscriptions',
+            'store_url' => 'https://retail.sirixo.com/store?store=fresh-mart',
+            'store_phone' => '+91 80 4123 4567',
+            'store_email' => 'support@freshmart.in',
+            'invoice_number' => 'INV-'.date('Y').'-0089',
+            'due_date' => date('d M Y', strtotime('+7 days')),
+            'renewal_date' => date('d M Y', strtotime('+30 days')),
+            'plan_name' => 'Enterprise Pro Cloud',
+            'payment_gateway' => 'Razorpay Secure',
+            'payment_method' => 'UPI Instant (GPay / PhonePe)',
+            'loyalty_points' => '145 Points (+Rs. 14.50 credit)',
+            'cancellation_reason' => 'Customer requested address modification prior to dispatch.',
+            'refund_status' => 'Initiated via original payment method (Expected in 2-3 business days)',
+            'registered_at' => now()->format('d M Y, h:i A'),
+            'action_label' => 'View Live Details',
+            'action_url' => 'https://retail.sirixo.com',
+            'reason' => 'Customer requested urgent tax invoice reconciliation assistance.',
+            'admin_email' => 'security-ops@retail.sirixo.com',
+        ];
+
+        $res = $mailer->sendTemplate($data['template_key'], $data['to'], $sampleVariables, null, 'TEST-'.Str::random(6));
+
+        if ($res['status'] === 'sent') {
+            return ApiResponse::ok([
+                'sent' => true,
+                'status' => 'sent',
+                'detail' => $res['detail'],
+            ]);
+        }
+
+        return ApiResponse::error(
+            'mail.'.$res['status'],
+            $res['detail'],
+            $res['status'] === 'not_configured' ? 422 : 502
+        );
     }
 
     public function testSms(Request $request): JsonResponse
@@ -979,9 +1058,93 @@ class BillingController
                 'bank_transfer' => ['enabled' => false, 'bank_name' => '', 'account_name' => '', 'account_number' => '', 'ifsc' => '', 'mode' => 'test', 'currency' => 'INR', 'instructions' => ''],
             ],
             'email_templates' => [
+                // ==========================================
+                // 1. STOREFRONT CUSTOMER NOTIFICATION EMAILS
+                // ==========================================
+                [
+                    'key' => 'customer_order_placed',
+                    'name' => 'Storefront: Customer Order Placed & Confirmed',
+                    'category' => 'customer',
+                    'trigger' => 'Event: order.placed',
+                    'subject' => 'Order Confirmed #{{order_number}} from {{store_name}}',
+                    'body' => "Hello {{customer_name}},\n\nThank you for shopping with {{store_name}}! We have received your order #{{order_number}} for {{total_amount}} ({{item_count}} item(s)).\n\nFulfillment: {{fulfillment_type}}\nDelivery Address: {{shipping_address}}\n\nYou can track the live preparation and delivery status of your order anytime using the link below.\n\nThank you,\n{{store_name}} Team",
+                    'active' => true,
+                ],
+                [
+                    'key' => 'customer_order_accepted',
+                    'name' => 'Storefront: Customer Order In Preparation',
+                    'category' => 'customer',
+                    'trigger' => 'Event: order.accepted',
+                    'subject' => 'Your order #{{order_number}} is being prepared by {{store_name}}',
+                    'body' => "Hello {{customer_name}},\n\nGood news! Your order #{{order_number}} has been accepted and is now being hand-picked and packed with care by our team at {{store_name}}.\n\nFulfillment: {{fulfillment_type}}\nTotal Amount: {{total_amount}}\n\nWe will notify you as soon as your package is dispatched or ready for counter collection.\n\nWarm regards,\n{{store_name}}",
+                    'active' => true,
+                ],
+                [
+                    'key' => 'customer_order_dispatched',
+                    'name' => 'Storefront: Out for Delivery / Ready for Pickup',
+                    'category' => 'customer',
+                    'trigger' => 'Event: order.dispatched',
+                    'subject' => 'Update on order #{{order_number}}: {{order_status_title}}',
+                    'body' => "Hello {{customer_name}},\n\n{{order_status_message}}\n\nOrder Number: #{{order_number}}\nVerification OTP: {{pickup_otp}}\n\nPlease keep your 6-digit OTP code ready when meeting our delivery partner or collecting at the store counter.\n\nThank you,\n{{store_name}}",
+                    'active' => true,
+                ],
+                [
+                    'key' => 'customer_order_delivered',
+                    'name' => 'Storefront: Order Delivered & Tax Invoice Receipt',
+                    'category' => 'customer',
+                    'trigger' => 'Event: order.delivered',
+                    'subject' => 'Delivered! Order #{{order_number}} from {{store_name}}',
+                    'body' => "Hello {{customer_name}},\n\nYour order #{{order_number}} has been successfully delivered!\n\nTotal Paid: {{total_amount}} via {{payment_method}}\nLoyalty Points Earned: {{loyalty_points}}\n\nWe hope you love your purchase! Click below to review your digital tax invoice receipt and rate your shopping experience.\n\nThank you for choosing {{store_name}}!",
+                    'active' => true,
+                ],
+                [
+                    'key' => 'customer_order_cancelled',
+                    'name' => 'Storefront: Order Cancellation & Refund Notice',
+                    'category' => 'customer',
+                    'trigger' => 'Event: order.cancelled',
+                    'subject' => 'Notice: Order #{{order_number}} has been cancelled',
+                    'body' => "Hello {{customer_name}},\n\nYour order #{{order_number}} at {{store_name}} has been cancelled.\n\nReason: {{cancellation_reason}}\nRefund Status: {{refund_status}}\n\nIf any payment was debited, it will be refunded to your original payment method in 3-5 business days. For any assistance, please reach out to us at {{store_phone}} or {{store_email}}.\n\nSincerely,\n{{store_name}} Customer Care",
+                    'active' => true,
+                ],
+
+                // ==========================================
+                // 2. COMPANY & PLATFORM HEADQUARTERS ALERTS
+                // ==========================================
+                [
+                    'key' => 'company_merchant_registered',
+                    'name' => 'Company Alert: New Merchant Workspace Registered',
+                    'category' => 'company',
+                    'trigger' => 'Event: platform.merchant_registered',
+                    'subject' => '[Platform Alert] New Merchant Joined: {{tenant_name}}',
+                    'body' => "Hello Platform Operations,\n\nA new merchant has registered on {{platform_name}}!\n\nMerchant: {{tenant_name}}\nOwner Name: {{owner_name}}\nOwner Contact: {{owner_email}} | {{owner_phone}}\nSelected Plan: {{plan_name}}\nRegistered At: {{registered_at}}\n\nInspect this merchant workspace in the Super Admin console.",
+                    'active' => true,
+                ],
+                [
+                    'key' => 'company_new_order',
+                    'name' => 'Company Alert: New Storefront Online Order Created',
+                    'category' => 'company',
+                    'trigger' => 'Event: platform.new_online_order',
+                    'subject' => '[Platform Order] New Order #{{order_number}} on {{store_name}} ({{total_amount}})',
+                    'body' => "Platform Operations Notice:\n\nA new storefront order has been placed on the platform.\n\nStore: {{store_name}} (Tenant: {{tenant_name}})\nOrder Number: #{{order_number}}\nAmount: {{total_amount}}\nCustomer: {{customer_name}} ({{customer_phone}})\nFulfillment: {{fulfillment_type}}\nPayment Method: {{payment_method}}\n\nMonitor platform fulfillment telemetry in Super Admin.",
+                    'active' => true,
+                ],
+                [
+                    'key' => 'company_subscription_revenue',
+                    'name' => 'Company Alert: SaaS Subscription Payment Captured',
+                    'category' => 'company',
+                    'trigger' => 'Event: platform.subscription_paid',
+                    'subject' => '[Revenue] {{amount}} received from {{tenant_name}} (Invoice {{invoice_number}})',
+                    'body' => "Platform Finance Alert:\n\nPayment has been successfully captured for SaaS subscription!\n\nTenant: {{tenant_name}}\nInvoice Number: {{invoice_number}}\nAmount Received: {{amount}}\nPayment Gateway: {{payment_gateway}}\nNext Renewal Date: {{renewal_date}}\n\nInspect finance logs in Super Admin.",
+                    'active' => true,
+                ],
+
+                // ==========================================
+                // 3. TENANT WORKSPACE & BILLING LIFECYCLE
+                // ==========================================
                 [
                     'key' => 'tenant_welcome',
                     'name' => 'Tenant Onboarding & Provisioned Credentials',
+                    'category' => 'tenant',
                     'trigger' => 'Event: tenant.created',
                     'subject' => 'Welcome to {{platform_name}} — Your store {{tenant_name}} is live',
                     'body' => "Hello {{owner_name}},\n\nYour retail workspace ({{tenant_name}}) has been provisioned.\nLogin URL: {{console_url}}\nUsername: {{owner_email}}\n\nThank you,\n{{platform_name}} Team",
@@ -990,6 +1153,7 @@ class BillingController
                 [
                     'key' => 'subscription_invoice',
                     'name' => 'GST Subscription Tax Invoice Issued',
+                    'category' => 'tenant',
                     'trigger' => 'Event: invoice.generated',
                     'subject' => 'Tax Invoice {{invoice_number}} for {{tenant_name}}',
                     'body' => "Hello {{owner_name}},\n\nYour GST subscription invoice {{invoice_number}} for {{amount}} has been generated.\nDue Date: {{due_date}}\n\nThank you,\n{{platform_name}} Billing",
@@ -998,6 +1162,7 @@ class BillingController
                 [
                     'key' => 'subscription_renewal_reminder',
                     'name' => 'Subscription Renewal Reminder (T-7 Days)',
+                    'category' => 'tenant',
                     'trigger' => 'Event: subscription.renewing',
                     'subject' => 'Action Required: {{tenant_name}} subscription renews on {{renewal_date}}',
                     'body' => "Hello {{owner_name}},\n\nYour {{plan_name}} plan for {{tenant_name}} is scheduled for renewal on {{renewal_date}}.\n\nThank you,\n{{platform_name}} Billing",
@@ -1006,6 +1171,7 @@ class BillingController
                 [
                     'key' => 'payment_success',
                     'name' => 'Subscription Payment Confirmation',
+                    'category' => 'tenant',
                     'trigger' => 'Event: payment.received',
                     'subject' => 'Payment Confirmation for Invoice {{invoice_number}}',
                     'body' => "Hello {{owner_name}},\n\nWe have successfully received payment of {{amount}} for invoice {{invoice_number}}.\n\nYour subscription is now active through {{renewal_date}}.\n\nThank you,\n{{platform_name}} Billing",
@@ -1014,6 +1180,7 @@ class BillingController
                 [
                     'key' => 'trial_expiring',
                     'name' => 'Trial Period Expiration Alert (T-3 Days)',
+                    'category' => 'tenant',
                     'trigger' => 'Event: trial.expiring',
                     'subject' => 'Your {{platform_name}} free trial ends soon for {{tenant_name}}',
                     'body' => "Hello {{owner_name}},\n\nYour 14-day free trial for {{tenant_name}} will conclude on {{due_date}}.\n\nUpgrade to Pro or Enterprise at {{console_url}}/billing to ensure uninterrupted POS billing and cloud syncing.\n\nThank you,\n{{platform_name}} Team",
@@ -1022,6 +1189,7 @@ class BillingController
                 [
                     'key' => 'impersonation_notice',
                     'name' => 'Security Alert: Support Session Initiated',
+                    'category' => 'tenant',
                     'trigger' => 'Event: impersonation.started',
                     'subject' => 'Security Notice: Support session initiated on {{tenant_name}}',
                     'body' => "Hello {{owner_name}},\n\nA platform support administrator ({{admin_email}}) started a time-boxed support session on {{tenant_name}} for reason: {{reason}}.\n\nThank you,\n{{platform_name}} Security Operations",

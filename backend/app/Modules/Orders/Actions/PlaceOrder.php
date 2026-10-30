@@ -286,6 +286,62 @@ class PlaceOrder
             } catch (\Throwable) {
             }
 
+            // Centralized Notification Mailer: Customer confirmation & Platform Company alert
+            try {
+                $mailer = app(\App\Modules\Notifications\PlatformMailer::class);
+                $customerEmail = ! empty($addressData['email']) ? trim((string) $addressData['email']) : null;
+                $formattedTotal = 'Rs. '.number_format($finalTotal / 100, 2);
+                $fullAddress = ! empty($addressData['address']) ? trim((string) $addressData['address']) : 'Store Pickup';
+                $trackingUrl = 'https://retail.sirixo.com/track?number='.urlencode($orderNumber).'&phone='.urlencode($phone);
+
+                if ($customerEmail && filter_var($customerEmail, FILTER_VALIDATE_EMAIL)) {
+                    $mailer->sendTemplate(
+                        'customer_order_placed',
+                        $customerEmail,
+                        [
+                            'customer_name' => $name,
+                            'customer_phone' => $phone,
+                            'order_number' => $orderNumber,
+                            'total_amount' => $formattedTotal,
+                            'item_count' => count($built),
+                            'fulfillment_type' => $fulfillment === 'delivery' ? 'Home Delivery' : 'Store Pickup',
+                            'shipping_address' => $fullAddress,
+                            'store_name' => $store->name,
+                            'tracking_url' => $trackingUrl,
+                            'action_label' => 'Track Order Status',
+                            'action_url' => $trackingUrl,
+                        ],
+                        $store->tenant_id,
+                        $orderId
+                    );
+                }
+
+                $companyEmail = $mailer->getCompanyNotificationEmail();
+                if ($companyEmail) {
+                    $mailer->sendTemplate(
+                        'company_new_order',
+                        $companyEmail,
+                        [
+                            'order_number' => $orderNumber,
+                            'store_name' => $store->name,
+                            'tenant_name' => DB::table('tenants')->where('id', $store->tenant_id)->value('business_name') ?: $store->name,
+                            'total_amount' => $formattedTotal,
+                            'customer_name' => $name,
+                            'customer_phone' => $phone,
+                            'fulfillment_type' => $fulfillment === 'delivery' ? 'Home Delivery' : 'Store Pickup',
+                            'payment_method' => strtoupper($resolvedPaymentMethod),
+                            'tracking_url' => $trackingUrl,
+                            'action_label' => 'View Storefront Order',
+                            'action_url' => $trackingUrl,
+                        ],
+                        $store->tenant_id,
+                        $orderId
+                    );
+                }
+            } catch (\Throwable) {
+                // Non-blocking notification dispatch
+            }
+
             return $this->present(DB::table('orders')->where('id', $orderId)->first());
         });
     }
@@ -354,6 +410,75 @@ class PlaceOrder
             $payload = $this->present(DB::table('orders')->where('id', $order->id)->first());
             if ($oneTimeCode) {
                 $payload['delivery_otp'] = $oneTimeCode;
+            }
+
+            // Transition Email Dispatch
+            try {
+                $mailer = app(\App\Modules\Notifications\PlatformMailer::class);
+                $snap = json_decode((string) $order->address_snapshot, true);
+                $custEmail = ! empty($snap['email']) && filter_var($snap['email'], FILTER_VALIDATE_EMAIL) ? $snap['email'] : null;
+                $storeName = DB::table('stores')->where('id', $order->store_id)->value('name') ?: 'Store';
+                $formattedTotal = 'Rs. '.number_format(((int) $order->total_paise) / 100, 2);
+                $trackingUrl = 'https://retail.sirixo.com/track?number='.urlencode($order->number).'&phone='.urlencode((string) $order->customer_phone);
+
+                if ($custEmail) {
+                    if ($to === 'accepted') {
+                        $mailer->sendTemplate('customer_order_accepted', $custEmail, [
+                            'customer_name' => $order->customer_name,
+                            'order_number' => $order->number,
+                            'store_name' => $storeName,
+                            'fulfillment_type' => $order->fulfillment === 'delivery' ? 'Home Delivery' : 'Store Pickup',
+                            'total_amount' => $formattedTotal,
+                            'tracking_url' => $trackingUrl,
+                            'action_label' => 'View Order Status',
+                            'action_url' => $trackingUrl,
+                        ], $tenantId, $order->id);
+                    } elseif ($to === 'out_for_delivery' || $to === 'ready_for_pickup') {
+                        $isDeliv = $to === 'out_for_delivery';
+                        $statusTitle = $isDeliv ? 'Package Dispatched for Delivery' : 'Ready for Counter Pickup';
+                        $statusMsg = $isDeliv
+                            ? 'Our delivery partner is on the way to your address with your package.'
+                            : 'Your package is packed and waiting for you at our store counter.';
+                        $mailer->sendTemplate('customer_order_dispatched', $custEmail, [
+                            'customer_name' => $order->customer_name,
+                            'order_number' => $order->number,
+                            'store_name' => $storeName,
+                            'order_status_title' => $statusTitle,
+                            'order_status_message' => $statusMsg,
+                            'pickup_otp' => $oneTimeCode ?? 'N/A',
+                            'tracking_url' => $trackingUrl,
+                            'action_label' => 'Track Live Order',
+                            'action_url' => $trackingUrl,
+                        ], $tenantId, $order->id);
+                    } elseif ($to === 'delivered' || $to === 'picked_up') {
+                        $mailer->sendTemplate('customer_order_delivered', $custEmail, [
+                            'customer_name' => $order->customer_name,
+                            'order_number' => $order->number,
+                            'store_name' => $storeName,
+                            'total_amount' => $formattedTotal,
+                            'payment_method' => strtoupper((string) ($order->payment_method ?? 'Cash/UPI')),
+                            'loyalty_points' => 'Loyalty points credited',
+                            'invoice_url' => $trackingUrl,
+                            'action_label' => 'View Invoice & Receipt',
+                            'action_url' => $trackingUrl,
+                        ], $tenantId, $order->id);
+                    } elseif ($to === 'cancelled' || $to === 'rejected') {
+                        $mailer->sendTemplate('customer_order_cancelled', $custEmail, [
+                            'customer_name' => $order->customer_name,
+                            'order_number' => $order->number,
+                            'store_name' => $storeName,
+                            'cancellation_reason' => 'Order was cancelled or could not be fulfilled at this time.',
+                            'refund_status' => 'Refund processed or payment voided',
+                            'store_phone' => '+91 80 4123 4567',
+                            'store_email' => 'support@sirixo.com',
+                            'store_url' => 'https://retail.sirixo.com',
+                            'action_label' => 'Contact Store',
+                            'action_url' => 'https://retail.sirixo.com',
+                        ], $tenantId, $order->id);
+                    }
+                }
+            } catch (\Throwable) {
+                // Non-blocking notification dispatch
             }
 
             return $payload;

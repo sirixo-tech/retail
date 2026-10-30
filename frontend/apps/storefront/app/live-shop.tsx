@@ -4,6 +4,7 @@ import { formatInr } from "@selfx/types";
 import {
   AlertCircle,
   ArrowLeft,
+  Award,
   Bike,
   Check,
   CheckCircle2,
@@ -20,9 +21,11 @@ import {
   FileText,
   Globe,
   Heart,
+  HelpCircle,
   Home,
   Info,
   Lock,
+  LogOut,
   Mail,
   MapPin,
   MessageSquare,
@@ -35,6 +38,7 @@ import {
   Printer,
   QrCode,
   Receipt,
+  RefreshCw,
   Search,
   Share2,
   ShieldCheck,
@@ -42,6 +46,7 @@ import {
   ShoppingCart,
   SlidersHorizontal,
   Sparkles,
+  Star,
   Store,
   Sun,
   Tag,
@@ -481,6 +486,14 @@ export function LiveShop() {
   const [contactSent, setContactSent] = useState(false);
 
   // Checkout form state
+  const [customerProfileOpen, setCustomerProfileOpen] = useState(false);
+  const [profileOrdersSegment, setProfileOrdersSegment] = useState<"all" | "delivery" | "pickup">("all");
+  const [orderRatings, setOrderRatings] = useState<Record<string, number>>({});
+  const [profileEditOpen, setProfileEditOpen] = useState(false);
+  const [profileAddressesOpen, setProfileAddressesOpen] = useState(false);
+  const [profileCouponsOpen, setProfileCouponsOpen] = useState(false);
+  const [profilePaymentsOpen, setProfilePaymentsOpen] = useState(false);
+  const [profileRefundsOpen, setProfileRefundsOpen] = useState(false);
   const [fulfillment, setFulfillment] = useState<"delivery" | "pickup">("delivery");
   const [payment, setPayment] = useState<string>("cod");
   const [checkoutStep, setCheckoutStep] = useState<"details" | "payment">("details");
@@ -930,6 +943,65 @@ export function LiveShop() {
     } catch {
       // ignore
     }
+  };
+
+  const handleRateOrder = (orderNumber: string, stars: number) => {
+    const next = { ...orderRatings, [orderNumber]: stars };
+    setOrderRatings(next);
+    try {
+      window.localStorage.setItem("selfx_order_ratings", JSON.stringify(next));
+    } catch {
+      // ignore
+    }
+  };
+
+  const handleReorder = (ord: any) => {
+    if (!ord.lines || !Array.isArray(ord.lines)) return;
+    const newQty = { ...qty };
+    let addedCount = 0;
+    ord.lines.forEach((line: any) => {
+      const lineName = (line.name || "").toLowerCase().trim();
+      const item = items.find(
+        (i) =>
+          i.id === line.store_item_id ||
+          (i.sku && i.sku.toLowerCase() === lineName) ||
+          i.name.toLowerCase().trim() === lineName
+      );
+      if (item) {
+        newQty[item.id] = (newQty[item.id] || 0) + (Number(line.qty) || 1);
+        addedCount++;
+      }
+    });
+    if (addedCount > 0) {
+      setQty(newQty);
+      setCustomerProfileOpen(false);
+      setOrdersDrawerOpen(false);
+      setCartDrawerOpen(true);
+      setMessage(`Reordered ${addedCount} item(s) from order #${ord.number}!`);
+    } else {
+      setMessage(`Items from order #${ord.number} could not be found in active inventory.`);
+    }
+  };
+
+  const handleSaveProfile = () => {
+    try {
+      const raw = window.localStorage.getItem(CUSTOMER_STORAGE_KEY);
+      const existing = raw ? JSON.parse(raw) : {};
+      window.localStorage.setItem(
+        CUSTOMER_STORAGE_KEY,
+        JSON.stringify({
+          ...existing,
+          name,
+          email,
+          phone,
+          verifiedSignIn: isVerifiedSignIn,
+        })
+      );
+    } catch {
+      // ignore
+    }
+    setProfileEditOpen(false);
+    setMessage("Profile details updated successfully!");
   };
 
   // Real-time live polling every 6 seconds for active order updates & rider position
@@ -2357,17 +2429,24 @@ export function LiveShop() {
                 {darkMode ? <Sun size={14} /> : <Moon size={14} />}
               </button>
 
-              {/* Sign in Button (visible on mobile as compact icon, full pill on sm+) */}
+              {/* Sign in / Customer Profile Button */}
               {onlineSettings?.basics?.phoneSignIn !== false && (
               <button
                 type="button"
-                onClick={() => setLoginModalOpen(true)}
-                className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-2 sm:px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50 shadow-2xs transition"
-                aria-label="Sign in"
+                onClick={() => {
+                  if (isVerifiedSignIn) {
+                    setCustomerProfileOpen(true);
+                    if (phone) void refreshCustomerOrders(phone, true);
+                  } else {
+                    setLoginModalOpen(true);
+                  }
+                }}
+                className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-2 sm:px-3 py-1.5 text-xs font-bold text-slate-700 hover:bg-slate-50 shadow-2xs transition cursor-pointer"
+                aria-label={isVerifiedSignIn ? "Customer Account" : "Sign in"}
               >
                 <User size={14} className={isVerifiedSignIn ? "text-emerald-600" : "text-slate-500"} />
                 <span className="hidden sm:inline">
-                  {isVerifiedSignIn && phone ? `+91 ${phone.slice(-4)}` : "Sign in"}
+                  {isVerifiedSignIn ? (name ? name.split(" ")[0] : `+91 ${phone ? phone.slice(-4) : "User"}`) : "Sign in"}
                 </span>
               </button>
               )}
@@ -2377,10 +2456,14 @@ export function LiveShop() {
                 <button
                   type="button"
                   onClick={() => {
-                    setOrdersDrawerOpen(true);
-                    if (phone && isVerifiedSignIn) void refreshCustomerOrders(phone, true);
+                    if (isVerifiedSignIn) {
+                      setCustomerProfileOpen(true);
+                      if (phone) void refreshCustomerOrders(phone, true);
+                    } else {
+                      setOrdersDrawerOpen(true);
+                    }
                   }}
-                  className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-2 sm:px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50 shadow-2xs transition relative"
+                  className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-2 sm:px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50 shadow-2xs transition relative cursor-pointer"
                   aria-label="Orders"
                 >
                   <FileText size={14} className="text-slate-500" />
@@ -5550,29 +5633,36 @@ export function LiveShop() {
             </div>
 
             {isVerifiedSignIn ? (
-              <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-4 text-center space-y-2.5">
-                <CheckCircle2 size={26} className="mx-auto text-emerald-600" />
-                <div className="text-xs font-bold text-emerald-950">
-                  Signed in as +91 {phone}
+              <div className="rounded-2xl border border-emerald-200 bg-emerald-50/70 p-5 text-center space-y-3">
+                <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-emerald-600 text-white font-black text-xl mx-auto shadow-sm">
+                  {name ? name.charAt(0).toUpperCase() : "U"}
                 </div>
-                {name && <div className="text-[11px] font-medium text-emerald-800">{name}</div>}
-                <div className="flex items-center justify-center gap-2 pt-1">
+                <div>
+                  <div className="text-sm font-bold text-slate-900">
+                    {name || "Customer Account"}
+                  </div>
+                  <div className="text-xs font-semibold text-emerald-800 font-mono mt-0.5">
+                    +91 {phone}
+                  </div>
+                  {email && <div className="text-[11px] text-slate-500 mt-0.5">{email}</div>}
+                </div>
+                <div className="flex flex-col gap-2 pt-1">
                   <button
                     type="button"
                     onClick={() => {
                       setLoginModalOpen(false);
-                      setOrdersDrawerOpen(true);
-                      void refreshCustomerOrders(phone, true);
+                      setCustomerProfileOpen(true);
+                      if (phone) void refreshCustomerOrders(phone, true);
                     }}
                     style={{ backgroundColor: brandPrimaryColor }}
-                    className="rounded-xl px-4 py-2 text-xs font-bold text-white shadow-2xs"
+                    className="w-full rounded-xl py-2.5 text-xs font-bold text-white shadow-xs cursor-pointer hover:opacity-95 transition"
                   >
-                    View Order History
+                    Open Profile &amp; Dashboard &rarr;
                   </button>
                   <button
                     type="button"
                     onClick={handleSignOutCustomer}
-                    className="rounded-xl border border-rose-200 bg-white px-3 py-2 text-xs font-bold text-rose-600 hover:bg-rose-50"
+                    className="w-full rounded-xl border border-rose-200 bg-white py-2 text-xs font-bold text-rose-600 hover:bg-rose-50 cursor-pointer transition"
                   >
                     Sign Out
                   </button>
@@ -5797,179 +5887,843 @@ export function LiveShop() {
         </div>
       )}
 
-      {/* Customer Orders Slide-over Drawer (Previous Order History ONLY visible when signed in with Phone + OTP) */}
-      {ordersDrawerOpen && (
+      {/* ====================================================================
+       * Customer Profile & Account Dashboard Drawer (Images 2 & 3 Experience)
+       * ==================================================================== */}
+      {(ordersDrawerOpen || customerProfileOpen) && (
         <div className="fixed inset-0 z-50 flex justify-end bg-black/60 backdrop-blur-xs">
-          <div className="relative flex h-full w-full max-w-md flex-col bg-white shadow-2xl">
+          <div className="relative flex h-full w-full max-w-lg flex-col bg-[#f8fafc] shadow-2xl">
             {/* Drawer Header */}
-            <div className="flex items-center justify-between border-b border-slate-200 px-5 py-4">
+            <div className="flex items-center justify-between border-b border-slate-200 bg-white px-5 py-4 shrink-0">
               <div className="flex items-center gap-2.5">
                 <div
-                  className="flex h-8 w-8 items-center justify-center rounded-lg text-white"
+                  className="flex h-9 w-9 items-center justify-center rounded-xl text-white shadow-xs"
                   style={{ backgroundColor: brandPrimaryColor }}
                 >
-                  <FileText size={16} />
+                  <User size={18} />
                 </div>
                 <div>
-                  <h3 className="text-sm font-semibold text-slate-900">Your Orders</h3>
+                  <h3 className="text-sm font-bold text-slate-900">
+                    {isVerifiedSignIn ? "Customer Account & Rewards" : "Customer Sign In"}
+                  </h3>
                   <p className="text-[11px] text-slate-500">
                     {isVerifiedSignIn && phone
-                      ? `Verified Sign-In · +91 ${phone.slice(-4)}`
-                      : "Guest Session · Sign in with OTP to view history"}
+                      ? `Verified Mobile · +91 ${phone.slice(-4)}`
+                      : `${displayStoreName} · Sign in with OTP`}
                   </p>
                 </div>
               </div>
               <button
                 type="button"
-                onClick={() => setOrdersDrawerOpen(false)}
-                className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-100 hover:text-slate-700"
+                onClick={() => {
+                  setOrdersDrawerOpen(false);
+                  setCustomerProfileOpen(false);
+                }}
+                className="rounded-xl p-1.5 text-slate-400 hover:bg-slate-100 hover:text-slate-700 cursor-pointer transition"
               >
                 <X size={18} />
               </button>
             </div>
 
             {/* Drawer Content */}
-            <div className="flex-1 overflow-y-auto p-4 sm:p-5 space-y-3">
+            <div className="flex-1 overflow-y-auto p-4 sm:p-5 space-y-4">
               {!isVerifiedSignIn ? (
-                <div className="rounded-2xl border border-amber-200 bg-amber-50/70 p-5 text-center space-y-3 my-4">
-                  <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-amber-100 text-amber-700">
-                    <Lock size={20} />
+                <div className="rounded-2xl border border-amber-200 bg-amber-50/70 p-6 text-center space-y-3 my-4">
+                  <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl bg-amber-100 text-amber-700 shadow-xs">
+                    <Lock size={24} />
                   </div>
-                  <div className="text-sm font-bold text-slate-900">
-                    Sign In Required for Order History
+                  <div className="text-base font-bold text-slate-900">
+                    Sign In to Access Your Account
                   </div>
-                  <p className="text-xs text-slate-600 leading-relaxed">
-                    Guest customers cannot view previous order history. Please sign in with your mobile number and OTP to access all your past orders and receipts.
+                  <p className="text-xs text-slate-600 leading-relaxed max-w-xs mx-auto">
+                    Sign in with your mobile number &amp; OTP to view your saved delivery addresses, club rewards, past order tracking, and 1-click reorder.
                   </p>
                   {onlineSettings?.basics?.phoneSignIn !== false && (
                     <button
                       type="button"
                       onClick={() => {
                         setOrdersDrawerOpen(false);
+                        setCustomerProfileOpen(false);
                         setCustomerAuthMode("signed_in");
                         setLoginModalOpen(true);
                       }}
                       style={{ backgroundColor: brandPrimaryColor }}
-                      className={`inline-flex items-center justify-center gap-1.5 text-white px-4 py-2.5 text-xs font-bold shadow-xs ${buttonRadiusClass}`}
+                      className={`inline-flex items-center justify-center gap-2 text-white px-5 py-3 text-xs font-bold uppercase tracking-wider shadow-sm transition hover:opacity-95 cursor-pointer ${buttonRadiusClass}`}
                     >
-                      <Phone size={13} />
-                      <span>Sign In with Phone &amp; OTP</span>
+                      <Phone size={14} />
+                      <span>Sign In with Mobile OTP</span>
                     </button>
                   )}
                 </div>
-              ) : loadingOrders ? (
-                <div className="py-12 text-center text-xs font-semibold text-slate-400">
-                  Loading your verified order history...
-                </div>
-              ) : customerOrders.length === 0 ? (
-                <div className="py-16 text-center space-y-2">
-                  <ShoppingBag size={36} className="mx-auto text-slate-300" />
-                  <div className="text-sm font-semibold text-slate-900">No orders found</div>
-                  <p className="text-xs text-slate-500 max-w-xs mx-auto">
-                    You haven&apos;t placed any orders yet with +91 {phone}. Explore our catalog to order!
-                  </p>
-                </div>
               ) : (
-                customerOrders.map((ord: any) => {
-                  const isDeliv = ord.fulfillment === "delivery";
-                  const statusLabel =
-                    ord.status === "out_for_delivery"
-                      ? "Out for Delivery"
-                      : ord.status === "packed"
-                      ? "Packed & Ready"
-                      : ord.status === "confirmed" || ord.status === "accepted"
-                      ? "Store Preparing"
-                      : ord.status === "delivered"
-                      ? "Delivered"
-                      : ord.status === "cancelled"
-                      ? "Cancelled"
-                      : "Order Placed";
+                <>
+                  {/* HERO PROFILE CARD (Image 2 Inspiration) */}
+                  <div className="relative overflow-hidden rounded-3xl bg-gradient-to-br from-slate-950 via-slate-900 to-slate-800 text-white p-5 shadow-md">
+                    {/* Background ambient accents */}
+                    <div className="absolute -top-12 -right-12 h-40 w-40 rounded-full bg-orange-500/15 blur-2xl pointer-events-none" />
+                    <div className="absolute -bottom-12 -left-12 h-40 w-40 rounded-full bg-blue-500/10 blur-xl pointer-events-none" />
 
-                  const statusColor =
-                    ord.status === "delivered"
-                      ? "bg-emerald-50 text-emerald-700 border-emerald-200"
-                      : ord.status === "out_for_delivery"
-                      ? "bg-indigo-50 text-indigo-700 border-indigo-200"
-                      : ord.status === "cancelled"
-                      ? "bg-rose-50 text-rose-700 border-rose-200"
-                      : "bg-amber-50 text-amber-700 border-amber-200";
-
-                  return (
-                    <div
-                      key={ord.number}
-                      className="rounded-xl border border-slate-200 bg-white p-4 shadow-2xs space-y-2.5 transition hover:border-slate-300"
-                    >
-                      <div className="flex items-center justify-between">
-                        <div className="flex items-center gap-2">
-                          <span className="font-mono text-xs font-semibold text-slate-900">
-                            #{ord.number}
-                          </span>
-                          <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold border ${statusColor}`}>
-                            {statusLabel}
-                          </span>
+                    <div className="relative flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+                      <div className="flex items-center gap-3.5 min-w-0">
+                        <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-white/20 backdrop-blur-md text-white font-black text-xl shadow-inner border border-white/20 shrink-0">
+                          {name ? name.charAt(0).toUpperCase() : "U"}
                         </div>
-                        <span className="text-xs font-semibold text-slate-900">
-                          {formatStorePrice(ord.total_paise || 0)}
-                        </span>
+                        <div className="min-w-0 space-y-0.5">
+                          <div className="flex items-center gap-2">
+                            <h2 className="text-base sm:text-lg font-black tracking-tight truncate text-white">
+                              {name || "Valued Shopper"}
+                            </h2>
+                            <span className="rounded-full bg-emerald-400/25 border border-emerald-300/40 px-2 py-0.5 text-[9px] font-bold text-emerald-200 uppercase tracking-wider">
+                              Verified
+                            </span>
+                          </div>
+                          <p className="text-xs font-semibold text-white/90 font-mono">
+                            +91 {phone}
+                          </p>
+                          {email ? (
+                            <p className="text-[11px] text-white/70 truncate">{email}</p>
+                          ) : (
+                            <button
+                              type="button"
+                              onClick={() => setProfileEditOpen(true)}
+                              className="text-[10px] text-amber-300 hover:underline inline-flex items-center gap-1 cursor-pointer"
+                            >
+                              + Add email address
+                            </button>
+                          )}
+                        </div>
                       </div>
 
-                      <div className="flex flex-wrap items-center gap-1.5 text-[11px] text-slate-500">
-                        <span>{isDeliv ? "Doorstep Delivery" : "In-Store Pickup"}</span>
-                        <span>·</span>
-                        <span>
-                          {ord.created_at
-                            ? new Date(ord.created_at).toLocaleDateString("en-IN", {
-                                month: "short",
-                                day: "numeric",
-                                hour: "2-digit",
-                                minute: "2-digit",
-                              })
-                            : "Recent"}
-                        </span>
-                        {ord.delivery_slot && (
-                          <span className="inline-flex items-center gap-1 rounded-md bg-indigo-50 border border-indigo-200 px-1.5 py-0.5 text-[10px] font-semibold text-indigo-700">
-                            <Clock size={10} />
-                            {ord.delivery_slot}
-                          </span>
-                        )}
-                      </div>
-
-                      {ord.lines && Array.isArray(ord.lines) && ord.lines.length > 0 && (
-                        <div className="text-[11px] text-slate-600 line-clamp-1">
-                          {ord.lines.map((l: any) => `${l.qty}x ${l.name}`).join(", ")}
-                        </div>
-                      )}
-
-                      <div className="flex items-center justify-between gap-2 pt-1 border-t border-slate-100">
+                      <div className="flex items-center gap-2 w-full sm:w-auto justify-end pt-1 sm:pt-0">
+                        <button
+                          type="button"
+                          onClick={() => setProfileEditOpen(true)}
+                          className="inline-flex items-center gap-1.5 rounded-xl bg-white/15 hover:bg-white/25 backdrop-blur-md border border-white/20 px-3 py-1.5 text-xs font-bold text-white shadow-2xs transition cursor-pointer"
+                        >
+                          <Edit3 size={13} />
+                          <span>Edit</span>
+                        </button>
                         <button
                           type="button"
                           onClick={() => {
+                            handleSignOutCustomer();
                             setOrdersDrawerOpen(false);
-                            setLiveMapModalOrder(ord);
+                            setCustomerProfileOpen(false);
                           }}
-                          style={{
-                            borderColor: `${brandPrimaryColor}40`,
-                            backgroundColor: `${brandPrimaryColor}08`,
-                            color: brandPrimaryColor,
-                          }}
-                          className={`inline-flex items-center gap-1.5 border px-3 py-1.5 text-xs font-semibold ${buttonRadiusClass} transition hover:opacity-90`}
+                          className="inline-flex items-center gap-1.5 rounded-xl bg-rose-500/20 hover:bg-rose-500/30 backdrop-blur-md border border-rose-300/30 px-3 py-1.5 text-xs font-bold text-rose-200 shadow-2xs transition cursor-pointer"
                         >
-                          <Navigation size={12} />
-                          <span>Track Live Map</span>
+                          <LogOut size={13} />
+                          <span>Sign Out</span>
                         </button>
-
-                        <Link
-                          href={`/track?order=${encodeURIComponent(ord.number)}`}
-                          onClick={() => setOrdersDrawerOpen(false)}
-                          className="text-[11px] font-semibold text-slate-500 hover:text-slate-800 underline"
-                        >
-                          Full Details →
-                        </Link>
                       </div>
                     </div>
-                  );
-                })
+                  </div>
+
+                  {/* LOYALTY & REWARDS CARD (Image 2 "ONE Active" Banner) */}
+                  <div className="rounded-2xl border border-amber-200/90 bg-gradient-to-r from-amber-50/90 via-orange-50/60 to-white p-4 shadow-2xs">
+                    <div className="flex items-center justify-between gap-3">
+                      <div className="flex items-center gap-3">
+                        <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-amber-100 text-amber-700 shrink-0 shadow-2xs">
+                          <Award size={20} />
+                        </div>
+                        <div>
+                          <div className="flex items-center gap-2">
+                            <span className="font-bold text-slate-900 text-xs">SelfX Club Rewards</span>
+                            <span className="rounded-full bg-emerald-100 px-2 py-0.2 text-[9px] font-black uppercase tracking-wider text-emerald-800">
+                              Active Tier
+                            </span>
+                          </div>
+                          <p className="text-[11px] text-slate-500 mt-0.5">
+                            Earn 1 point per ₹1 spent. Redeem directly for instant cart discounts.
+                          </p>
+                        </div>
+                      </div>
+
+                      <div className="flex flex-col items-end bg-white border border-amber-200/80 rounded-xl px-3 py-1.5 shrink-0 shadow-2xs">
+                        <span className="text-sm font-black text-amber-950 font-mono">
+                          {loyaltyPoints || 0} pts
+                        </span>
+                        <span className="text-[9.5px] font-semibold text-emerald-700">
+                          ₹{(loyaltyPoints || 0).toFixed(2)} Credit
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* 4 QUICK ACTION CARDS (Image 2 Grid) */}
+                  <div className="grid grid-cols-2 gap-2.5">
+                    {/* Saved Addresses */}
+                    <button
+                      type="button"
+                      onClick={() => setProfileAddressesOpen(true)}
+                      className="flex flex-col items-center text-center justify-center rounded-2xl border border-slate-200 bg-white p-3.5 shadow-2xs hover:border-slate-300 hover:shadow-xs transition group cursor-pointer"
+                    >
+                      <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-blue-50 text-blue-600 group-hover:scale-105 transition">
+                        <MapPin size={18} />
+                      </div>
+                      <span className="mt-1.5 text-xs font-bold text-slate-900">Saved Addresses</span>
+                      <span className="text-[10px] text-slate-400 mt-0.5">
+                        {savedAddresses.length} {savedAddresses.length === 1 ? "address" : "addresses"}
+                      </span>
+                    </button>
+
+                    {/* Payment Modes */}
+                    <button
+                      type="button"
+                      onClick={() => setProfilePaymentsOpen(true)}
+                      className="flex flex-col items-center text-center justify-center rounded-2xl border border-slate-200 bg-white p-3.5 shadow-2xs hover:border-slate-300 hover:shadow-xs transition group cursor-pointer"
+                    >
+                      <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-emerald-50 text-emerald-600 group-hover:scale-105 transition">
+                        <CreditCard size={18} />
+                      </div>
+                      <span className="mt-1.5 text-xs font-bold text-slate-900">Payment Modes</span>
+                      <span className="text-[10px] text-slate-400 mt-0.5">UPI, Cards, Cash</span>
+                    </button>
+
+                    {/* Returns & Refunds */}
+                    <button
+                      type="button"
+                      onClick={() => setProfileRefundsOpen(true)}
+                      className="flex flex-col items-center text-center justify-center rounded-2xl border border-slate-200 bg-white p-3.5 shadow-2xs hover:border-slate-300 hover:shadow-xs transition group cursor-pointer"
+                    >
+                      <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-purple-50 text-purple-600 group-hover:scale-105 transition">
+                        <Receipt size={18} />
+                      </div>
+                      <span className="mt-1.5 text-xs font-bold text-slate-900">Returns &amp; Refunds</span>
+                      <span className="text-[10px] text-slate-400 mt-0.5">Live Tracker</span>
+                    </button>
+
+                    {/* Store Wallet / Khata */}
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setMessage(`Store Credit Balance: ₹${(loyaltyBalance || 0).toFixed(2)}`);
+                      }}
+                      className="flex flex-col items-center text-center justify-center rounded-2xl border border-slate-200 bg-white p-3.5 shadow-2xs hover:border-slate-300 hover:shadow-xs transition group cursor-pointer"
+                    >
+                      <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-amber-50 text-amber-600 group-hover:scale-105 transition">
+                        <Wallet size={18} />
+                      </div>
+                      <span className="mt-1.5 text-xs font-bold text-slate-900">Store Wallet</span>
+                      <span className="text-[10px] text-slate-400 mt-0.5">₹{(loyaltyBalance || 0).toFixed(2)} Credits</span>
+                    </button>
+                  </div>
+
+                  {/* QUICK ACTION ROWS */}
+                  <div className="rounded-2xl border border-slate-200 bg-white divide-y divide-slate-100 shadow-2xs overflow-hidden">
+                    {/* Coupons & Offers */}
+                    <button
+                      type="button"
+                      onClick={() => setProfileCouponsOpen(true)}
+                      className="w-full flex items-center justify-between p-3.5 text-left hover:bg-slate-50 transition cursor-pointer"
+                    >
+                      <div className="flex items-center gap-3">
+                        <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-orange-50 text-orange-600">
+                          <Tag size={16} />
+                        </div>
+                        <div>
+                          <div className="text-xs font-bold text-slate-900">Available Coupons &amp; Offers</div>
+                          <div className="text-[10px] text-slate-400">View promotional discount codes</div>
+                        </div>
+                      </div>
+                      <ChevronRight size={16} className="text-slate-400" />
+                    </button>
+
+                    {/* Dedicated Account Page Link */}
+                    <Link
+                      href={`/account?store=${encodeURIComponent(slug)}`}
+                      className="w-full flex items-center justify-between p-3.5 text-left hover:bg-slate-50 transition cursor-pointer"
+                    >
+                      <div className="flex items-center gap-3">
+                        <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-indigo-50 text-indigo-600">
+                          <ExternalLink size={16} />
+                        </div>
+                        <div>
+                          <div className="text-xs font-bold text-slate-900">Full Account Dashboard Page</div>
+                          <div className="text-[10px] text-slate-400">Open in dedicated fullscreen layout</div>
+                        </div>
+                      </div>
+                      <ChevronRight size={16} className="text-slate-400" />
+                    </Link>
+
+                    {/* Store Help & Support */}
+                    <button
+                      type="button"
+                      onClick={() => setContactModalOpen(true)}
+                      className="w-full flex items-center justify-between p-3.5 text-left hover:bg-slate-50 transition cursor-pointer"
+                    >
+                      <div className="flex items-center gap-3">
+                        <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-emerald-50 text-emerald-600">
+                          <HelpCircle size={16} />
+                        </div>
+                        <div>
+                          <div className="text-xs font-bold text-slate-900">Store Support &amp; FAQ</div>
+                          <div className="text-[10px] text-slate-400">Direct assistance &amp; store inquiries</div>
+                        </div>
+                      </div>
+                      <ChevronRight size={16} className="text-slate-400" />
+                    </button>
+                  </div>
+
+                  {/* PAST ORDERS SECTION (Image 3 Inspiration) */}
+                  <div className="space-y-3 pt-2">
+                    <div className="flex items-center justify-between">
+                      <h4 className="text-xs font-bold uppercase tracking-wider text-slate-900 flex items-center gap-1.5">
+                        <ShoppingBag size={14} className="text-slate-500" />
+                        <span>Past Orders ({customerOrders.length})</span>
+                      </h4>
+                      <button
+                        type="button"
+                        onClick={() => void refreshCustomerOrders(phone, true)}
+                        className="text-[11px] font-bold text-blue-600 hover:underline flex items-center gap-1 cursor-pointer"
+                      >
+                        <RefreshCw size={11} className={loadingOrders ? "animate-spin" : ""} />
+                        <span>Refresh</span>
+                      </button>
+                    </div>
+
+                    {/* Segment Filter Tabs */}
+                    <div className="flex items-center gap-1.5 rounded-xl bg-slate-200/70 p-1">
+                      {[
+                        { id: "all" as const, label: "All Orders", count: customerOrders.length },
+                        {
+                          id: "delivery" as const,
+                          label: "Delivery",
+                          count: customerOrders.filter((o: any) => o.fulfillment === "delivery").length,
+                        },
+                        {
+                          id: "pickup" as const,
+                          label: "Store Pickup",
+                          count: customerOrders.filter((o: any) => o.fulfillment !== "delivery").length,
+                        },
+                      ].map((tab) => {
+                        const active = profileOrdersSegment === tab.id;
+                        return (
+                          <button
+                            key={tab.id}
+                            type="button"
+                            onClick={() => setProfileOrdersSegment(tab.id)}
+                            className={`flex-1 rounded-lg py-1.5 text-center text-xs font-bold transition cursor-pointer ${
+                              active
+                                ? "bg-white text-slate-900 shadow-2xs"
+                                : "text-slate-600 hover:text-slate-900"
+                            }`}
+                          >
+                            <span>{tab.label}</span>
+                            <span className="ml-1 text-[10px] opacity-75 font-mono">({tab.count})</span>
+                          </button>
+                        );
+                      })}
+                    </div>
+
+                    {/* Orders List */}
+                    {loadingOrders ? (
+                      <div className="py-8 text-center text-xs font-semibold text-slate-400">
+                        Loading your verified order history...
+                      </div>
+                    ) : customerOrders.length === 0 ? (
+                      <div className="rounded-2xl border border-slate-200 bg-white p-8 text-center space-y-2">
+                        <ShoppingBag size={32} className="mx-auto text-slate-300" />
+                        <div className="text-xs font-bold text-slate-900">No orders placed yet</div>
+                        <p className="text-[11px] text-slate-500 max-w-xs mx-auto">
+                          You haven&apos;t placed any orders with +91 {phone} yet. Browse our store catalog and order today!
+                        </p>
+                      </div>
+                    ) : (
+                      customerOrders
+                        .filter((ord: any) => {
+                          if (profileOrdersSegment === "delivery") return ord.fulfillment === "delivery";
+                          if (profileOrdersSegment === "pickup") return ord.fulfillment !== "delivery";
+                          return true;
+                        })
+                        .map((ord: any) => {
+                          const isDeliv = ord.fulfillment === "delivery";
+                          const statusLabel =
+                            ord.status === "out_for_delivery"
+                              ? "Out for Delivery"
+                              : ord.status === "packed"
+                              ? "Packed & Ready"
+                              : ord.status === "confirmed" || ord.status === "accepted"
+                              ? "Store Preparing"
+                              : ord.status === "delivered"
+                              ? "Delivered"
+                              : ord.status === "cancelled"
+                              ? "Cancelled"
+                              : "Order Placed";
+
+                          const statusColor =
+                            ord.status === "delivered"
+                              ? "bg-emerald-50 text-emerald-700 border-emerald-200"
+                              : ord.status === "out_for_delivery"
+                              ? "bg-indigo-50 text-indigo-700 border-indigo-200"
+                              : ord.status === "cancelled"
+                              ? "bg-rose-50 text-rose-700 border-rose-200"
+                              : "bg-amber-50 text-amber-700 border-amber-200";
+
+                          const currentRating = orderRatings[ord.number] || 0;
+
+                          return (
+                            <div
+                              key={ord.number}
+                              className="rounded-2xl border border-slate-200 bg-white p-4 shadow-2xs space-y-3 transition hover:border-slate-300"
+                            >
+                              {/* Order Card Header */}
+                              <div className="flex items-center justify-between">
+                                <div className="flex items-center gap-2">
+                                  <span className="font-mono text-xs font-bold text-slate-900">
+                                    #{ord.number}
+                                  </span>
+                                  <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold border ${statusColor}`}>
+                                    {statusLabel}
+                                  </span>
+                                </div>
+                                <span className="text-xs font-black text-slate-900 font-mono">
+                                  {formatStorePrice(ord.total_paise || 0)}
+                                </span>
+                              </div>
+
+                              {/* Fulfillment & Date info */}
+                              <div className="flex flex-wrap items-center gap-1.5 text-[11px] text-slate-500">
+                                <span className="font-semibold text-slate-700">
+                                  {isDeliv ? "Doorstep Delivery" : "Store Counter Pickup"}
+                                </span>
+                                <span>·</span>
+                                <span>
+                                  {ord.created_at
+                                    ? new Date(ord.created_at).toLocaleDateString("en-IN", {
+                                        month: "short",
+                                        day: "numeric",
+                                        hour: "2-digit",
+                                        minute: "2-digit",
+                                      })
+                                    : "Recent"}
+                                </span>
+                                {ord.delivery_otp && (
+                                  <span className="rounded-md bg-emerald-50 border border-emerald-200 px-1.5 py-0.2 text-[10px] font-mono font-bold text-emerald-800">
+                                    OTP: {ord.delivery_otp}
+                                  </span>
+                                )}
+                              </div>
+
+                              {/* Lines Snapshot */}
+                              {ord.lines && Array.isArray(ord.lines) && ord.lines.length > 0 && (
+                                <div className="rounded-xl bg-slate-50 p-2.5 text-[11px] text-slate-600 line-clamp-2">
+                                  {ord.lines.map((l: any) => `${l.qty}x ${l.name}`).join(", ")}
+                                </div>
+                              )}
+
+                              {/* Interactive 5-Star Rating (Image 3 Reference) */}
+                              <div className="flex items-center justify-between border-t border-slate-100 pt-2 text-xs">
+                                <span className="text-[11px] font-semibold text-slate-500">
+                                  {currentRating > 0 ? "Your Rating:" : "Rate this order:"}
+                                </span>
+                                <div className="flex items-center gap-1">
+                                  {[1, 2, 3, 4, 5].map((star) => (
+                                    <button
+                                      key={star}
+                                      type="button"
+                                      onClick={() => handleRateOrder(ord.number, star)}
+                                      className="p-0.5 text-amber-400 hover:scale-110 transition cursor-pointer"
+                                      title={`Rate ${star} star`}
+                                    >
+                                      <Star
+                                        size={15}
+                                        className={
+                                          star <= currentRating
+                                            ? "fill-amber-400 text-amber-400"
+                                            : "text-slate-300"
+                                        }
+                                      />
+                                    </button>
+                                  ))}
+                                  {currentRating > 0 && (
+                                    <span className="ml-1 text-[10px] font-bold text-amber-600">
+                                      ({currentRating}/5)
+                                    </span>
+                                  )}
+                                </div>
+                              </div>
+
+                              {/* Action Buttons: Track Map & 1-Click Reorder */}
+                              <div className="flex items-center justify-between gap-2 border-t border-slate-100 pt-2.5">
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setOrdersDrawerOpen(false);
+                                    setCustomerProfileOpen(false);
+                                    setLiveMapModalOrder(ord);
+                                  }}
+                                  className="inline-flex items-center gap-1 rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-xs font-bold text-slate-700 hover:bg-slate-50 shadow-2xs transition cursor-pointer"
+                                >
+                                  <Navigation size={12} className="text-blue-600" />
+                                  <span>Live Map</span>
+                                </button>
+
+                                <div className="flex items-center gap-2">
+                                  <Link
+                                    href={`/track?order=${encodeURIComponent(ord.number)}`}
+                                    onClick={() => {
+                                      setOrdersDrawerOpen(false);
+                                      setCustomerProfileOpen(false);
+                                    }}
+                                    className="text-[11px] font-bold text-slate-500 hover:text-slate-900 underline"
+                                  >
+                                    Tax Invoice
+                                  </Link>
+
+                                  <button
+                                    type="button"
+                                    onClick={() => handleReorder(ord)}
+                                    style={{ backgroundColor: brandPrimaryColor }}
+                                    className="inline-flex items-center gap-1 rounded-xl px-3 py-1.5 text-xs font-bold text-white shadow-xs hover:opacity-95 transition cursor-pointer"
+                                  >
+                                    <RefreshCw size={12} />
+                                    <span>Reorder</span>
+                                  </button>
+                                </div>
+                              </div>
+                            </div>
+                          );
+                        })
+                    )}
+                  </div>
+                </>
               )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Profile Edit Modal */}
+      {profileEditOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs p-4">
+          <div className="w-full max-w-md rounded-2xl bg-white p-5 shadow-2xl space-y-4">
+            <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+              <h3 className="text-sm font-bold text-slate-900">Edit Customer Profile</h3>
+              <button
+                type="button"
+                onClick={() => setProfileEditOpen(false)}
+                className="rounded-lg p-1 text-slate-400 hover:text-slate-700 cursor-pointer"
+              >
+                <X size={16} />
+              </button>
+            </div>
+            <div className="space-y-3">
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">Full Name</label>
+                <input
+                  type="text"
+                  value={name}
+                  onChange={(e) => setName(e.target.value)}
+                  placeholder="e.g. Priya Sharma"
+                  className="h-10 w-full rounded-xl border border-slate-200 px-3 text-xs text-slate-900 focus:border-slate-400 focus:outline-none"
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">Email Address</label>
+                <input
+                  type="email"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  placeholder="e.g. priya@example.com"
+                  className="h-10 w-full rounded-xl border border-slate-200 px-3 text-xs text-slate-900 focus:border-slate-400 focus:outline-none"
+                />
+                <p className="mt-1 text-[11px] text-slate-400">Order invoices and live status updates will be sent to this email.</p>
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">Mobile Number (Verified)</label>
+                <input
+                  type="text"
+                  disabled
+                  value={`+91 ${phone}`}
+                  className="h-10 w-full rounded-xl border border-slate-200 bg-slate-50 px-3 text-xs text-slate-500 font-mono"
+                />
+              </div>
+            </div>
+            <div className="flex items-center justify-end gap-2 border-t border-slate-100 pt-3">
+              <button
+                type="button"
+                onClick={() => setProfileEditOpen(false)}
+                className="h-8 rounded-xl border border-slate-200 px-3.5 text-xs font-bold text-slate-700 hover:bg-slate-50 cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleSaveProfile}
+                style={{ backgroundColor: brandPrimaryColor }}
+                className="h-8 rounded-xl px-4 text-xs font-bold text-white shadow-xs hover:opacity-95 cursor-pointer"
+              >
+                Save Details
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Saved Addresses Modal */}
+      {profileAddressesOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs p-4">
+          <div className="w-full max-w-lg rounded-2xl bg-white p-5 shadow-2xl space-y-4 max-h-[85vh] flex flex-col">
+            <div className="flex items-center justify-between border-b border-slate-100 pb-3 shrink-0">
+              <div className="flex items-center gap-2">
+                <MapPin size={18} className="text-blue-600" />
+                <h3 className="text-sm font-bold text-slate-900">Saved Delivery Addresses</h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => setProfileAddressesOpen(false)}
+                className="rounded-lg p-1 text-slate-400 hover:text-slate-700 cursor-pointer"
+              >
+                <X size={16} />
+              </button>
+            </div>
+
+            <div className="flex-1 overflow-y-auto space-y-3 pr-1">
+              {/* GPS Detection Bar */}
+              <button
+                type="button"
+                disabled={detectingLocation}
+                onClick={() => {
+                  setDetectingLocation(true);
+                  if ("geolocation" in navigator) {
+                    navigator.geolocation.getCurrentPosition(
+                      (pos) => {
+                        setLatitude(pos.coords.latitude);
+                        setLongitude(pos.coords.longitude);
+                        setLiveLocationUrl(
+                          `https://maps.google.com/?q=${pos.coords.latitude},${pos.coords.longitude}`
+                        );
+                        setLocationSuccess(true);
+                        setDetectingLocation(false);
+                        setMessage("GPS location detected accurately!");
+                      },
+                      () => {
+                        setDetectingLocation(false);
+                        setMessage("Could not access GPS. Please ensure location permissions are allowed.");
+                      },
+                      { enableHighAccuracy: true, timeout: 8000 }
+                    );
+                  } else {
+                    setDetectingLocation(false);
+                  }
+                }}
+                className="w-full flex items-center justify-center gap-2 rounded-xl border border-blue-200 bg-blue-50/80 p-3 text-xs font-bold text-blue-700 hover:bg-blue-100 transition cursor-pointer"
+              >
+                <Compass size={16} className={detectingLocation ? "animate-spin" : ""} />
+                <span>{detectingLocation ? "Detecting GPS Coordinates..." : "Use Current GPS Location"}</span>
+              </button>
+
+              {savedAddresses.length === 0 ? (
+                <div className="text-center py-6 text-xs text-slate-400">
+                  No saved addresses yet. Save an address during checkout or add one below.
+                </div>
+              ) : (
+                savedAddresses.map((addr) => (
+                  <div
+                    key={addr.id}
+                    className="rounded-xl border border-slate-200 bg-slate-50/50 p-3.5 space-y-1.5"
+                  >
+                    <div className="flex items-center justify-between">
+                      <span className="rounded-md bg-white border border-slate-200 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-slate-700">
+                        {addr.label}
+                      </span>
+                      {addr.isDefault && (
+                        <span className="text-[10px] font-bold text-emerald-700">Default</span>
+                      )}
+                    </div>
+                    <div className="text-xs font-semibold text-slate-800">{addr.address}</div>
+                    {addr.landmark && (
+                      <div className="text-[11px] text-slate-500">Landmark: {addr.landmark}</div>
+                    )}
+                    <div className="text-[11px] font-mono text-slate-400">PIN: {addr.pincode}</div>
+                  </div>
+                ))
+              )}
+            </div>
+
+            <div className="flex justify-end pt-2 border-t border-slate-100 shrink-0">
+              <button
+                type="button"
+                onClick={() => setProfileAddressesOpen(false)}
+                className="h-8 rounded-xl bg-slate-900 px-4 text-xs font-bold text-white hover:bg-slate-800 cursor-pointer"
+              >
+                Done
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Coupons Modal */}
+      {profileCouponsOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs p-4">
+          <div className="w-full max-w-md rounded-2xl bg-white p-5 shadow-2xl space-y-4">
+            <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+              <div className="flex items-center gap-2">
+                <Tag size={18} className="text-orange-600" />
+                <h3 className="text-sm font-bold text-slate-900">Store Promotional Coupons</h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => setProfileCouponsOpen(false)}
+                className="rounded-lg p-1 text-slate-400 hover:text-slate-700 cursor-pointer"
+              >
+                <X size={16} />
+              </button>
+            </div>
+
+            <div className="space-y-2.5">
+              {[
+                { code: "WELCOME10", desc: "10% off on your order", min: "Min. order ₹200" },
+                { code: "FREESHIP", desc: "Free Doorstep Delivery", min: "Min. order ₹350" },
+                { code: "FLAT50", desc: "Flat ₹50 discount on groceries", min: "Min. order ₹500" },
+              ].map((c) => (
+                <div
+                  key={c.code}
+                  className="flex items-center justify-between rounded-xl border border-dashed border-orange-200 bg-orange-50/60 p-3"
+                >
+                  <div>
+                    <span className="font-mono text-xs font-black text-orange-800 tracking-wider">
+                      {c.code}
+                    </span>
+                    <p className="text-[11px] font-medium text-slate-700 mt-0.5">{c.desc}</p>
+                    <span className="text-[10px] text-slate-400">{c.min}</span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      void navigator.clipboard.writeText(c.code);
+                      setCoupon(c.code);
+                      setMessage(`Coupon ${c.code} copied!`);
+                    }}
+                    className="inline-flex items-center gap-1 rounded-lg bg-orange-600 px-3 py-1.5 text-xs font-bold text-white shadow-2xs hover:bg-orange-700 cursor-pointer"
+                  >
+                    <Copy size={12} />
+                    <span>Copy</span>
+                  </button>
+                </div>
+              ))}
+            </div>
+
+            <div className="flex justify-end pt-2 border-t border-slate-100">
+              <button
+                type="button"
+                onClick={() => setProfileCouponsOpen(false)}
+                className="h-8 rounded-xl bg-slate-900 px-4 text-xs font-bold text-white hover:bg-slate-800 cursor-pointer"
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Payment Modes Modal */}
+      {profilePaymentsOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs p-4">
+          <div className="w-full max-w-md rounded-2xl bg-white p-5 shadow-2xl space-y-4">
+            <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+              <div className="flex items-center gap-2">
+                <CreditCard size={18} className="text-emerald-600" />
+                <h3 className="text-sm font-bold text-slate-900">Supported Payment Methods</h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => setProfilePaymentsOpen(false)}
+                className="rounded-lg p-1 text-slate-400 hover:text-slate-700 cursor-pointer"
+              >
+                <X size={16} />
+              </button>
+            </div>
+
+            <div className="space-y-2 text-xs">
+              <div className="flex items-center gap-3 rounded-xl border border-slate-200 bg-white p-3">
+                <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-emerald-50 text-emerald-600 font-bold">
+                  UPI
+                </div>
+                <div>
+                  <div className="font-bold text-slate-900">Instant UPI &amp; Dynamic QR</div>
+                  <div className="text-[11px] text-slate-500">Google Pay, PhonePe, Paytm, BHIM</div>
+                </div>
+              </div>
+
+              <div className="flex items-center gap-3 rounded-xl border border-slate-200 bg-white p-3">
+                <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-blue-50 text-blue-600 font-bold">
+                  Card
+                </div>
+                <div>
+                  <div className="font-bold text-slate-900">Credit / Debit Cards</div>
+                  <div className="text-[11px] text-slate-500">Visa, Mastercard, RuPay, Maestro</div>
+                </div>
+              </div>
+
+              <div className="flex items-center gap-3 rounded-xl border border-slate-200 bg-white p-3">
+                <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-amber-50 text-amber-600 font-bold">
+                  COD
+                </div>
+                <div>
+                  <div className="font-bold text-slate-900">Pay on Delivery &amp; Counter Collection</div>
+                  <div className="text-[11px] text-slate-500">Cash, Store POS UPI, or Card Swipe</div>
+                </div>
+              </div>
+            </div>
+
+            <div className="flex justify-end pt-2 border-t border-slate-100">
+              <button
+                type="button"
+                onClick={() => setProfilePaymentsOpen(false)}
+                className="h-8 rounded-xl bg-slate-900 px-4 text-xs font-bold text-white hover:bg-slate-800 cursor-pointer"
+              >
+                Got It
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Refunds & Returns Modal */}
+      {profileRefundsOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs p-4">
+          <div className="w-full max-w-md rounded-2xl bg-white p-5 shadow-2xl space-y-4">
+            <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+              <div className="flex items-center gap-2">
+                <Receipt size={18} className="text-purple-600" />
+                <h3 className="text-sm font-bold text-slate-900">My Returns &amp; Refunds</h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => setProfileRefundsOpen(false)}
+                className="rounded-lg p-1 text-slate-400 hover:text-slate-700 cursor-pointer"
+              >
+                <X size={16} />
+              </button>
+            </div>
+
+            <div className="space-y-3 text-xs text-slate-600">
+              <p>
+                Returns can be initiated within <strong className="text-slate-900">7 days</strong> of delivery for eligible items in their original packaging.
+              </p>
+              <div className="rounded-xl border border-purple-200 bg-purple-50/70 p-3 space-y-1">
+                <div className="font-bold text-purple-900">Refund Processing Timeline:</div>
+                <div className="text-[11px] text-purple-800">
+                  &bull; Instant UPI / Store Credit: 2 to 4 hours<br />
+                  &bull; Debit / Credit Card: 3 to 5 business days
+                </div>
+              </div>
+              <p className="text-[11px] text-slate-400">
+                To request a return or check refund status for a specific order, reach out to our store helpdesk or contact us with your order number.
+              </p>
+            </div>
+
+            <div className="flex justify-end pt-2 border-t border-slate-100">
+              <button
+                type="button"
+                onClick={() => setProfileRefundsOpen(false)}
+                className="h-8 rounded-xl bg-slate-900 px-4 text-xs font-bold text-white hover:bg-slate-800 cursor-pointer"
+              >
+                Close
+              </button>
             </div>
           </div>
         </div>

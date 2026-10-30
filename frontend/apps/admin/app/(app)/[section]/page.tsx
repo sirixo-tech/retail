@@ -1763,6 +1763,36 @@ function SettingsAndTemplatesSection({ mode }: { mode: string }) {
     active: boolean;
   } | null>(null);
   const [testSendingKey, setTestSendingKey] = useState<string | null>(null);
+  const [emailCategoryTab, setEmailCategoryTab] = useState<"all" | "customer" | "company" | "tenant">("all");
+  const [emailTestModal, setEmailTestModal] = useState<{
+    template: { key: string; name: string };
+    to: string;
+    loading: boolean;
+    result?: { ok: boolean; msg: string };
+  } | null>(null);
+
+  async function handleSendTestEmailTemplate() {
+    if (!emailTestModal || !emailTestModal.to) return;
+    setEmailTestModal((prev) => prev ? { ...prev, loading: true, result: undefined } : null);
+    try {
+      const res = await fetch("/api/v1/platform/email-templates/test", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          template_key: emailTestModal.template.key,
+          to: emailTestModal.to,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setEmailTestModal((prev) => prev ? { ...prev, loading: false, result: { ok: false, msg: data?.message || data?.error?.message || "Failed to dispatch test email." } } : null);
+      } else {
+        setEmailTestModal((prev) => prev ? { ...prev, loading: false, result: { ok: true, msg: `Live test email dispatched successfully to ${emailTestModal.to}!` } } : null);
+      }
+    } catch (e: any) {
+      setEmailTestModal((prev) => prev ? { ...prev, loading: false, result: { ok: false, msg: e?.message || "Network error while sending test email." } } : null);
+    }
+  }
 
   // Mail settings state
   const [testMailRecipient, setTestMailRecipient] = useState<string>("admin@selfx.in");
@@ -4650,7 +4680,7 @@ function SettingsAndTemplatesSection({ mode }: { mode: string }) {
       ) : null}
 
       {/* ====================================================================
-       * 2. EMAIL TEMPLATES (mode === "email-templates" || mode === "templates") - Image 2 Redesign
+       * 2. EMAIL TEMPLATES (mode === "email-templates" || mode === "templates") - Production Grade
        * ==================================================================== */}
       {mode === "email-templates" || mode === "templates" ? (
         <div className="space-y-6">
@@ -4660,7 +4690,7 @@ function SettingsAndTemplatesSection({ mode }: { mode: string }) {
                 Email Notification Templates
               </h1>
               <p className="mt-0.5 text-xs text-slate-500">
-                Manage and customize transactional emails sent to tenants, billing contacts, and platform administrators.
+                Centrally manage and customize transactional emails sent to storefront customers, platform headquarters, and tenant merchants.
               </p>
             </div>
             <div className="flex items-center gap-2">
@@ -4671,90 +4701,198 @@ function SettingsAndTemplatesSection({ mode }: { mode: string }) {
             </div>
           </div>
 
-          {/* 2-Column Template Grid (Matching Image 2) */}
-          <div className="grid gap-4 md:grid-cols-2">
-            {settings.email_templates.map((tpl, idx) => {
+          {/* Category Filter Tabs */}
+          <div className="flex flex-wrap items-center gap-2 border-b border-slate-200 pb-3">
+            {[
+              {
+                id: "all" as const,
+                label: "All Templates",
+                count: settings.email_templates.length,
+              },
+              {
+                id: "customer" as const,
+                label: "Storefront Customers",
+                count: settings.email_templates.filter((t) => t.key.startsWith("customer_")).length,
+              },
+              {
+                id: "company" as const,
+                label: "Platform & Company Alerts",
+                count: settings.email_templates.filter((t) => t.key.startsWith("company_")).length,
+              },
+              {
+                id: "tenant" as const,
+                label: "Tenant SaaS & Billing",
+                count: settings.email_templates.filter(
+                  (t) => !t.key.startsWith("customer_") && !t.key.startsWith("company_")
+                ).length,
+              },
+            ].map((tab) => {
+              const active = emailCategoryTab === tab.id;
               return (
-                <div
-                  key={tpl.key}
-                  className="flex flex-col justify-between rounded-xl border border-slate-200 bg-white p-5 shadow-sm transition hover:shadow-md"
+                <button
+                  key={tab.id}
+                  type="button"
+                  onClick={() => setEmailCategoryTab(tab.id)}
+                  className={`inline-flex items-center gap-2 rounded-xl px-3.5 py-2 text-xs font-bold transition cursor-pointer ${
+                    active
+                      ? "bg-slate-900 text-white shadow-xs"
+                      : "bg-white text-slate-600 border border-slate-200 hover:bg-slate-50 hover:text-slate-900"
+                  }`}
                 >
-                  <div className="space-y-3">
-                    <div className="flex items-start justify-between gap-3">
-                      <div className="flex items-center gap-3">
-                        <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-blue-50 text-blue-600 shrink-0">
-                          {tpl.key.includes("invoice") ? (
-                            <FileText className="h-4 w-4" />
-                          ) : tpl.key.includes("impersonation") ? (
-                            <ShieldCheck className="h-4 w-4" />
-                          ) : tpl.key.includes("reminder") ? (
-                            <Bell className="h-4 w-4" />
-                          ) : (
-                            <Mail className="h-4 w-4" />
-                          )}
-                        </div>
-                        <div>
-                          <h2 className="text-sm font-semibold text-slate-900 leading-snug">
-                            {tpl.name}
-                          </h2>
-                          <span className="inline-block rounded bg-slate-100 px-2 py-0.5 text-[10px] font-mono font-medium text-slate-600 mt-1">
-                            {tpl.trigger ?? `Event: ${tpl.key}`}
-                          </span>
-                        </div>
-                      </div>
-
-                      <label className="flex items-center gap-1.5 cursor-pointer text-xs font-semibold text-slate-700 shrink-0">
-                        <input
-                          type="checkbox"
-                          checked={tpl.active}
-                          onChange={(e) => {
-                            const next = [...settings.email_templates];
-                            next[idx] = { ...tpl, active: e.target.checked };
-                            setSettings({ ...settings, email_templates: next });
-                          }}
-                          className="h-3.5 w-3.5 rounded border-slate-300 text-blue-600 focus:ring-0"
-                        />
-                        <span className="text-[11px]">{tpl.active ? "Active" : "Inactive"}</span>
-                      </label>
-                    </div>
-
-                    <div className="rounded-lg border border-slate-100 bg-slate-50/70 p-3 text-xs">
-                      <span className="text-[10px] font-semibold text-slate-400 block uppercase tracking-wider">
-                        Subject Line Preview
-                      </span>
-                      <p className="mt-0.5 text-xs font-semibold text-slate-800 line-clamp-1">
-                        {tpl.subject}
-                      </p>
-                    </div>
-                  </div>
-
-                  {/* Actions Bar */}
-                  <div className="mt-4 flex items-center justify-between border-t border-slate-100 pt-3">
-                    <span className="text-[11px] text-slate-400 font-mono">
-                      key: {tpl.key}
-                    </span>
-                    <div className="flex items-center gap-2">
-                      <button
-                        type="button"
-                        onClick={() => setPreviewTemplate(tpl)}
-                        className="inline-flex h-7 items-center gap-1 rounded-md border border-slate-200 bg-white px-2.5 text-xs font-semibold text-slate-700 hover:bg-slate-50"
-                      >
-                        <Eye className="h-3 w-3" />
-                        <span>Preview</span>
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setEditingTemplate(tpl)}
-                        className="inline-flex h-7 items-center gap-1 rounded-md bg-slate-900 px-2.5 text-xs font-semibold text-white hover:bg-slate-800"
-                      >
-                        <Pencil className="h-3 w-3" />
-                        <span>Edit Template</span>
-                      </button>
-                    </div>
-                  </div>
-                </div>
+                  <span>{tab.label}</span>
+                  <span
+                    className={`rounded-full px-2 py-0.5 text-[10px] font-mono font-bold ${
+                      active ? "bg-white/20 text-white" : "bg-slate-100 text-slate-600"
+                    }`}
+                  >
+                    {tab.count}
+                  </span>
+                </button>
               );
             })}
+          </div>
+
+          {/* 2-Column Template Grid */}
+          <div className="grid gap-4 md:grid-cols-2">
+            {settings.email_templates
+              .filter((tpl) => {
+                if (emailCategoryTab === "customer") return tpl.key.startsWith("customer_");
+                if (emailCategoryTab === "company") return tpl.key.startsWith("company_");
+                if (emailCategoryTab === "tenant")
+                  return !tpl.key.startsWith("customer_") && !tpl.key.startsWith("company_");
+                return true;
+              })
+              .map((tpl) => {
+                const globalIdx = settings.email_templates.findIndex((t) => t.key === tpl.key);
+                const isCustomer = tpl.key.startsWith("customer_");
+                const isCompany = tpl.key.startsWith("company_");
+
+                return (
+                  <div
+                    key={tpl.key}
+                    className="flex flex-col justify-between rounded-2xl border border-slate-200 bg-white p-5 shadow-2xs transition hover:shadow-md"
+                  >
+                    <div className="space-y-3">
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="flex items-start gap-3">
+                          <div
+                            className={`flex h-10 w-10 items-center justify-center rounded-xl shrink-0 ${
+                              isCustomer
+                                ? "bg-purple-100 text-purple-700"
+                                : isCompany
+                                ? "bg-amber-100 text-amber-700"
+                                : "bg-blue-100 text-blue-700"
+                            }`}
+                          >
+                            {isCustomer ? (
+                              <ShoppingBag className="h-5 w-5" />
+                            ) : isCompany ? (
+                              <AlertCircle className="h-5 w-5" />
+                            ) : tpl.key.includes("invoice") ? (
+                              <FileText className="h-5 w-5" />
+                            ) : tpl.key.includes("impersonation") ? (
+                              <ShieldCheck className="h-5 w-5" />
+                            ) : (
+                              <Mail className="h-5 w-5" />
+                            )}
+                          </div>
+                          <div>
+                            <div className="flex items-center gap-2">
+                              <span
+                                className={`rounded-full px-2 py-0.5 text-[9px] font-black uppercase tracking-wider ${
+                                  isCustomer
+                                    ? "bg-purple-50 text-purple-700 border border-purple-200"
+                                    : isCompany
+                                    ? "bg-amber-50 text-amber-800 border border-amber-200"
+                                    : "bg-blue-50 text-blue-700 border border-blue-200"
+                                }`}
+                              >
+                                {isCustomer
+                                  ? "Storefront Customer"
+                                  : isCompany
+                                  ? "Platform HQ Alert"
+                                  : "Tenant Workspace"}
+                              </span>
+                            </div>
+                            <h2 className="text-sm font-bold text-slate-900 leading-snug mt-1">
+                              {tpl.name}
+                            </h2>
+                            <span className="inline-block rounded bg-slate-100 px-2 py-0.5 text-[10px] font-mono font-medium text-slate-600 mt-1">
+                              {tpl.trigger ?? `Event: ${tpl.key}`}
+                            </span>
+                          </div>
+                        </div>
+
+                        <label className="flex items-center gap-1.5 cursor-pointer text-xs font-semibold text-slate-700 shrink-0">
+                          <input
+                            type="checkbox"
+                            checked={tpl.active}
+                            onChange={(e) => {
+                              const next = [...settings.email_templates];
+                              if (globalIdx !== -1) {
+                                next[globalIdx] = { ...tpl, active: e.target.checked };
+                                setSettings({ ...settings, email_templates: next });
+                              }
+                            }}
+                            className="h-3.5 w-3.5 rounded border-slate-300 text-blue-600 focus:ring-0"
+                          />
+                          <span className={`text-[11px] font-bold ${tpl.active ? "text-emerald-700" : "text-slate-400"}`}>
+                            {tpl.active ? "Active" : "Disabled"}
+                          </span>
+                        </label>
+                      </div>
+
+                      <div className="rounded-xl border border-slate-100 bg-slate-50/70 p-3 text-xs">
+                        <span className="text-[10px] font-semibold text-slate-400 block uppercase tracking-wider">
+                          Subject Line Preview
+                        </span>
+                        <p className="mt-0.5 text-xs font-semibold text-slate-800 line-clamp-1">
+                          {tpl.subject}
+                        </p>
+                      </div>
+                    </div>
+
+                    {/* Actions Bar */}
+                    <div className="mt-4 flex flex-wrap items-center justify-between gap-2 border-t border-slate-100 pt-3">
+                      <span className="text-[11px] text-slate-400 font-mono">
+                        key: {tpl.key}
+                      </span>
+                      <div className="flex items-center gap-1.5">
+                        <button
+                          type="button"
+                          onClick={() => setPreviewTemplate(tpl)}
+                          className="inline-flex h-7 items-center gap-1 rounded-lg border border-slate-200 bg-white px-2.5 text-xs font-semibold text-slate-700 hover:bg-slate-50 cursor-pointer"
+                        >
+                          <Eye className="h-3 w-3" />
+                          <span>Preview</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setEditingTemplate(tpl)}
+                          className="inline-flex h-7 items-center gap-1 rounded-lg border border-slate-200 bg-white px-2.5 text-xs font-semibold text-slate-700 hover:bg-slate-50 cursor-pointer"
+                        >
+                          <Pencil className="h-3 w-3" />
+                          <span>Edit</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setEmailTestModal({
+                              template: { key: tpl.key, name: tpl.name },
+                              to: settings.mail.from_address || "admin@retail.sirixo.com",
+                              loading: false,
+                            })
+                          }
+                          className="inline-flex h-7 items-center gap-1 rounded-lg bg-slate-900 px-2.5 text-xs font-semibold text-white hover:bg-slate-800 cursor-pointer shadow-xs"
+                        >
+                          <Send className="h-3 w-3" />
+                          <span>Send Test</span>
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
           </div>
 
           <div className="flex justify-end pt-2">
@@ -4762,19 +4900,19 @@ function SettingsAndTemplatesSection({ mode }: { mode: string }) {
               type="button"
               disabled={saving}
               onClick={() => void saveSettings(settings, "Email templates")}
-              className="inline-flex h-9 items-center gap-1.5 rounded-lg bg-blue-600 px-4 text-xs font-semibold text-white hover:bg-blue-700 disabled:opacity-50"
+              className="inline-flex h-9 items-center gap-1.5 rounded-xl bg-blue-600 px-4 text-xs font-bold text-white hover:bg-blue-700 disabled:opacity-50 shadow-xs cursor-pointer"
             >
               <Save className="h-3.5 w-3.5" />
               <span>Save Email Templates</span>
             </button>
           </div>
 
-          {/* Bottom Available Variables Container (Matching Image 2) */}
-          <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm space-y-3">
+          {/* Bottom Available Variables Container */}
+          <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-2xs space-y-3">
             <div className="flex items-center justify-between border-b border-slate-100 pb-3">
               <div>
-                <h3 className="text-sm font-semibold text-slate-900">
-                  Available System Variables
+                <h3 className="text-sm font-bold text-slate-900">
+                  Available Dynamic System Variables
                 </h3>
                 <p className="text-xs text-slate-500">
                   Click any variable merge tag below to copy it for use in your email subjects and body templates.
@@ -4782,20 +4920,42 @@ function SettingsAndTemplatesSection({ mode }: { mode: string }) {
               </div>
             </div>
 
-            <div className="grid gap-2.5 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 pt-1">
+            <div className="grid gap-2 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 pt-1">
               {[
+                // Platform & General
                 { tag: "{{platform_name}}", label: "Platform Brand Name" },
-                { tag: "{{tenant_name}}", label: "Store / Business Name" },
-                { tag: "{{owner_name}}", label: "Owner Full Name" },
-                { tag: "{{owner_email}}", label: "Owner Login Email" },
-                { tag: "{{console_url}}", label: "Console Login URL" },
-                { tag: "{{invoice_number}}", label: "GST Invoice Number" },
-                { tag: "{{amount}}", label: "Billed Total Amount" },
-                { tag: "{{due_date}}", label: "Due / Expiry Date" },
-                { tag: "{{plan_name}}", label: "Subscription Plan Tier" },
-                { tag: "{{renewal_date}}", label: "Renewal Billing Date" },
-                { tag: "{{support_email}}", label: "Platform Support Email" },
-                { tag: "{{reason}}", label: "Impersonation Audit Reason" },
+                { tag: "{{store_name}}", label: "Storefront Name" },
+                { tag: "{{tenant_name}}", label: "Merchant Company Name" },
+                { tag: "{{console_url}}", label: "Merchant Console URL" },
+                { tag: "{{store_url}}", label: "Online Storefront URL" },
+                { tag: "{{store_phone}}", label: "Store Contact Phone" },
+                { tag: "{{store_email}}", label: "Store Contact Email" },
+                // Customer Order
+                { tag: "{{customer_name}}", label: "Customer Full Name" },
+                { tag: "{{customer_phone}}", label: "Customer Mobile Number" },
+                { tag: "{{order_number}}", label: "Order Number (#ORD-XXXX)" },
+                { tag: "{{total_amount}}", label: "Total Paid (Rs. X,XXX)" },
+                { tag: "{{item_count}}", label: "Number of Items" },
+                { tag: "{{fulfillment_type}}", label: "Delivery or Pickup" },
+                { tag: "{{shipping_address}}", label: "Customer Delivery Address" },
+                { tag: "{{pickup_otp}}", label: "6-Digit Delivery/Pickup OTP" },
+                { tag: "{{order_status_title}}", label: "Order Status Headline" },
+                { tag: "{{order_status_message}}", label: "Order Status Message" },
+                { tag: "{{tracking_url}}", label: "Live Order Tracking URL" },
+                { tag: "{{invoice_url}}", label: "Digital Tax Invoice URL" },
+                { tag: "{{loyalty_points}}", label: "Loyalty Points Credited" },
+                { tag: "{{cancellation_reason}}", label: "Order Cancellation Reason" },
+                { tag: "{{refund_status}}", label: "Refund Gateway Status" },
+                // SaaS Tenant & Billing
+                { tag: "{{owner_name}}", label: "Tenant Owner Full Name" },
+                { tag: "{{owner_email}}", label: "Tenant Login Email" },
+                { tag: "{{invoice_number}}", label: "GST Tax Invoice Number" },
+                { tag: "{{amount}}", label: "Invoice Amount" },
+                { tag: "{{due_date}}", label: "Invoice Due Date" },
+                { tag: "{{plan_name}}", label: "SaaS Subscription Tier" },
+                { tag: "{{renewal_date}}", label: "Next Billing Renewal Date" },
+                { tag: "{{registered_at}}", label: "Merchant Registration Timestamp" },
+                { tag: "{{admin_tenant_url}}", label: "Super Admin Tenant Detail URL" },
               ].map((v) => (
                 <button
                   key={v.tag}
@@ -4805,10 +4965,10 @@ function SettingsAndTemplatesSection({ mode }: { mode: string }) {
                     setCopiedKey(v.tag);
                     setTimeout(() => setCopiedKey(null), 2000);
                   }}
-                  className="flex items-center justify-between rounded-lg border border-slate-100 bg-slate-50/70 px-3 py-2 text-left hover:bg-slate-100 transition"
+                  className="flex items-center justify-between rounded-xl border border-slate-100 bg-slate-50/70 px-3 py-2 text-left hover:bg-slate-100 transition cursor-pointer"
                 >
                   <div className="truncate pr-2">
-                    <span className="font-mono text-xs font-semibold text-blue-700 block">
+                    <span className="font-mono text-xs font-bold text-blue-700 block">
                       {v.tag}
                     </span>
                     <span className="text-[11px] text-slate-500 block truncate">
@@ -4826,6 +4986,99 @@ function SettingsAndTemplatesSection({ mode }: { mode: string }) {
               ))}
             </div>
           </div>
+
+          {/* Test Email Dispatch Modal */}
+          {emailTestModal ? (
+            <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-xs p-4">
+              <div className="w-full max-w-lg rounded-2xl border border-slate-200 bg-white p-6 shadow-2xl space-y-4">
+                <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+                  <div className="flex items-center gap-2">
+                    <Send className="h-5 w-5 text-blue-600" />
+                    <div>
+                      <h2 className="text-base font-bold text-slate-900">
+                        Send Live Test Email
+                      </h2>
+                      <p className="text-xs text-slate-500">
+                        Template: <span className="font-semibold">{emailTestModal.template.name}</span>
+                      </p>
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setEmailTestModal(null)}
+                    className="rounded-lg p-1 text-slate-400 hover:text-slate-600 cursor-pointer"
+                  >
+                    <X className="h-5 w-5" />
+                  </button>
+                </div>
+
+                <div className="space-y-3">
+                  <div>
+                    <label className="block text-xs font-bold text-slate-700 mb-1">
+                      Recipient Email Address
+                    </label>
+                    <input
+                      type="email"
+                      value={emailTestModal.to}
+                      onChange={(e) =>
+                        setEmailTestModal({ ...emailTestModal, to: e.target.value })
+                      }
+                      placeholder="your.email@example.com"
+                      className="h-10 w-full rounded-xl border border-slate-200 px-3.5 text-xs text-slate-900 focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 focus:outline-none"
+                    />
+                    <p className="mt-1 text-[11px] text-slate-400">
+                      We will inject verified mock data into the placeholders and dispatch via your configured SMTP host.
+                    </p>
+                  </div>
+
+                  {emailTestModal.result && (
+                    <div
+                      className={`rounded-xl border p-3 text-xs flex items-start gap-2 ${
+                        emailTestModal.result.ok
+                          ? "border-emerald-200 bg-emerald-50 text-emerald-800"
+                          : "border-rose-200 bg-rose-50 text-rose-800"
+                      }`}
+                    >
+                      {emailTestModal.result.ok ? (
+                        <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-600 mt-0.5" />
+                      ) : (
+                        <AlertCircle className="h-4 w-4 shrink-0 text-rose-600 mt-0.5" />
+                      )}
+                      <div>{emailTestModal.result.msg}</div>
+                    </div>
+                  )}
+                </div>
+
+                <div className="flex items-center justify-end gap-2 border-t border-slate-100 pt-3">
+                  <button
+                    type="button"
+                    onClick={() => setEmailTestModal(null)}
+                    className="h-8 rounded-lg border border-slate-200 px-3.5 text-xs font-semibold text-slate-700 hover:bg-slate-50 cursor-pointer"
+                  >
+                    Close
+                  </button>
+                  <button
+                    type="button"
+                    disabled={emailTestModal.loading || !emailTestModal.to}
+                    onClick={() => void handleSendTestEmailTemplate()}
+                    className="h-8 inline-flex items-center gap-1.5 rounded-lg bg-blue-600 px-4 text-xs font-bold text-white hover:bg-blue-700 disabled:opacity-50 cursor-pointer shadow-xs"
+                  >
+                    {emailTestModal.loading ? (
+                      <>
+                        <RefreshCw className="h-3.5 w-3.5 animate-spin" />
+                        <span>Sending...</span>
+                      </>
+                    ) : (
+                      <>
+                        <Send className="h-3.5 w-3.5" />
+                        <span>Send Live Email</span>
+                      </>
+                    )}
+                  </button>
+                </div>
+              </div>
+            </div>
+          ) : null}
 
           {/* Edit Template Modal */}
           {editingTemplate ? (

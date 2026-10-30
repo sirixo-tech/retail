@@ -144,6 +144,7 @@ Route::middleware(['auth', 'password.changed', 'kind:platform'])->group(function
     Route::get('platform/settings', [BillingController::class, 'platformSettings']);
     Route::put('platform/settings', [BillingController::class, 'updatePlatformSettings']);
     Route::post('platform/mail/test', [BillingController::class, 'testMail']);
+    Route::post('platform/email-templates/test', [BillingController::class, 'testEmailTemplate']);
     Route::post('platform/sms/test', [BillingController::class, 'testSms']);
     Route::post('platform/whatsapp/test', [BillingController::class, 'testWhatsapp']);
     Route::post('platform/gateways/{provider}/test', [BillingController::class, 'testPlatformGateway']);

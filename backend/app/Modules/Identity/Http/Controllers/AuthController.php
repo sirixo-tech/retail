@@ -137,6 +137,56 @@ class AuthController
 
         $profile = ($ownerProfile && $ownerProfile->user) ? $this->login->profile($ownerProfile->user) : [];
 
+        // Centralized Notification Mailer: New Tenant Welcome & Platform Company Alert
+        try {
+            $mailer = app(\App\Modules\Notifications\PlatformMailer::class);
+            $consoleUrl = 'https://retail.sirixo.com/login';
+            $adminTenantUrl = 'https://retail.sirixo.com/tenants';
+
+            // Welcome email to newly onboarded merchant
+            if (! empty($data['email'])) {
+                $mailer->sendTemplate(
+                    'tenant_welcome',
+                    $data['email'],
+                    [
+                        'owner_name' => $data['owner_name'],
+                        'owner_email' => $data['email'],
+                        'tenant_name' => $businessName,
+                        'console_url' => $consoleUrl,
+                        'platform_name' => 'SelfX Retail Cloud',
+                        'action_label' => 'Open Retail Console',
+                        'action_url' => $consoleUrl,
+                    ],
+                    $tenant->id,
+                    $tenant->id
+                );
+            }
+
+            // Company alert to Platform Headquarters
+            $companyEmail = $mailer->getCompanyNotificationEmail();
+            if ($companyEmail) {
+                $mailer->sendTemplate(
+                    'company_merchant_registered',
+                    $companyEmail,
+                    [
+                        'tenant_name' => $businessName,
+                        'owner_name' => $data['owner_name'],
+                        'owner_email' => $data['email'],
+                        'owner_phone' => $data['phone'] ?? 'N/A',
+                        'plan_name' => ucfirst($planCode),
+                        'registered_at' => now()->format('d M Y, h:i A'),
+                        'admin_tenant_url' => $adminTenantUrl,
+                        'action_label' => 'View in Super Admin',
+                        'action_url' => $adminTenantUrl,
+                    ],
+                    $tenant->id,
+                    $tenant->id
+                );
+            }
+        } catch (\Throwable) {
+            // Non-blocking notification dispatch
+        }
+
         return ApiResponse::ok(array_merge($profile, [
             'store_id' => $tenant->id,
             'branch_id' => $primaryStore?->id,
