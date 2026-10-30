@@ -38,6 +38,7 @@ import {
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { LiveOrderMap } from "../components/live-order-map";
+import { DeliveryChatModal } from "./delivery-chat-modal";
 
 type OrderLine = {
   store_item_id: string;
@@ -142,6 +143,7 @@ export default function TrackPage() {
   const [showMenu, setShowMenu] = useState(false);
   const [showSearchModal, setShowSearchModal] = useState(false);
   const [showDetailsAccordion, setShowDetailsAccordion] = useState(true);
+  const [chatModalOpen, setChatModalOpen] = useState(false);
 
   // Auto-fill from URL parameters on mount
   useEffect(() => {
@@ -306,28 +308,28 @@ export default function TrackPage() {
       {/* Mobile-Framed / Responsive Page Container */}
       <div className="w-full max-w-md sm:max-w-lg md:max-w-xl bg-white min-h-screen flex flex-col shadow-2xl relative overflow-x-hidden">
         {/* ==================================================================== */}
-        {/* 1. TOP HEADER FLOATING OVER MAP (IMAGE REFERENCE)                   */}
+        {/* 1. TOP HEADER FLOATING OVER MAP (IMAGE 1: Clean, No Overlapping Text)*/}
         {/* ==================================================================== */}
-        <header className="absolute top-0 left-0 right-0 z-30 flex items-center justify-between px-5 pt-4 pb-2">
+        <header className="absolute top-0 left-0 right-0 z-30 flex items-center justify-between px-4 sm:px-5 pt-4 pb-2 pointer-events-none">
           {/* Back Button */}
           <button
             type="button"
             onClick={handleGoBack}
             aria-label="Back to store"
-            className="flex h-11 w-11 items-center justify-center rounded-full bg-white text-slate-800 shadow-md border border-slate-100 hover:bg-slate-50 transition active:scale-95 cursor-pointer z-40"
+            className="flex h-11 w-11 items-center justify-center rounded-full bg-white text-slate-800 shadow-md border border-slate-100 hover:bg-slate-50 transition active:scale-95 cursor-pointer z-40 pointer-events-auto"
           >
             <ArrowLeft size={19} className="stroke-[2.5]" />
           </button>
 
-          {/* Centered Title */}
-          <div className="flex items-center gap-1.5">
-            <h1 className="text-base sm:text-lg font-black tracking-tight text-slate-900">
+          {/* Centered Title with Frosted Pill */}
+          <div className="flex items-center gap-1.5 bg-white/95 backdrop-blur-md px-4 py-2 rounded-full shadow-sm border border-slate-100 pointer-events-auto">
+            <h1 className="text-sm sm:text-base font-bold tracking-tight text-slate-900">
               Tracking Order
             </h1>
           </div>
 
           {/* Options Menu Button (Three Dots) */}
-          <div className="relative">
+          <div className="relative pointer-events-auto">
             <button
               type="button"
               onClick={() => setShowMenu((prev) => !prev)}
@@ -419,6 +421,7 @@ export default function TrackPage() {
               googleMapsApiKey={order.store.google_maps_api_key}
               liveLocationUrl={order.live_location_url}
               heightClass="h-[360px] sm:h-[400px]"
+              hideHeader={true}
               showDetails={false}
             />
           </div>
@@ -683,23 +686,18 @@ export default function TrackPage() {
               </div>
             </div>
 
-            {/* Right Action Icons (Green Circular WhatsApp & Call Buttons) */}
+            {/* Right Action Icons (Green Circular Chat & Call Buttons) */}
             <div className="flex items-center gap-2 shrink-0">
-              {/* WhatsApp / Chat */}
-              <a
-                href={`https://wa.me/${cleanPhone || "919999999999"}?text=${encodeURIComponent(
-                  hasAssignedDriver
-                    ? `Hello ${driverName}, regarding my delivery order ${order?.number || ""}:`
-                    : `Hello, inquiry regarding order ${order?.number || ""}:`
-                )}`}
-                target="_blank"
-                rel="noreferrer"
-                aria-label={hasAssignedDriver ? "Chat with assigned rider" : "Chat with store support"}
-                title={hasAssignedDriver ? `Chat with ${driverName}` : "Chat with store support"}
+              {/* In-App Direct Courier Messaging (Image 2 Match) */}
+              <button
+                type="button"
+                onClick={() => setChatModalOpen(true)}
+                aria-label={hasAssignedDriver ? `Message ${driverName}` : "Message delivery partner"}
+                title={hasAssignedDriver ? `Message ${driverName}` : "Message delivery partner"}
                 className="flex h-10 w-10 items-center justify-center rounded-full bg-[#ecfdf5] hover:bg-[#d1fae5] border border-emerald-200/80 text-[#16a34a] shadow-2xs transition active:scale-95 cursor-pointer"
               >
                 <MessageSquare size={17} className="stroke-[2.2]" />
-              </a>
+              </button>
 
               {/* Phone Call */}
               <a
@@ -881,28 +879,7 @@ export default function TrackPage() {
                       Present this QR at the store counter to scan and claim your order receipt.
                     </p>
                   </div>
-                ) : (
-                  <div className="rounded-2xl border border-emerald-200 bg-gradient-to-b from-emerald-50/80 to-emerald-50/30 p-5 text-center space-y-3 shadow-xs">
-                    <div className="flex items-center justify-between text-xs font-bold text-slate-800">
-                      <span className="inline-flex items-center gap-1.5 text-emerald-800">
-                        <ShieldCheck size={16} /> Delivery Verification OTP
-                      </span>
-                      <span className="rounded-full bg-white px-2.5 py-0.5 text-[10px] font-bold text-emerald-700 border border-emerald-200 shadow-2xs">
-                        {order?.payment_method === "cod" ? "Cash on Delivery" : "Prepaid Order"}
-                      </span>
-                    </div>
-                    
-                    <div className="py-2">
-                      <div className="inline-flex items-center justify-center tracking-widest text-3xl sm:text-4xl font-black font-mono text-emerald-950 bg-white px-6 py-2.5 rounded-2xl border-2 border-emerald-500 shadow-sm">
-                        {verificationCode}
-                      </div>
-                    </div>
-
-                    <p className="text-xs text-slate-600 leading-relaxed max-w-sm mx-auto">
-                      Share this <strong>4-digit OTP</strong> with your delivery partner upon arrival to verify and complete delivery.
-                    </p>
-                  </div>
-                )}
+                ) : null}
 
                 {/* Delivery Address & Time Slot */}
                 <div className="rounded-2xl border border-slate-100 bg-slate-50/60 p-4 space-y-2">
@@ -1058,6 +1035,22 @@ export default function TrackPage() {
             </div>
           </div>
         )}
+
+        {/* In-App Delivery Partner Chat Bottom Sheet Modal (Image 2) */}
+        <DeliveryChatModal
+          isOpen={chatModalOpen}
+          onClose={() => setChatModalOpen(false)}
+          driverName={driverName}
+          driverPhone={cleanPhone}
+          storeName={order?.store?.name || "Store"}
+          destinationAddress={
+            typeof order?.address_snapshot === "string"
+              ? order.address_snapshot
+              : order?.address_snapshot?.address || order?.address_snapshot?.line1 || "Customer Delivery Address"
+          }
+          orderNumber={order?.number || ""}
+          estimatedMinutes={12}
+        />
       </div>
     </div>
   );

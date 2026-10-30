@@ -33,6 +33,7 @@ export interface LiveOrderMapProps {
   brandPrimaryColor?: string;
   heightClass?: string;
   showDetails?: boolean;
+  hideHeader?: boolean;
   allowWhatsapp?: boolean;
 }
 
@@ -69,6 +70,7 @@ export function LiveOrderMap({
   brandPrimaryColor = "#0c831f",
   heightClass = "h-72 sm:h-80",
   showDetails = true,
+  hideHeader = false,
   allowWhatsapp = false,
 }: LiveOrderMapProps) {
   const mapRef = useRef<HTMLDivElement>(null);
@@ -142,25 +144,70 @@ export function LiveOrderMap({
         ],
       });
 
-      // Store Marker
+      // Professional SVG Store Pin (Orange with store badge)
+      const storeSvg = `<svg xmlns="http://www.w3.org/2000/svg" width="38" height="46" viewBox="0 0 38 46" fill="none">
+        <defs>
+          <filter id="s" x="0" y="0" width="38" height="46" filterUnits="userSpaceOnUse">
+            <feDropShadow dx="0" dy="3" stdDeviation="2" flood-color="#000" flood-opacity="0.3"/>
+          </filter>
+        </defs>
+        <g filter="url(#s)">
+          <path d="M19 40C19 40 33 25.5 33 16.5C33 8.768 26.732 2.5 19 2.5C11.268 2.5 5 8.768 5 16.5C5 25.5 19 40 19 40Z" fill="#ea580c"/>
+          <circle cx="19" cy="16.5" r="10.5" fill="#ffffff"/>
+          <path d="M14 14h10l-1 6h-8l-1-6zm2 6h6v2h-6v-2z" fill="#ea580c"/>
+        </g>
+      </svg>`;
+
+      // Professional Destination Pin (Dark slate teardrop with emerald core & white ring)
+      const customerSvg = `<svg xmlns="http://www.w3.org/2000/svg" width="38" height="46" viewBox="0 0 38 46" fill="none">
+        <defs>
+          <filter id="c" x="0" y="0" width="38" height="46" filterUnits="userSpaceOnUse">
+            <feDropShadow dx="0" dy="3" stdDeviation="2" flood-color="#000" flood-opacity="0.35"/>
+          </filter>
+        </defs>
+        <g filter="url(#c)">
+          <path d="M19 40C19 40 33 25.5 33 16.5C33 8.768 26.732 2.5 19 2.5C11.268 2.5 5 8.768 5 16.5C5 25.5 19 40 19 40Z" fill="#0f172a"/>
+          <circle cx="19" cy="16.5" r="10.5" fill="#10b981"/>
+          <circle cx="19" cy="16.5" r="4.5" fill="#ffffff"/>
+        </g>
+      </svg>`;
+
+      // Professional Rider Pin (Emerald circle with white scooter)
+      const riderSvg = `<svg xmlns="http://www.w3.org/2000/svg" width="44" height="44" viewBox="0 0 44 44" fill="none">
+        <defs>
+          <filter id="r" x="0" y="0" width="44" height="44" filterUnits="userSpaceOnUse">
+            <feDropShadow dx="0" dy="3" stdDeviation="3" flood-color="#000" flood-opacity="0.3"/>
+          </filter>
+        </defs>
+        <g filter="url(#r)">
+          <circle cx="22" cy="22" r="17" fill="#10b981" stroke="#ffffff" stroke-width="2.5"/>
+          <circle cx="16" cy="25" r="2.5" stroke="#ffffff" stroke-width="1.8" fill="none"/>
+          <circle cx="28" cy="25" r="2.5" stroke="#ffffff" stroke-width="1.8" fill="none"/>
+          <path d="M18.5 25H22L24.5 18H28" stroke="#ffffff" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+        </g>
+      </svg>`;
+
+      // Store Marker with Professional SVG Pin
       new google.maps.Marker({
         position: { lat: storeLat, lng: storeLng },
         map,
         title: storeName,
-        label: {
-          text: "🏪",
-          fontSize: "18px",
+        icon: {
+          url: "data:image/svg+xml;charset=UTF-8," + encodeURIComponent(storeSvg),
+          scaledSize: new google.maps.Size(38, 46),
+          anchor: new google.maps.Point(19, 40),
         },
       });
 
-      // Customer Marker
+      // Customer Marker with Professional Destination Pin
       new google.maps.Marker({
         position: { lat: safeCustLat, lng: safeCustLng },
         map,
         title: "Your Delivery Location",
-        label: {
-          text: "📍",
-          fontSize: "20px",
+        icon: {
+          url: "data:image/svg+xml;charset=UTF-8," + encodeURIComponent(customerSvg),
+          scaledSize: new google.maps.Size(38, 46),
+          anchor: new google.maps.Point(19, 40),
         },
       });
 
@@ -172,9 +219,10 @@ export function LiveOrderMap({
           position: { lat: midLat, lng: midLng },
           map,
           title: deliveryStaffName ? `Rider: ${deliveryStaffName}` : "Delivery Partner",
-          label: {
-            text: "🛵",
-            fontSize: "22px",
+          icon: {
+            url: "data:image/svg+xml;charset=UTF-8," + encodeURIComponent(riderSvg),
+            scaledSize: new google.maps.Size(44, 44),
+            anchor: new google.maps.Point(22, 22),
           },
         });
       }
@@ -210,52 +258,54 @@ export function LiveOrderMap({
   return (
     <div className="overflow-hidden rounded-2xl border border-slate-200/90 bg-white shadow-xs">
       {/* Live Status Header Strip (Instamart / Blinkit Standard) */}
-      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 bg-[#fbfcfb] px-4 py-3">
-        <div className="flex items-center gap-2.5">
-          <div
-            className="flex h-9 w-9 items-center justify-center rounded-xl text-white shadow-xs"
-            style={{ backgroundColor: brandPrimaryColor }}
-          >
-            {isDelivered ? (
-              <CheckCircle2 size={18} />
-            ) : isOutForDelivery ? (
-              <Bike size={18} className="animate-bounce" />
-            ) : (
-              <Clock size={18} />
-            )}
-          </div>
-          <div>
-            <div className="flex items-center gap-2">
-              <h4 className="text-xs font-semibold text-slate-900">
-                {isDelivered
-                  ? "Order Delivered"
-                  : isOutForDelivery
-                  ? `Arriving in ~${estMins} mins`
-                  : isPacked
-                  ? "Order Packed & Ready"
-                  : isConfirmed
-                  ? "Order Confirmed & Preparing"
-                  : "Order Placed & Awaiting Store"}
-              </h4>
-              <span className="flex h-2 w-2 rounded-full bg-emerald-500 animate-ping" />
+      {!hideHeader && showDetails && (
+        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 bg-[#fbfcfb] px-4 py-3">
+          <div className="flex items-center gap-2.5">
+            <div
+              className="flex h-9 w-9 items-center justify-center rounded-xl text-white shadow-xs"
+              style={{ backgroundColor: brandPrimaryColor }}
+            >
+              {isDelivered ? (
+                <CheckCircle2 size={18} />
+              ) : isOutForDelivery ? (
+                <Bike size={18} className="animate-bounce" />
+              ) : (
+                <Clock size={18} />
+              )}
             </div>
-            <p className="text-[11px] font-medium text-slate-500">
-              Order #{orderNumber} · {distanceKm} km away
-            </p>
+            <div>
+              <div className="flex items-center gap-2">
+                <h4 className="text-xs font-semibold text-slate-900">
+                  {isDelivered
+                    ? "Order Delivered"
+                    : isOutForDelivery
+                    ? `Arriving in ~${estMins} mins`
+                    : isPacked
+                    ? "Order Packed & Ready"
+                    : isConfirmed
+                    ? "Order Confirmed & Preparing"
+                    : "Order Placed & Awaiting Store"}
+                </h4>
+                <span className="flex h-2 w-2 rounded-full bg-emerald-500 animate-ping" />
+              </div>
+              <p className="text-[11px] font-medium text-slate-500">
+                Order #{orderNumber} · {distanceKm} km away
+              </p>
+            </div>
           </div>
-        </div>
 
-        <a
-          href={directionsUrl}
-          target="_blank"
-          rel="noopener noreferrer"
-          className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 shadow-2xs hover:bg-slate-50 transition"
-        >
-          <Navigation size={13} style={{ color: brandPrimaryColor }} />
-          <span>Open in Google Maps</span>
-          <ExternalLink size={11} className="text-slate-400" />
-        </a>
-      </div>
+          <a
+            href={directionsUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 shadow-2xs hover:bg-slate-50 transition"
+          >
+            <Navigation size={13} style={{ color: brandPrimaryColor }} />
+            <span>Open in Google Maps</span>
+            <ExternalLink size={11} className="text-slate-400" />
+          </a>
+        </div>
+      )}
 
       {/* Map Canvas Viewport */}
       <div className={`relative w-full ${heightClass} bg-slate-900 overflow-hidden`}>
