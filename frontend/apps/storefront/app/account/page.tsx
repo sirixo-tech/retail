@@ -699,49 +699,50 @@ export default function AccountPage() {
             </div>
           </div>
         ) : (
-          /* Production-Grade Account Dashboard (Image 2 & 3 Experience) */
-          <div className="space-y-6">
-            {/* HERO PROFILE BANNER (Matches Image 2 Visual Hierarchy) */}
-            <div className="relative overflow-hidden rounded-3xl bg-gradient-to-br from-orange-600 via-rose-600 to-amber-700 text-white p-5 sm:p-7 shadow-lg">
-              {/* Background ambient accents */}
-              <div className="absolute -top-12 -right-12 h-44 w-44 rounded-full bg-white/10 blur-2xl pointer-events-none" />
-              <div className="absolute -bottom-12 -left-12 h-44 w-44 rounded-full bg-black/10 blur-xl pointer-events-none" />
+          /* Production-Grade Account Dashboard (Image 3 & 4 Swiggy Aesthetic) */
+          <div className="space-y-4 sm:space-y-5">
+            {/* HERO PROFILE GRADIENT BANNER (Image 3 Inspiration) */}
+            <div className="relative overflow-hidden rounded-3xl bg-gradient-to-br from-[#c2410c] via-[#ea580c] to-[#9a3412] text-white p-6 sm:p-8 shadow-md">
+              {/* Atmospheric decorative circles (Matching Image 3) */}
+              <div className="absolute -top-12 -right-12 h-52 w-52 rounded-full bg-white/10 blur-xl pointer-events-none" />
+              <div className="absolute top-1/2 -right-8 h-44 w-44 rounded-full border border-white/15 pointer-events-none" />
+              <div className="absolute -bottom-10 right-20 h-32 w-32 rounded-full bg-black/10 blur-md pointer-events-none" />
 
-              <div className="relative flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
-                <div className="flex items-center gap-3.5 sm:gap-4 min-w-0">
-                  <div className="flex h-14 w-14 sm:h-16 sm:w-16 items-center justify-center rounded-2xl bg-white/20 backdrop-blur-md text-white font-black text-xl sm:text-2xl shadow-inner border border-white/30 shrink-0">
-                    {userName.charAt(0).toUpperCase() || "S"}
-                  </div>
-                  <div className="min-w-0 space-y-0.5">
-                    <div className="flex items-center gap-2">
-                      <h2 className="text-xl sm:text-2xl font-black tracking-tight truncate">{userName}</h2>
-                      <span className="rounded-full bg-emerald-400/25 border border-emerald-300/40 px-2 py-0.5 text-[10px] font-bold text-emerald-100">
-                        Active
-                      </span>
-                    </div>
-                    <p className="text-xs sm:text-sm font-semibold text-white/90 font-mono">+91 - {phone}</p>
-                    {userEmail ? (
-                      <p className="text-xs text-white/80 truncate">{userEmail}</p>
-                    ) : (
-                      <p className="text-[11px] text-white/60 italic">No email linked</p>
-                    )}
-                  </div>
+              <div className="relative flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 pb-4">
+                <div className="min-w-0 space-y-1">
+                  <h2 className="text-2xl sm:text-3xl font-black tracking-tight truncate leading-snug">
+                    {userName || "Customer"}
+                  </h2>
+                  <p className="text-xs sm:text-sm font-semibold text-white/90 font-mono">
+                    +91 - {phone}
+                  </p>
+                  {userEmail ? (
+                    <p className="text-xs text-white/80 truncate">{userEmail}</p>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => setEditProfileModalOpen(true)}
+                      className="text-xs text-amber-200 hover:text-white underline font-semibold cursor-pointer"
+                    >
+                      + Add email address
+                    </button>
+                  )}
                 </div>
 
-                <div className="flex items-center gap-2 w-full sm:w-auto justify-end pt-2 sm:pt-0">
+                <div className="flex items-center gap-2 w-full sm:w-auto justify-end pt-1 sm:pt-0">
                   <button
                     type="button"
                     onClick={() => setEditProfileModalOpen(true)}
-                    className="inline-flex items-center gap-1.5 rounded-xl bg-white/20 hover:bg-white/30 backdrop-blur-md border border-white/30 px-3 py-1.5 text-xs font-bold text-white shadow-xs transition cursor-pointer"
+                    className="inline-flex items-center gap-1.5 rounded-xl bg-white/20 hover:bg-white/30 backdrop-blur-md border border-white/30 px-3.5 py-1.5 text-xs font-bold text-white shadow-xs transition cursor-pointer"
                   >
                     <Edit3 className="h-3.5 w-3.5" />
-                    <span>Edit Profile</span>
+                    <span>Edit</span>
                   </button>
 
                   <button
                     type="button"
                     onClick={handleSignOut}
-                    className="inline-flex items-center gap-1.5 rounded-xl bg-black/20 hover:bg-black/30 backdrop-blur-md border border-white/20 px-3 py-1.5 text-xs font-bold text-rose-200 shadow-xs transition cursor-pointer"
+                    className="inline-flex items-center gap-1.5 rounded-xl bg-black/25 hover:bg-black/35 backdrop-blur-md border border-white/20 px-3.5 py-1.5 text-xs font-bold text-rose-200 shadow-xs transition cursor-pointer"
                   >
                     <LogOut className="h-3.5 w-3.5" />
                     <span>Sign Out</span>
@@ -750,49 +751,55 @@ export default function AccountPage() {
               </div>
             </div>
 
-            {/* MEMBERSHIP & REWARDS CARD (Matches Image 2 "ONE Active" Banner) */}
-            <div className="rounded-2xl border border-slate-200 bg-white p-4 sm:p-5 shadow-2xs transition hover:border-slate-300">
-              <div className="flex flex-wrap items-center justify-between gap-3">
-                <div className="flex items-center gap-3">
-                  <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-orange-100 text-orange-600 font-black text-sm shrink-0">
-                    <Award className="h-5 w-5" />
-                  </div>
-                  <div>
-                    <div className="flex items-center gap-2">
-                      <span className="font-black text-slate-900 text-sm">SelfX Club Rewards</span>
-                      <span className="rounded-full bg-emerald-100 px-2 py-0.2 text-[9px] font-black uppercase tracking-wider text-emerald-800">
-                        {loyalty?.tier || "Active Tier"}
-                      </span>
-                    </div>
-                    <p className="text-xs text-slate-500 mt-0.5">
-                      Earn 1 point per ₹1 spent. Redeem directly for instant cart discounts.
-                    </p>
-                  </div>
-                </div>
-
-                <div className="flex items-baseline gap-2 bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2">
-                  <span className="text-base sm:text-lg font-black text-slate-900">
-                    {loyalty?.points ?? 0}
+            {/* OVERLAPPING MEMBERSHIP & REWARDS CARD (Image 3 "ONE Active" Banner) */}
+            <div className="-mt-8 rounded-2xl border border-slate-100 bg-white p-4 sm:p-5 shadow-md relative z-10 transition hover:shadow-lg">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <span className="text-sm font-black text-orange-600 tracking-tight">SelfX Club</span>
+                  <span className="rounded-full bg-emerald-500 text-white px-2 py-0.5 text-[9px] font-black uppercase tracking-wider">
+                    {loyalty?.tier || "ACTIVE"}
                   </span>
-                  <span className="text-xs font-semibold text-slate-500">Points Available</span>
                 </div>
+                <ChevronRight className="h-4 w-4 text-slate-400" />
               </div>
+
+              <div className="text-base sm:text-lg font-extrabold text-slate-900 mt-2">
+                {(loyalty?.points || 0) > 0
+                  ? `₹${(loyalty?.points || 0).toFixed(2)} savings & credit balance`
+                  : "0 pts • ₹0.00 Credit Balance"}
+              </div>
+              <p className="text-xs text-slate-500 mt-0.5">
+                Earn 1 point per ₹1 spent. Redeem directly for instant cart checkout discounts.
+              </p>
             </div>
 
-            {/* 4 QUICK ACTION TILES (Image 2 Inspiration) */}
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+            {/* VERIFIED CUSTOMER STATUS BADGE (Image 3 Inspiration) */}
+            <div className="rounded-2xl border border-slate-200/80 bg-white p-3.5 flex items-center justify-between shadow-2xs">
+              <div className="flex items-center gap-3">
+                <div className="h-9 w-9 rounded-xl bg-slate-50 border border-slate-200 flex items-center justify-center text-slate-700">
+                  <ShieldCheck className="h-5 w-5" />
+                </div>
+                <div>
+                  <div className="text-xs font-bold text-slate-900">Verified Customer Profile</div>
+                  <div className="text-[11px] text-slate-400">Secure OTP Authenticated Account</div>
+                </div>
+              </div>
+              <span className="px-2.5 py-1 rounded-full text-[10px] font-bold text-emerald-700 bg-emerald-50 border border-emerald-200">
+                Active
+              </span>
+            </div>
+
+            {/* 4 QUICK ACTION TILES (Image 3 Horizontal 4-Column Minimalist Grid) */}
+            <div className="grid grid-cols-4 gap-2 sm:gap-3">
               {/* Tile 1: Saved Addresses */}
               <button
                 type="button"
                 onClick={() => setAddressesModalOpen(true)}
-                className="flex flex-col items-center text-center justify-center rounded-2xl border border-slate-200 bg-white p-4 shadow-2xs hover:border-slate-300 hover:shadow-xs transition group cursor-pointer"
+                className="flex flex-col items-center text-center justify-center rounded-2xl border border-slate-200/80 bg-white p-2.5 sm:p-3.5 shadow-2xs hover:border-slate-300 hover:shadow-xs transition group cursor-pointer min-h-[86px]"
               >
-                <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-blue-50 text-blue-600 group-hover:scale-105 transition">
-                  <MapPin className="h-5 w-5" />
-                </div>
-                <span className="mt-2 text-xs font-bold text-slate-900">Saved Addresses</span>
-                <span className="text-[10px] text-slate-400 mt-0.5">
-                  {savedAddresses.length} {savedAddresses.length === 1 ? "address" : "addresses"}
+                <MapPin className="h-5 w-5 text-slate-800 group-hover:scale-105 transition" />
+                <span className="mt-1.5 text-[11px] font-bold text-slate-800 leading-tight">
+                  Saved<br />Address
                 </span>
               </button>
 
@@ -800,93 +807,118 @@ export default function AccountPage() {
               <button
                 type="button"
                 onClick={() => setPaymentModesModalOpen(true)}
-                className="flex flex-col items-center text-center justify-center rounded-2xl border border-slate-200 bg-white p-4 shadow-2xs hover:border-slate-300 hover:shadow-xs transition group cursor-pointer"
+                className="flex flex-col items-center text-center justify-center rounded-2xl border border-slate-200/80 bg-white p-2.5 sm:p-3.5 shadow-2xs hover:border-slate-300 hover:shadow-xs transition group cursor-pointer min-h-[86px]"
               >
-                <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-emerald-50 text-emerald-600 group-hover:scale-105 transition">
-                  <Wallet className="h-5 w-5" />
-                </div>
-                <span className="mt-2 text-xs font-bold text-slate-900">Payment Modes</span>
-                <span className="text-[10px] text-slate-400 mt-0.5">Active Gateways</span>
+                <CreditCard className="h-5 w-5 text-slate-800 group-hover:scale-105 transition" />
+                <span className="mt-1.5 text-[11px] font-bold text-slate-800 leading-tight">
+                  Payment<br />Modes
+                </span>
               </button>
 
-              {/* Tile 3: Order History */}
+              {/* Tile 3: My Refunds */}
               <button
                 type="button"
                 onClick={() => {
                   const el = document.getElementById("past-orders-section");
                   if (el) el.scrollIntoView({ behavior: "smooth" });
                 }}
-                className="flex flex-col items-center text-center justify-center rounded-2xl border border-slate-200 bg-white p-4 shadow-2xs hover:border-slate-300 hover:shadow-xs transition group cursor-pointer"
+                className="flex flex-col items-center text-center justify-center rounded-2xl border border-slate-200/80 bg-white p-2.5 sm:p-3.5 shadow-2xs hover:border-slate-300 hover:shadow-xs transition group cursor-pointer min-h-[86px]"
               >
-                <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-purple-50 text-purple-600 group-hover:scale-105 transition">
-                  <ShoppingBag className="h-5 w-5" />
-                </div>
-                <span className="mt-2 text-xs font-bold text-slate-900">Past Orders</span>
-                <span className="text-[10px] text-slate-400 mt-0.5">{pastOrders.length} orders</span>
+                <RotateCcw className="h-5 w-5 text-slate-800 group-hover:scale-105 transition" />
+                <span className="mt-1.5 text-[11px] font-bold text-slate-800 leading-tight">
+                  My<br />Refunds
+                </span>
               </button>
 
-              {/* Tile 4: Store Support */}
+              {/* Tile 4: Store Wallet */}
               <button
                 type="button"
-                onClick={() => setSupportModalOpen(true)}
-                className="flex flex-col items-center text-center justify-center rounded-2xl border border-slate-200 bg-white p-4 shadow-2xs hover:border-slate-300 hover:shadow-xs transition group cursor-pointer"
+                onClick={() => setPaymentModesModalOpen(true)}
+                className="flex flex-col items-center text-center justify-center rounded-2xl border border-slate-200/80 bg-white p-2.5 sm:p-3.5 shadow-2xs hover:border-slate-300 hover:shadow-xs transition group cursor-pointer min-h-[86px]"
               >
-                <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-amber-50 text-amber-600 group-hover:scale-105 transition">
-                  <HelpCircle className="h-5 w-5" />
-                </div>
-                <span className="mt-2 text-xs font-bold text-slate-900">Store Support</span>
-                <span className="text-[10px] text-slate-400 mt-0.5">Help & FAQ</span>
+                <Wallet className="h-5 w-5 text-slate-800 group-hover:scale-105 transition" />
+                <span className="mt-1.5 text-[11px] font-bold text-slate-800 leading-tight">
+                  Store<br />Wallet
+                </span>
               </button>
             </div>
 
-            {/* PAST ORDERS SECTION (Image 3 Inspiration with Star Ratings & 1-Click Reorder) */}
-            <div id="past-orders-section" className="space-y-4 pt-2">
-              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-                <div>
-                  <h3 className="text-base font-extrabold uppercase tracking-wider text-slate-900">
-                    Past Orders ({pastOrders.length})
-                  </h3>
-                  <p className="text-xs text-slate-500">
-                    Track delivery status, rate items, and reorder favorites in 1 click.
-                  </p>
+            {/* QUICK ACTION ROWS (Image 3 List Style) */}
+            <div className="rounded-2xl border border-slate-200/80 bg-white divide-y divide-slate-100 shadow-2xs overflow-hidden">
+              <button
+                type="button"
+                onClick={() => {
+                  const el = document.getElementById("past-orders-section");
+                  if (el) el.scrollIntoView({ behavior: "smooth" });
+                }}
+                className="w-full flex items-center justify-between p-3.5 text-left hover:bg-slate-50 transition cursor-pointer"
+              >
+                <div className="flex items-center gap-3">
+                  <Tag className="h-4.5 w-4.5 text-slate-800" />
+                  <span className="text-xs font-bold text-slate-900">Available Coupons &amp; Offers</span>
                 </div>
+                <ChevronRight className="h-4 w-4 text-slate-300" />
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setSupportModalOpen(true)}
+                className="w-full flex items-center justify-between p-3.5 text-left hover:bg-slate-50 transition cursor-pointer"
+              >
+                <div className="flex items-center gap-3">
+                  <HelpCircle className="h-4.5 w-4.5 text-slate-800" />
+                  <span className="text-xs font-bold text-slate-900">Store Support &amp; FAQ</span>
+                </div>
+                <ChevronRight className="h-4 w-4 text-slate-300" />
+              </button>
+            </div>
+
+            {/* PAST ORDERS SECTION (Image 4 Inspiration with Swiggy Style Cards & 1-Click Reorder) */}
+            <div id="past-orders-section" className="space-y-4 pt-3">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                <h3 className="text-xs font-black uppercase tracking-wider text-slate-900">
+                  PAST ORDERS
+                </h3>
 
                 <div className="flex items-center gap-2">
-                  {/* Category Pill Tabs (Image 3 Style: Food vs Instamart/Pickup) */}
-                  <div className="flex rounded-xl bg-slate-200/80 p-1 text-xs font-bold">
-                    <button
-                      type="button"
-                      onClick={() => setOrderFilter("all")}
-                      className={`px-3 py-1 rounded-lg transition cursor-pointer ${
-                        orderFilter === "all" ? "bg-white text-slate-900 shadow-2xs font-bold" : "text-slate-600 hover:text-slate-900"
-                      }`}
-                    >
-                      All
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setOrderFilter("delivery")}
-                      className={`px-3 py-1 rounded-lg transition cursor-pointer ${
-                        orderFilter === "delivery" ? "bg-white text-slate-900 shadow-2xs font-bold" : "text-slate-600 hover:text-slate-900"
-                      }`}
-                    >
-                      Delivery
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setOrderFilter("pickup")}
-                      className={`px-3 py-1 rounded-lg transition cursor-pointer ${
-                        orderFilter === "pickup" ? "bg-white text-slate-900 shadow-2xs font-bold" : "text-slate-600 hover:text-slate-900"
-                      }`}
-                    >
-                      Pickup
-                    </button>
+                  {/* Category Pill Tabs (Image 4 Swiggy Style: Black Active Pill) */}
+                  <div className="flex items-center gap-1.5">
+                    {[
+                      { id: "all" as const, label: "All Orders", count: pastOrders.length },
+                      {
+                        id: "delivery" as const,
+                        label: "Delivery",
+                        count: pastOrders.filter((o) => o.fulfillment === "delivery").length,
+                      },
+                      {
+                        id: "pickup" as const,
+                        label: "Store Pickup",
+                        count: pastOrders.filter((o) => o.fulfillment !== "delivery").length,
+                      },
+                    ].map((tab) => {
+                      const active = orderFilter === tab.id;
+                      return (
+                        <button
+                          key={tab.id}
+                          type="button"
+                          onClick={() => setOrderFilter(tab.id)}
+                          className={`rounded-full px-4 py-1.5 text-xs font-bold transition cursor-pointer ${
+                            active
+                              ? "bg-slate-950 text-white shadow-xs"
+                              : "bg-slate-100 text-slate-600 hover:text-slate-900"
+                          }`}
+                        >
+                          <span>{tab.label}</span>
+                          <span className="ml-1 text-[10px] opacity-75 font-mono">({tab.count})</span>
+                        </button>
+                      );
+                    })}
                   </div>
 
                   <button
                     type="button"
                     onClick={() => void loadCustomerData(phone, storeSlug)}
-                    className="p-1.5 rounded-xl border border-slate-200 bg-white text-slate-600 hover:bg-slate-50 shadow-2xs transition cursor-pointer"
+                    className="p-1.5 rounded-full border border-slate-200 bg-white text-slate-600 hover:bg-slate-50 shadow-2xs transition cursor-pointer"
                     title="Refresh orders"
                   >
                     <RefreshCw className={`h-4 w-4 ${loadingOrders ? "animate-spin" : ""}`} />
@@ -1048,9 +1080,9 @@ export default function AccountPage() {
                             type="button"
                             disabled={reordering === ord.id}
                             onClick={() => handleReorder(ord)}
-                            className="w-full flex items-center justify-center gap-2 h-11 rounded-2xl bg-orange-50 hover:bg-orange-100 text-orange-700 border border-orange-200/80 font-extrabold text-xs uppercase tracking-wider transition cursor-pointer disabled:opacity-60"
+                            className="w-full flex items-center justify-center gap-2 py-2.5 rounded-xl bg-[#fff1eb] hover:bg-[#ffe4d6] text-[#ea580c] border border-[#fed7aa]/60 font-black text-xs tracking-wide transition cursor-pointer disabled:opacity-60 shadow-2xs"
                           >
-                            <Repeat className={`h-4 w-4 ${reordering === ord.id ? "animate-spin" : ""}`} />
+                            <Repeat className={`h-3.5 w-3.5 ${reordering === ord.id ? "animate-spin" : ""}`} />
                             <span>{reordering === ord.id ? "Adding Items to Cart..." : "Reorder"}</span>
                           </button>
                         </div>
