@@ -334,7 +334,7 @@ class PlaceOrder
                             'action_label' => 'View Storefront Order',
                             'action_url' => $trackingUrl,
                         ],
-                        $store->tenant_id,
+                        null,
                         $orderId
                     );
                 }

@@ -5164,79 +5164,241 @@ function SettingsAndTemplatesSection({ mode }: { mode: string }) {
           ) : null}
 
           {/* Preview Email Modal */}
-          {previewTemplate ? (
-            <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 p-4">
-              <div className="w-full max-w-xl rounded-2xl border border-slate-200 bg-white p-6 shadow-2xl space-y-4">
-                <div className="flex items-center justify-between border-b border-slate-100 pb-3">
-                  <div className="flex items-center gap-2">
-                    <Mail className="h-4 w-4 text-blue-600" />
-                    <h2 className="text-base font-semibold text-slate-900">
-                      Email Simulation Preview
-                    </h2>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => setPreviewTemplate(null)}
-                    className="rounded-lg p-1 text-slate-400 hover:text-slate-600"
-                  >
-                    <X className="h-5 w-5" />
-                  </button>
-                </div>
+          {previewTemplate ? (() => {
+            const sampleVars: Record<string, string> = {
+              platform_name: "SelfX Retail Cloud",
+              store_name: "Annapurna Supermarket",
+              tenant_name: "Annapurna Supermarket",
+              customer_name: "Priya Sharma",
+              owner_name: "Priya Sharma",
+              owner_email: "priya@annapurna.store",
+              owner_phone: "+91 98765 43210",
+              customer_phone: "+91 98765 43210",
+              console_url: "https://retail.sirixo.com",
+              order_number: "ON-000004",
+              invoice_number: "SFX-000142",
+              amount: "₹4,999.00",
+              total_amount: "₹135.00",
+              due_date: "2026-11-05",
+              plan_name: "Pro Retail",
+              renewal_date: "2026-11-01",
+              admin_email: "support@sirixo.com",
+              reason: "Routine compliance verification",
+              cancellation_reason: "Customer requested alternative item",
+              refund_status: "Processed (Credited in 3-5 days)",
+              fulfillment_type: "Home Delivery",
+              shipping_address: "Sri Krishna Nagar, Bangalore - 560038",
+              payment_method: "UPI (PhonePe)",
+              loyalty_points: "14 Points",
+              pickup_otp: "482910",
+              order_status_title: "Dispatched & On The Way",
+              order_status_message: "Your order #ON-000004 has been dispatched with our delivery partner and will reach you shortly.",
+              item_count: "3",
+              registered_at: "2026-10-30 14:00 IST",
+              payment_gateway: "Razorpay Cloud",
+              store_phone: "+91 80 4123 4567",
+              store_email: "orders@annapurna.store",
+            };
 
-                <div className="rounded-xl border border-slate-200 bg-slate-50/50 p-4 font-sans text-xs space-y-3">
-                  <div className="border-b border-slate-200 pb-2 space-y-1 text-slate-600">
-                    <p>
-                      <strong className="text-slate-800 font-semibold">From:</strong> SelfX Retail Cloud &lt;{settings.mail.from_address}&gt;
-                    </p>
-                    <p>
-                      <strong className="text-slate-800 font-semibold">To:</strong> Priya Sharma &lt;priya@annapurna.store&gt;
-                    </p>
-                    <p>
-                      <strong className="text-slate-800 font-semibold">Subject:</strong>{" "}
-                      <span className="font-semibold text-slate-900">
-                        {previewTemplate.subject
-                          .replace(/\{\{platform_name\}\}/g, "SelfX Retail Cloud")
-                          .replace(/\{\{tenant_name\}\}/g, "Annapurna Supermarket")
-                          .replace(/\{\{invoice_number\}\}/g, "SFX-000142")
-                          .replace(/\{\{amount\}\}/g, "₹4,999.00")
-                          .replace(/\{\{renewal_date\}\}/g, "2026-11-01")}
-                      </span>
-                    </p>
+            const interpolatedSubject = previewTemplate.subject.replace(/\{\{\s*([a-zA-Z0-9_\-]+)\s*\}\}/g, (_, k) => sampleVars[k] ?? `{{${k}}}`);
+            const interpolatedBody = previewTemplate.body.replace(/\{\{\s*([a-zA-Z0-9_\-]+)\s*\}\}/g, (_, k) => sampleVars[k] ?? `{{${k}}}`);
+
+            const lines = interpolatedBody.split("\n").map(l => l.trim()).filter(Boolean);
+            const cleanParagraphs: string[] = [];
+            const kvRows: { key: string; value: string }[] = [];
+            const signOffs: string[] = [];
+            let otp: string | null = null;
+
+            const kvRegex = /^(Fulfillment|Delivery Address|Shipping Address|Order Number|Total Amount|Total Paid|Payment Method|Loyalty Points|Loyalty Points Earned|Reason|Refund Status|Due Date|Due \/ Expiry Date|Expiry Date|Next Renewal Date|Renewal Date|Invoice Number|Login URL|Username|Selected Plan|Merchant|Owner Name|Owner Contact|Registered At|Next Billing Renewal Date|Store|Amount|Amount Received|Amount Paid|Workspace|Support Admin|Upgrade URL|Cancellation Reason):\s*(.+)$/i;
+            const otpRegex = /^(Verification OTP|Delivery Code|OTP|Pickup OTP):\s*([0-9A-Za-z\s\-]+)$/i;
+            const signOffRegex = /^(Thank you[,.]?$|Warm regards[,.]?$|Sincerely[,.]?$|Best regards[,.]?$|Regards[,.]?$|.+ Team$|Customer Care$|Platform Operations$|Platform Finance$|Platform Security Operations$|.+ Billing$)/i;
+
+            lines.forEach(l => {
+              const otpMatch = l.match(otpRegex);
+              const kvMatch = l.match(kvRegex);
+              if (otpMatch) {
+                otp = otpMatch[2].trim();
+              } else if (kvMatch) {
+                kvRows.push({ key: kvMatch[1].trim(), value: kvMatch[2].trim() });
+              } else if (signOffRegex.test(l)) {
+                signOffs.push(l);
+              } else {
+                cleanParagraphs.push(l);
+              }
+            });
+
+            const refId = interpolatedSubject.match(/(#(?:ON|ORD|INV|SFX)-[A-Za-z0-9\-]+)/i)?.[1] || "#ON-000004";
+
+            return (
+              <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-sm p-4 overflow-y-auto">
+                <div className="w-full max-w-2xl rounded-2xl border border-slate-200 bg-white p-6 shadow-2xl space-y-4 my-8">
+                  <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+                    <div className="flex items-center gap-2">
+                      <div className="h-8 w-8 rounded-lg bg-orange-100 flex items-center justify-center text-orange-600">
+                        <Mail className="h-4 w-4" />
+                      </div>
+                      <div>
+                        <h2 className="text-base font-bold text-slate-900">
+                          Email Simulation Preview
+                        </h2>
+                        <p className="text-xs text-slate-500">Live preview of outbound HTML template with orange brand theme</p>
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setPreviewTemplate(null)}
+                      className="rounded-lg p-1.5 text-slate-400 hover:text-slate-600 hover:bg-slate-100"
+                    >
+                      <X className="h-5 w-5" />
+                    </button>
                   </div>
 
-                  <div className="bg-white rounded-lg border border-slate-200 p-4 whitespace-pre-wrap leading-relaxed text-slate-800">
-                    {previewTemplate.body
-                      .replace(/\{\{platform_name\}\}/g, "SelfX Retail Cloud")
-                      .replace(/\{\{tenant_name\}\}/g, "Annapurna Supermarket")
-                      .replace(/\{\{owner_name\}\}/g, "Priya Sharma")
-                      .replace(/\{\{owner_email\}\}/g, "priya@annapurna.store")
-                      .replace(/\{\{console_url\}\}/g, "https://annapurna.retail.selfx.in")
-                      .replace(/\{\{invoice_number\}\}/g, "SFX-000142")
-                      .replace(/\{\{amount\}\}/g, "₹4,999.00")
-                      .replace(/\{\{due_date\}\}/g, "2026-11-05")
-                      .replace(/\{\{plan_name\}\}/g, "Pro Retail")
-                      .replace(/\{\{renewal_date\}\}/g, "2026-11-01")
-                      .replace(/\{\{admin_email\}\}/g, "admin@selfx.in")
-                      .replace(/\{\{reason\}\}/g, "Tax audit invoice verification")}
+                  {/* Mail Envelope Header */}
+                  <div className="rounded-xl border border-slate-200 bg-slate-50/70 p-3 text-xs space-y-1 text-slate-600 font-sans">
+                    <div className="flex justify-between">
+                      <span><strong className="text-slate-800">From:</strong> SelfX Retail Cloud &lt;{settings.mail.from_address}&gt;</span>
+                      <span className="text-[11px] text-slate-400 font-mono">Today, 14:30</span>
+                    </div>
+                    <div>
+                      <strong className="text-slate-800">To:</strong> Priya Sharma &lt;priya@annapurna.store&gt;
+                    </div>
+                    <div>
+                      <strong className="text-slate-800">Subject:</strong>{" "}
+                      <span className="font-semibold text-slate-900">{interpolatedSubject}</span>
+                    </div>
                   </div>
 
-                  <div className="pt-2 text-center text-[10px] text-slate-400">
-                    Sent securely via SelfX Outbound Transactional Mail Infrastructure
-                  </div>
-                </div>
+                  {/* HTML Email Canvas */}
+                  <div className="rounded-2xl border border-orange-200/80 bg-slate-50/60 p-4 sm:p-6 overflow-hidden">
+                    <div className="max-w-xl mx-auto rounded-2xl bg-white border border-orange-200 shadow-lg shadow-orange-500/5 overflow-hidden">
+                      {/* Orange Gradient Header */}
+                      <div className="bg-gradient-to-r from-orange-500 via-orange-600 to-amber-700 p-5 sm:p-6 text-white flex items-center justify-between">
+                        <div className="flex items-center gap-3">
+                          <div className="h-10 w-10 rounded-xl bg-white flex items-center justify-center shadow-md font-black text-xl text-orange-600">
+                            A
+                          </div>
+                          <div>
+                            <div className="font-extrabold text-base leading-tight text-white tracking-tight">Annapurna Supermarket</div>
+                            <div className="text-[10px] text-white/90 font-medium">Enterprise Retail Platform • SelfX Retail Cloud</div>
+                          </div>
+                        </div>
+                        <span className="px-3 py-1 rounded-full text-[10px] font-extrabold uppercase tracking-wider bg-white/20 border border-white/30 text-white">
+                          Verified
+                        </span>
+                      </div>
 
-                <div className="flex justify-end pt-2">
-                  <button
-                    type="button"
-                    onClick={() => setPreviewTemplate(null)}
-                    className="h-8 rounded-lg bg-slate-900 px-4 text-xs font-semibold text-white hover:bg-slate-800"
-                  >
-                    Close Preview
-                  </button>
+                      {/* Content Area */}
+                      <div className="p-6 space-y-4">
+                        <h3 className="text-lg font-extrabold text-slate-900 tracking-tight leading-snug">
+                          {interpolatedSubject}
+                        </h3>
+
+                        {/* Reference status strip */}
+                        <div className="flex items-center justify-between bg-orange-50 border border-orange-200/60 rounded-xl px-4 py-2.5 text-xs">
+                          <span className="font-bold text-orange-800 flex items-center gap-2">
+                            <span className="h-2 w-2 rounded-full bg-orange-500 animate-pulse" />
+                            Official Telemetry
+                          </span>
+                          <span className="font-mono font-bold text-orange-600">{refId}</span>
+                        </div>
+
+                        {/* Main Paragraphs */}
+                        <div className="space-y-2 text-xs leading-relaxed text-slate-700">
+                          {cleanParagraphs.map((p, idx) => (
+                            <p key={idx} className={idx === 0 ? "font-bold text-slate-900 text-sm" : ""}>
+                              {p}
+                            </p>
+                          ))}
+                        </div>
+
+                        {/* Structured Specification Table */}
+                        {kvRows.length > 0 && (
+                          <div className="rounded-xl border border-slate-100 bg-slate-50/80 p-3.5 space-y-2">
+                            {kvRows.map((row, idx) => {
+                              const isAmount = /(Amount|Paid|Total|Price|Fee)/i.test(row.key);
+                              return (
+                                <div key={idx} className={`flex items-start justify-between text-xs py-1.5 ${idx !== kvRows.length - 1 ? 'border-b border-slate-100' : ''}`}>
+                                  <span className="text-[11px] font-bold uppercase tracking-wider text-slate-500">{row.key}</span>
+                                  <span className={`text-right font-semibold ${isAmount ? 'text-orange-600 font-extrabold text-sm' : 'text-slate-900'}`}>
+                                    {row.value}
+                                  </span>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        )}
+
+                        {/* Verification OTP Box */}
+                        {otp && (
+                          <div className="bg-orange-50/90 border-2 border-dashed border-orange-500 rounded-xl p-4 text-center space-y-1">
+                            <div className="text-[10px] font-extrabold uppercase tracking-widest text-orange-800">
+                              Delivery / Collection Verification Code
+                            </div>
+                            <div className="font-mono text-2xl font-black tracking-[0.3em] text-orange-600">
+                              {otp}
+                            </div>
+                            <div className="text-[10px] text-orange-700">
+                              Share this one-time code only with the delivery partner upon arrival
+                            </div>
+                          </div>
+                        )}
+
+                        {/* Primary Action Button */}
+                        <div className="text-center pt-2">
+                          <button
+                            type="button"
+                            className="inline-flex items-center gap-2 px-6 py-2.5 rounded-xl bg-gradient-to-r from-orange-500 to-orange-600 text-white font-bold text-xs shadow-md shadow-orange-500/20 hover:brightness-105 transition"
+                          >
+                            <span>View Order Telemetry</span>
+                            <span>&rarr;</span>
+                          </button>
+                        </div>
+
+                        {/* Sign Offs */}
+                        {signOffs.length > 0 && (
+                          <div className="pt-2 text-xs text-slate-500 space-y-0.5">
+                            {signOffs.map((s, idx) => (
+                              <p key={idx}>{s}</p>
+                            ))}
+                          </div>
+                        )}
+
+                        {/* Support Card */}
+                        <div className="rounded-xl border border-orange-200/60 bg-orange-50/40 p-3 flex items-start gap-2.5 text-xs text-orange-950">
+                          <span className="text-sm">💬</span>
+                          <div>
+                            <strong className="font-bold text-orange-950">Need assistance?</strong>
+                            <p className="text-[11px] text-orange-800 leading-snug">
+                              Track real-time status online or reply to this email for customer support.
+                            </p>
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Footer */}
+                      <div className="bg-slate-50 border-t border-slate-100 p-4 text-center text-[10px] text-slate-400 space-y-1">
+                        <p>Sent securely by <strong className="text-slate-600">SelfX Retail Cloud</strong> on behalf of <strong className="text-slate-600">Annapurna Supermarket</strong>.</p>
+                        <p>&copy; {new Date().getFullYear()} SelfX Retail Cloud. Enterprise Retail Cloud Infrastructure.</p>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="flex justify-between items-center pt-2">
+                    <span className="text-xs text-slate-500">
+                      Supports SMTP providers (SendGrid, Mailgun, Amazon SES, Postmark, Resend, Custom SMTP)
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => setPreviewTemplate(null)}
+                      className="h-8 rounded-lg bg-slate-900 px-4 text-xs font-semibold text-white hover:bg-slate-800"
+                    >
+                      Close Preview
+                    </button>
+                  </div>
                 </div>
               </div>
-            </div>
-          ) : null}
+            );
+          })() : null}
         </div>
       ) : null}
 

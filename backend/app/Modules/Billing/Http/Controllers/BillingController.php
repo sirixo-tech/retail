@@ -985,7 +985,7 @@ class BillingController
         return $merged;
     }
 
-    private function defaultPlatformSettings(): array
+    public function defaultPlatformSettings(): array
     {
         return [
             'branding' => [
@@ -1067,7 +1067,7 @@ class BillingController
                     'category' => 'customer',
                     'trigger' => 'Event: order.placed',
                     'subject' => 'Order Confirmed #{{order_number}} from {{store_name}}',
-                    'body' => "Hello {{customer_name}},\n\nThank you for shopping with {{store_name}}! We have received your order #{{order_number}} for {{total_amount}} ({{item_count}} item(s)).\n\nFulfillment: {{fulfillment_type}}\nDelivery Address: {{shipping_address}}\n\nYou can track the live preparation and delivery status of your order anytime using the link below.\n\nThank you,\n{{store_name}} Team",
+                    'body' => "Hello {{customer_name}},\n\nThank you for shopping with {{store_name}}! We have received your order #{{order_number}} for {{total_amount}} ({{item_count}} item(s)).\n\nOrder Number: #{{order_number}}\nTotal Amount: {{total_amount}}\nFulfillment: {{fulfillment_type}}\nDelivery Address: {{shipping_address}}\n\nYou can track the live preparation and delivery status of your order anytime using the link below.\n\nThank you,\n{{store_name}} Team",
                     'active' => true,
                 ],
                 [
@@ -1076,7 +1076,7 @@ class BillingController
                     'category' => 'customer',
                     'trigger' => 'Event: order.accepted',
                     'subject' => 'Your order #{{order_number}} is being prepared by {{store_name}}',
-                    'body' => "Hello {{customer_name}},\n\nGood news! Your order #{{order_number}} has been accepted and is now being hand-picked and packed with care by our team at {{store_name}}.\n\nFulfillment: {{fulfillment_type}}\nTotal Amount: {{total_amount}}\n\nWe will notify you as soon as your package is dispatched or ready for counter collection.\n\nWarm regards,\n{{store_name}}",
+                    'body' => "Hello {{customer_name}},\n\nGood news! Your order #{{order_number}} has been accepted and is now being hand-picked and packed with care by our team at {{store_name}}.\n\nOrder Number: #{{order_number}}\nFulfillment: {{fulfillment_type}}\nTotal Amount: {{total_amount}}\n\nWe will notify you as soon as your package is dispatched or ready for counter collection.\n\nWarm regards,\n{{store_name}} Team",
                     'active' => true,
                 ],
                 [
@@ -1085,7 +1085,7 @@ class BillingController
                     'category' => 'customer',
                     'trigger' => 'Event: order.dispatched',
                     'subject' => 'Update on order #{{order_number}}: {{order_status_title}}',
-                    'body' => "Hello {{customer_name}},\n\n{{order_status_message}}\n\nOrder Number: #{{order_number}}\nVerification OTP: {{pickup_otp}}\n\nPlease keep your 6-digit OTP code ready when meeting our delivery partner or collecting at the store counter.\n\nThank you,\n{{store_name}}",
+                    'body' => "Hello {{customer_name}},\n\n{{order_status_message}}\n\nOrder Number: #{{order_number}}\nVerification OTP: {{pickup_otp}}\n\nPlease keep your 6-digit OTP code ready when meeting our delivery partner or collecting at the store counter.\n\nThank you,\n{{store_name}} Team",
                     'active' => true,
                 ],
                 [
@@ -1094,7 +1094,7 @@ class BillingController
                     'category' => 'customer',
                     'trigger' => 'Event: order.delivered',
                     'subject' => 'Delivered! Order #{{order_number}} from {{store_name}}',
-                    'body' => "Hello {{customer_name}},\n\nYour order #{{order_number}} has been successfully delivered!\n\nTotal Paid: {{total_amount}} via {{payment_method}}\nLoyalty Points Earned: {{loyalty_points}}\n\nWe hope you love your purchase! Click below to review your digital tax invoice receipt and rate your shopping experience.\n\nThank you for choosing {{store_name}}!",
+                    'body' => "Hello {{customer_name}},\n\nYour order #{{order_number}} has been successfully delivered!\n\nOrder Number: #{{order_number}}\nTotal Paid: {{total_amount}}\nPayment Method: {{payment_method}}\nLoyalty Points Earned: {{loyalty_points}}\n\nWe hope you love your purchase! Click below to review your digital tax invoice receipt and rate your shopping experience.\n\nThank you for choosing {{store_name}}!",
                     'active' => true,
                 ],
                 [
@@ -1103,7 +1103,7 @@ class BillingController
                     'category' => 'customer',
                     'trigger' => 'Event: order.cancelled',
                     'subject' => 'Notice: Order #{{order_number}} has been cancelled',
-                    'body' => "Hello {{customer_name}},\n\nYour order #{{order_number}} at {{store_name}} has been cancelled.\n\nReason: {{cancellation_reason}}\nRefund Status: {{refund_status}}\n\nIf any payment was debited, it will be refunded to your original payment method in 3-5 business days. For any assistance, please reach out to us at {{store_phone}} or {{store_email}}.\n\nSincerely,\n{{store_name}} Customer Care",
+                    'body' => "Hello {{customer_name}},\n\nYour order #{{order_number}} at {{store_name}} has been cancelled.\n\nOrder Number: #{{order_number}}\nReason: {{cancellation_reason}}\nRefund Status: {{refund_status}}\n\nIf any payment was debited, it will be refunded to your original payment method in 3-5 business days. For any assistance, please reach out to us at {{store_phone}} or {{store_email}}.\n\nSincerely,\n{{store_name}} Customer Care",
                     'active' => true,
                 ],
 
@@ -1125,7 +1125,7 @@ class BillingController
                     'category' => 'company',
                     'trigger' => 'Event: platform.new_online_order',
                     'subject' => '[Platform Order] New Order #{{order_number}} on {{store_name}} ({{total_amount}})',
-                    'body' => "Platform Operations Notice:\n\nA new storefront order has been placed on the platform.\n\nStore: {{store_name}} (Tenant: {{tenant_name}})\nOrder Number: #{{order_number}}\nAmount: {{total_amount}}\nCustomer: {{customer_name}} ({{customer_phone}})\nFulfillment: {{fulfillment_type}}\nPayment Method: {{payment_method}}\n\nMonitor platform fulfillment telemetry in Super Admin.",
+                    'body' => "Platform Operations Notice:\n\nA new storefront order has been placed on the platform.\n\nStore: {{store_name}} (Tenant: {{tenant_name}})\nOrder Number: #{{order_number}}\nTotal Amount: {{total_amount}}\nCustomer: {{customer_name}} ({{customer_phone}})\nFulfillment: {{fulfillment_type}}\nPayment Method: {{payment_method}}\n\nMonitor platform fulfillment telemetry in Super Admin.",
                     'active' => true,
                 ],
                 [
@@ -1147,7 +1147,7 @@ class BillingController
                     'category' => 'tenant',
                     'trigger' => 'Event: tenant.created',
                     'subject' => 'Welcome to {{platform_name}} — Your store {{tenant_name}} is live',
-                    'body' => "Hello {{owner_name}},\n\nYour retail workspace ({{tenant_name}}) has been provisioned.\nLogin URL: {{console_url}}\nUsername: {{owner_email}}\n\nThank you,\n{{platform_name}} Team",
+                    'body' => "Hello {{owner_name}},\n\nYour retail workspace ({{tenant_name}}) has been provisioned and is ready for use.\n\nWorkspace: {{tenant_name}}\nLogin URL: {{console_url}}\nUsername: {{owner_email}}\n\nThank you,\n{{platform_name}} Team",
                     'active' => true,
                 ],
                 [
@@ -1156,7 +1156,7 @@ class BillingController
                     'category' => 'tenant',
                     'trigger' => 'Event: invoice.generated',
                     'subject' => 'Tax Invoice {{invoice_number}} for {{tenant_name}}',
-                    'body' => "Hello {{owner_name}},\n\nYour GST subscription invoice {{invoice_number}} for {{amount}} has been generated.\nDue Date: {{due_date}}\n\nThank you,\n{{platform_name}} Billing",
+                    'body' => "Hello {{owner_name}},\n\nYour GST subscription invoice {{invoice_number}} for {{amount}} has been generated.\n\nInvoice Number: {{invoice_number}}\nTotal Amount: {{amount}}\nDue Date: {{due_date}}\n\nThank you,\n{{platform_name}} Billing",
                     'active' => true,
                 ],
                 [
@@ -1165,7 +1165,7 @@ class BillingController
                     'category' => 'tenant',
                     'trigger' => 'Event: subscription.renewing',
                     'subject' => 'Action Required: {{tenant_name}} subscription renews on {{renewal_date}}',
-                    'body' => "Hello {{owner_name}},\n\nYour {{plan_name}} plan for {{tenant_name}} is scheduled for renewal on {{renewal_date}}.\n\nThank you,\n{{platform_name}} Billing",
+                    'body' => "Hello {{owner_name}},\n\nYour {{plan_name}} plan for {{tenant_name}} is scheduled for renewal on {{renewal_date}}.\n\nSelected Plan: {{plan_name}}\nRenewal Date: {{renewal_date}}\n\nThank you,\n{{platform_name}} Billing",
                     'active' => true,
                 ],
                 [
@@ -1174,7 +1174,7 @@ class BillingController
                     'category' => 'tenant',
                     'trigger' => 'Event: payment.received',
                     'subject' => 'Payment Confirmation for Invoice {{invoice_number}}',
-                    'body' => "Hello {{owner_name}},\n\nWe have successfully received payment of {{amount}} for invoice {{invoice_number}}.\n\nYour subscription is now active through {{renewal_date}}.\n\nThank you,\n{{platform_name}} Billing",
+                    'body' => "Hello {{owner_name}},\n\nWe have successfully received payment of {{amount}} for invoice {{invoice_number}}.\n\nInvoice Number: {{invoice_number}}\nAmount Paid: {{amount}}\nNext Renewal Date: {{renewal_date}}\n\nThank you,\n{{platform_name}} Billing",
                     'active' => true,
                 ],
                 [
@@ -1183,7 +1183,7 @@ class BillingController
                     'category' => 'tenant',
                     'trigger' => 'Event: trial.expiring',
                     'subject' => 'Your {{platform_name}} free trial ends soon for {{tenant_name}}',
-                    'body' => "Hello {{owner_name}},\n\nYour 14-day free trial for {{tenant_name}} will conclude on {{due_date}}.\n\nUpgrade to Pro or Enterprise at {{console_url}}/billing to ensure uninterrupted POS billing and cloud syncing.\n\nThank you,\n{{platform_name}} Team",
+                    'body' => "Hello {{owner_name}},\n\nYour 14-day free trial for {{tenant_name}} will conclude on {{due_date}}.\n\nWorkspace: {{tenant_name}}\nExpiry Date: {{due_date}}\nUpgrade URL: {{console_url}}/billing\n\nUpgrade to Pro or Enterprise to ensure uninterrupted POS billing and cloud syncing.\n\nThank you,\n{{platform_name}} Team",
                     'active' => true,
                 ],
                 [
@@ -1192,7 +1192,7 @@ class BillingController
                     'category' => 'tenant',
                     'trigger' => 'Event: impersonation.started',
                     'subject' => 'Security Notice: Support session initiated on {{tenant_name}}',
-                    'body' => "Hello {{owner_name}},\n\nA platform support administrator ({{admin_email}}) started a time-boxed support session on {{tenant_name}} for reason: {{reason}}.\n\nThank you,\n{{platform_name}} Security Operations",
+                    'body' => "Hello {{owner_name}},\n\nA platform support administrator ({{admin_email}}) started a time-boxed support session on {{tenant_name}}.\n\nWorkspace: {{tenant_name}}\nSupport Admin: {{admin_email}}\nReason: {{reason}}\n\nThank you,\n{{platform_name}} Security Operations",
                     'active' => true,
                 ],
             ],

@@ -83,8 +83,21 @@ class PlatformMailer
     public function templates(): array
     {
         $stored = PlatformConfig::all()['email_templates'] ?? [];
+        $billing = app(\App\Modules\Billing\Http\Controllers\BillingController::class);
+        $defaults = $billing->defaultPlatformSettings()['email_templates'] ?? [];
 
-        return is_array($stored) ? $stored : [];
+        if (! is_array($stored) || empty($stored)) {
+            return $defaults;
+        }
+
+        $existingKeys = array_column($stored, 'key');
+        foreach ($defaults as $dtpl) {
+            if (! in_array($dtpl['key'], $existingKeys, true)) {
+                $stored[] = $dtpl;
+            }
+        }
+
+        return $stored;
     }
 
     /**
@@ -192,23 +205,203 @@ class PlatformMailer
      */
     private function buildHtmlEnvelope(string $subject, string $bodyText, array $variables): string
     {
-        $platformName = htmlspecialchars($variables['platform_name'] ?? 'SelfX Retail', ENT_QUOTES, 'UTF-8');
-        $storeName = htmlspecialchars($variables['store_name'] ?? $platformName, ENT_QUOTES, 'UTF-8');
+        $platformName = htmlspecialchars($variables['platform_name'] ?? 'SelfX Retail Cloud', ENT_QUOTES, 'UTF-8');
+        $storeRaw = $variables['store_name'] ?? $variables['tenant_name'] ?? $platformName;
+        $storeName = htmlspecialchars($storeRaw, ENT_QUOTES, 'UTF-8');
+        $storeInitial = strtoupper(mb_substr(strip_tags((string) $storeRaw), 0, 1, 'UTF-8')) ?: 'S';
         $actionUrl = ! empty($variables['action_url']) ? htmlspecialchars((string) $variables['action_url'], ENT_QUOTES, 'UTF-8') : null;
         $actionLabel = ! empty($variables['action_label']) ? htmlspecialchars((string) $variables['action_label'], ENT_QUOTES, 'UTF-8') : 'View Details';
 
-        $htmlBody = $this->formatBodyHtml($bodyText);
+        // Badge Pill Label Determination
+        $subjectLower = mb_strtolower($subject, 'UTF-8');
+        if (str_contains($subjectLower, 'delivered')) {
+            $badgeLabel = 'Order Delivered';
+        } elseif (str_contains($subjectLower, 'confirmed') || str_contains($subjectLower, 'placed')) {
+            $badgeLabel = 'Order Confirmed';
+        } elseif (str_contains($subjectLower, 'dispatched') || str_contains($subjectLower, 'out for delivery') || str_contains($subjectLower, 'ready for pickup')) {
+            $badgeLabel = 'Out For Delivery';
+        } elseif (str_contains($subjectLower, 'accepted') || str_contains($subjectLower, 'prepared') || str_contains($subjectLower, 'processing')) {
+            $badgeLabel = 'Order In Progress';
+        } elseif (str_contains($subjectLower, 'cancel') || str_contains($subjectLower, 'refund')) {
+            $badgeLabel = 'Order Update';
+        } elseif (str_contains($subjectLower, 'invoice')) {
+            $badgeLabel = 'Tax Invoice';
+        } elseif (str_contains($subjectLower, 'payment') || str_contains($subjectLower, 'revenue')) {
+            $badgeLabel = 'Payment Confirmed';
+        } elseif (str_contains($subjectLower, 'welcome')) {
+            $badgeLabel = 'Welcome';
+        } elseif (str_contains($subjectLower, 'security') || str_contains($subjectLower, 'alert') || str_contains($subjectLower, 'notice')) {
+            $badgeLabel = 'System Notice';
+        } else {
+            $badgeLabel = 'Official Notice';
+        }
 
+        // Reference ID detection (Order Number, Invoice Number, etc.)
+        $referenceId = $variables['order_number'] ?? $variables['invoice_number'] ?? null;
+        if (! $referenceId && preg_match('/(#(?:ON|ORD|INV|SFX)-[A-Za-z0-9\-]+)/i', $subject.' '.$bodyText, $mRef)) {
+            $referenceId = $mRef[1];
+        }
+        if ($referenceId) {
+            $referenceId = str_starts_with((string) $referenceId, '#') ? (string) $referenceId : '#'.$referenceId;
+        }
+
+        // Intelligent parsing of body text
+        $rawLines = array_filter(array_map('trim', explode("\n", $bodyText)), fn ($l) => $l !== '');
+        $cleanParagraphs = [];
+        $keyValueRows = [];
+        $signOffs = [];
+        $otpCode = null;
+
+        $kvPattern = '/^(Fulfillment|Delivery Address|Shipping Address|Order Number|Total Amount|Total Paid|Payment Method|Loyalty Points|Loyalty Points Earned|Reason|Refund Status|Due Date|Due \/ Expiry Date|Expiry Date|Next Renewal Date|Renewal Date|Invoice Number|Login URL|Username|Selected Plan|Merchant|Owner Name|Owner Contact|Registered At|Next Billing Renewal Date|Store|Amount|Amount Received|Amount Paid|Workspace|Support Admin|Upgrade URL|Cancellation Reason):\s*(.+)$/i';
+        $otpPattern = '/^(Verification OTP|Delivery Code|OTP|Pickup OTP):\s*([0-9A-Za-z\s\-]+)$/i';
+        $signOffPattern = '/^(Thank you[,.]?$|Warm regards[,.]?$|Sincerely[,.]?$|Best regards[,.]?$|Regards[,.]?$|.+ Team$|Customer Care$|Platform Operations$|Platform Finance$|Platform Security Operations$|.+ Billing$)/i';
+
+        foreach ($rawLines as $line) {
+            if (preg_match($otpPattern, $line, $mOtp)) {
+                $otpCode = trim($mOtp[2]);
+            } elseif (preg_match($kvPattern, $line, $mKv)) {
+                $keyValueRows[] = [
+                    'key' => trim($mKv[1]),
+                    'value' => trim($mKv[2]),
+                ];
+            } elseif (preg_match($signOffPattern, $line)) {
+                $signOffs[] = $line;
+            } else {
+                $cleanParagraphs[] = $line;
+            }
+        }
+
+        // Render Paragraphs
+        $renderedParagraphs = '';
+        foreach ($cleanParagraphs as $idx => $p) {
+            $escaped = htmlspecialchars($p, ENT_QUOTES, 'UTF-8');
+            if ($idx === 0 && (str_starts_with($p, 'Hello') || str_starts_with($p, 'Dear') || str_starts_with($p, 'Platform'))) {
+                $renderedParagraphs .= "<p style=\"margin:0 0 14px 0; font-size:15px; font-weight:700; color:#0f172a; line-height:22px;\">{$escaped}</p>";
+            } else {
+                $renderedParagraphs .= "<p style=\"margin:0 0 14px 0; font-size:14px; line-height:24px; color:#334155;\">{$escaped}</p>";
+            }
+        }
+
+        // Render Reference Status Indicator Strip
+        $statusStripHtml = '';
+        if ($referenceId) {
+            $escapedRef = htmlspecialchars($referenceId, ENT_QUOTES, 'UTF-8');
+            $statusStripHtml = <<<HTML
+            <div style="background-color:#fff7ed; border:1px solid #ffedd5; border-radius:12px; padding:12px 18px; margin-bottom:22px;">
+                <table width="100%" cellpadding="0" cellspacing="0" border="0">
+                    <tr>
+                        <td style="font-size:12px; font-weight:700; color:#c2410c;">
+                            <span style="display:inline-block; width:8px; height:8px; background-color:#ea580c; border-radius:50%; margin-right:6px; vertical-align:middle;"></span>
+                            {$badgeLabel}
+                        </td>
+                        <td align="right" style="font-size:13px; font-family:'Courier New',Courier,monospace; font-weight:800; color:#ea580c;">
+                            {$escapedRef}
+                        </td>
+                    </tr>
+                </table>
+            </div>
+HTML;
+        }
+
+        // Render Key-Value Specifications Card
+        $keyValueHtml = '';
+        if (! empty($keyValueRows)) {
+            $kvCount = count($keyValueRows);
+            $rowsHtml = '';
+            foreach ($keyValueRows as $i => $row) {
+                $k = htmlspecialchars($row['key'], ENT_QUOTES, 'UTF-8');
+                $valRaw = $row['value'];
+                $isLast = ($i === $kvCount - 1);
+                $border = $isLast ? '' : 'border-bottom:1px solid #f1f5f9;';
+
+                // Format amounts or links
+                if (preg_match('/(Amount|Paid|Total|Price|Fee)/i', $row['key'])) {
+                    $vHtml = '<strong style="color:#ea580c; font-size:14px; font-weight:800;">'.htmlspecialchars($valRaw, ENT_QUOTES, 'UTF-8').'</strong>';
+                } elseif (str_starts_with($valRaw, 'http://') || str_starts_with($valRaw, 'https://')) {
+                    $vEscaped = htmlspecialchars($valRaw, ENT_QUOTES, 'UTF-8');
+                    $vHtml = "<a href=\"{$vEscaped}\" target=\"_blank\" style=\"color:#ea580c; text-decoration:underline; font-weight:600; word-break:break-all;\">{$vEscaped}</a>";
+                } else {
+                    $vHtml = '<span style="color:#0f172a; font-weight:600;">'.htmlspecialchars($valRaw, ENT_QUOTES, 'UTF-8').'</span>';
+                }
+
+                $rowsHtml .= <<<HTML
+                <tr>
+                    <td style="padding:10px 0; {$border} font-size:11px; font-weight:700; color:#64748b; text-transform:uppercase; letter-spacing:0.5px; vertical-align:top; width:38%;">
+                        {$k}
+                    </td>
+                    <td align="right" style="padding:10px 0; {$border} font-size:13px; vertical-align:top;">
+                        {$vHtml}
+                    </td>
+                </tr>
+HTML;
+            }
+
+            $keyValueHtml = <<<HTML
+            <div style="background-color:#fafafa; border:1px solid #f1f5f9; border-radius:14px; padding:6px 20px; margin:22px 0;">
+                <table width="100%" cellpadding="0" cellspacing="0" border="0" style="border-collapse:collapse;">
+                    {$rowsHtml}
+                </table>
+            </div>
+HTML;
+        }
+
+        // Render Security Verification OTP Card
+        $otpHtml = '';
+        if ($otpCode) {
+            $escapedOtp = htmlspecialchars($otpCode, ENT_QUOTES, 'UTF-8');
+            $otpHtml = <<<HTML
+            <div style="background-color:#fff7ed; border:1.5px dashed #ea580c; border-radius:14px; padding:20px 24px; text-align:center; margin:24px 0;">
+                <div style="font-size:11px; font-weight:800; text-transform:uppercase; letter-spacing:1px; color:#c2410c; margin-bottom:8px;">
+                    Delivery / Collection Verification Code
+                </div>
+                <div style="font-family:'Courier New',Courier,monospace; font-size:32px; font-weight:900; letter-spacing:8px; color:#ea580c;">
+                    {$escapedOtp}
+                </div>
+                <div style="font-size:11px; color:#9a3412; margin-top:8px;">
+                    Share this one-time security code with the partner upon package arrival
+                </div>
+            </div>
+HTML;
+        }
+
+        // Render Primary CTA Action Button
         $buttonHtml = '';
         if ($actionUrl) {
             $buttonHtml = <<<HTML
-            <div style="margin:28px 0 20px 0; text-align:center;">
-                <a href="{$actionUrl}" target="_blank" style="display:inline-block; background-color:#ea580c; background-image:linear-gradient(135deg, #ea580c 0%, #f97316 100%); color:#ffffff !important; font-weight:700; font-size:14px; text-decoration:none; padding:13px 34px; border-radius:10px; box-shadow:0 4px 14px rgba(234,88,12,0.35); letter-spacing:0.2px;">
+            <div style="margin:28px 0 22px 0; text-align:center;">
+                <a href="{$actionUrl}" target="_blank" style="display:inline-block; background:linear-gradient(135deg, #f97316 0%, #ea580c 100%); background-color:#ea580c; color:#ffffff !important; font-weight:700; font-size:14px; text-decoration:none; padding:13px 36px; border-radius:12px; box-shadow:0 4px 14px rgba(234,88,12,0.35); letter-spacing:0.3px;">
                     {$actionLabel} &rarr;
                 </a>
             </div>
 HTML;
         }
+
+        // Render Sign-Offs
+        $signOffHtml = '';
+        if (! empty($signOffs)) {
+            $lines = '';
+            foreach ($signOffs as $s) {
+                $lines .= '<p style="margin:0 0 4px 0; font-size:13px; color:#64748b; line-height:20px; font-weight:500;">'.htmlspecialchars($s, ENT_QUOTES, 'UTF-8').'</p>';
+            }
+            $signOffHtml = "<div style=\"margin-top:20px;\">{$lines}</div>";
+        }
+
+        // Render Support Box
+        $supportHtml = <<<HTML
+        <div style="margin-top:26px; background-color:#fffaf5; border:1px solid #ffedd5; border-radius:14px; padding:16px 20px;">
+            <table width="100%" cellpadding="0" cellspacing="0" border="0">
+                <tr>
+                    <td style="vertical-align:top; width:28px; padding-top:2px;">
+                        <span style="display:inline-block; width:22px; height:22px; background-color:#ffedd5; border-radius:50%; text-align:center; line-height:22px; font-size:12px;">💬</span>
+                    </td>
+                    <td style="font-size:12px; color:#7c2d12; line-height:19px;">
+                        <strong style="color:#431407; font-size:12.5px;">Need help with this order?</strong><br>
+                        Track live progress online, download your tax invoice, or reply directly to this email to reach {$storeName} customer support.
+                    </td>
+                </tr>
+            </table>
+        </div>
+HTML;
 
         $year = date('Y');
 
@@ -221,55 +414,66 @@ HTML;
     <title>{$subject}</title>
 </head>
 <body style="margin:0; padding:0; background-color:#f8fafc; font-family:-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; -webkit-font-smoothing:antialiased;">
-    <table width="100%" cellpadding="0" cellspacing="0" style="background-color:#f8fafc; padding:32px 16px;">
+    <table width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:#f8fafc; padding:36px 16px;">
         <tr>
             <td align="center">
-                <table width="100%" cellpadding="0" cellspacing="0" style="max-width:580px; background-color:#ffffff; border-radius:16px; border:1px solid #fed7aa; overflow:hidden; box-shadow:0 8px 24px -4px rgba(234,88,12,0.1), 0 4px 8px -2px rgba(0,0,0,0.03);">
-                    <!-- Premium Executive Orange Header -->
+                <table width="100%" cellpadding="0" cellspacing="0" border="0" style="max-width:580px; background-color:#ffffff; border-radius:20px; border:1px solid #fed7aa; overflow:hidden; box-shadow:0 10px 25px -5px rgba(234,88,12,0.08), 0 8px 10px -6px rgba(0,0,0,0.02);">
+                    <!-- Header (Enterprise Orange Gradient) -->
                     <tr>
-                        <td style="background-color:#ea580c; background-image:linear-gradient(135deg, #c2410c 0%, #ea580c 55%, #f97316 100%); padding:26px 32px; border-bottom:3px solid #c2410c;">
-                            <table width="100%" cellpadding="0" cellspacing="0">
+                        <td style="background:linear-gradient(135deg, #f97316 0%, #ea580c 50%, #c2410c 100%); background-color:#ea580c; padding:24px 32px;">
+                            <table width="100%" cellpadding="0" cellspacing="0" border="0">
                                 <tr>
                                     <td style="vertical-align:middle;">
-                                        <span style="font-size:20px; font-weight:800; letter-spacing:-0.5px; color:#ffffff; display:block; line-height:24px;">
-                                            {$storeName}
-                                        </span>
-                                        <span style="display:block; font-size:10px; color:#ffedd5; margin-top:4px; font-weight:600; letter-spacing:0.8px; text-transform:uppercase;">
-                                            Enterprise Retail Platform &bull; {$platformName}
-                                        </span>
+                                        <table cellpadding="0" cellspacing="0" border="0">
+                                            <tr>
+                                                <td style="width:44px; height:44px; background-color:#ffffff; border-radius:12px; text-align:center; vertical-align:middle; box-shadow:0 4px 6px -1px rgba(0,0,0,0.15);">
+                                                    <span style="font-size:22px; font-weight:900; color:#ea580c; line-height:1; font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;">{$storeInitial}</span>
+                                                </td>
+                                                <td style="padding-left:14px; vertical-align:middle;">
+                                                    <span style="font-size:19px; font-weight:800; letter-spacing:-0.4px; color:#ffffff; display:block; line-height:1.2; font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;">
+                                                        {$storeName}
+                                                    </span>
+                                                    <span style="display:block; font-size:11px; color:rgba(255,255,255,0.92); margin-top:2px; font-weight:600; letter-spacing:0.2px;">
+                                                        Enterprise Retail Platform &bull; {$platformName}
+                                                    </span>
+                                                </td>
+                                            </tr>
+                                        </table>
                                     </td>
                                     <td align="right" style="vertical-align:middle;">
-                                        <span style="display:inline-block; background-color:rgba(255,255,255,0.2); border:1px solid rgba(255,255,255,0.35); color:#ffffff; font-size:10px; font-weight:700; text-transform:uppercase; padding:5px 12px; border-radius:9999px; letter-spacing:0.8px; white-space:nowrap;">
-                                            Official Notice
+                                        <span style="display:inline-block; background-color:rgba(255,255,255,0.22); border:1px solid rgba(255,255,255,0.35); color:#ffffff; font-size:10px; font-weight:800; text-transform:uppercase; padding:5px 12px; border-radius:9999px; letter-spacing:0.8px;">
+                                            {$badgeLabel}
                                         </span>
                                     </td>
                                 </tr>
                             </table>
                         </td>
                     </tr>
+
                     <!-- Body Content -->
                     <tr>
-                        <td style="padding:32px 32px 28px 32px;">
-                            <h1 style="margin:0 0 16px 0; font-size:19px; font-weight:800; color:#0f172a; letter-spacing:-0.4px; line-height:26px;">
+                        <td style="padding:34px 32px 28px 32px;">
+                            <h1 style="margin:0 0 16px 0; font-size:20px; font-weight:800; color:#0f172a; letter-spacing:-0.4px; line-height:1.35;">
                                 {$subject}
                             </h1>
-                            <div style="height:3px; width:44px; background-color:#ea580c; border-radius:2px; margin-bottom:22px;"></div>
-                            {$htmlBody}
+                            {$statusStripHtml}
+                            {$renderedParagraphs}
+                            {$keyValueHtml}
+                            {$otpHtml}
                             {$buttonHtml}
-                            <div style="margin-top:24px; padding:12px 16px; background-color:#fffaf5; border:1px solid #fed7aa; border-radius:8px; font-size:12px; color:#7c2d12; line-height:18px; text-align:center;">
-                                Questions or updates regarding this notification? Simply reply directly to this email.
-                            </div>
+                            {$signOffHtml}
+                            {$supportHtml}
                         </td>
                     </tr>
+
                     <!-- Footer -->
                     <tr>
-                        <td style="background-color:#fafaf9; padding:22px 32px; border-top:1px solid #f1f5f9; text-align:center;">
-                            <p style="margin:0 0 6px 0; font-size:11px; font-weight:600; color:#9a3412; letter-spacing:0.3px;">
-                                &#128274; Verified Secure Retail Transaction &bull; {$platformName}
+                        <td style="background-color:#f8fafc; padding:24px 32px; border-top:1px solid #f1f5f9; text-align:center;">
+                            <p style="margin:0 0 6px 0; font-size:11px; line-height:18px; color:#94a3b8;">
+                                Sent securely by <strong style="color:#64748b;">{$platformName}</strong> automated notifications on behalf of <strong style="color:#64748b;">{$storeName}</strong>.
                             </p>
-                            <p style="margin:0; font-size:11px; line-height:18px; color:#94a3b8;">
-                                Sent by {$platformName} automated notifications on behalf of {$storeName}.<br>
-                                &copy; {$year} {$storeName}. All rights reserved.
+                            <p style="margin:0; font-size:11px; line-height:18px; color:#cbd5e1;">
+                                &copy; {$year} {$platformName}. Enterprise Retail Cloud Infrastructure.
                             </p>
                         </td>
                     </tr>
@@ -280,91 +484,6 @@ HTML;
 </body>
 </html>
 HTML;
-    }
-
-    /**
-     * Format raw multiline text into structured paragraphs, details cards, and sign-offs.
-     */
-    private function formatBodyHtml(string $bodyText): string
-    {
-        $rawParagraphs = preg_split("/\n\s*\n/", trim($bodyText));
-        $htmlOutput = '';
-
-        foreach ($rawParagraphs as $para) {
-            $lines = array_values(array_filter(array_map('trim', explode("\n", $para)), fn ($l) => $l !== ''));
-            if (empty($lines)) {
-                continue;
-            }
-
-            // Check if this block is a sign-off (e.g. "Thank you,\ns-mart Team" or "Warm regards,\n...")
-            if (count($lines) <= 3 && preg_match('/^(thank you|warm regards|sincerely|best regards|regards),?$/i', $lines[0])) {
-                $closing = htmlspecialchars($lines[0], ENT_QUOTES, 'UTF-8');
-                $sender = isset($lines[1]) ? htmlspecialchars(implode(' ', array_slice($lines, 1)), ENT_QUOTES, 'UTF-8') : '';
-                $htmlOutput .= "<div style=\"margin:24px 0 6px 0; padding-top:16px; border-top:1px dashed #fed7aa; font-size:14px; color:#64748b; line-height:22px;\">";
-                $htmlOutput .= "{$closing}";
-                if ($sender !== '') {
-                    $htmlOutput .= "<br><strong style=\"color:#0f172a; font-size:14px;\">{$sender}</strong>";
-                }
-                $htmlOutput .= '</div>';
-                continue;
-            }
-
-            // Group lines inside this paragraph into Key: Value sequences and standard text sequences
-            $groups = [];
-            $currentGroup = [];
-            $currentIsKv = null;
-
-            foreach ($lines as $line) {
-                $isKv = (bool) preg_match('/^([A-Za-z0-9\s#\-_]{2,32}):\s*(.+)$/u', $line);
-                if ($currentIsKv === null) {
-                    $currentIsKv = $isKv;
-                    $currentGroup[] = $line;
-                } elseif ($currentIsKv === $isKv) {
-                    $currentGroup[] = $line;
-                } else {
-                    $groups[] = ['is_kv' => $currentIsKv, 'lines' => $currentGroup];
-                    $currentIsKv = $isKv;
-                    $currentGroup = [$line];
-                }
-            }
-            if (! empty($currentGroup)) {
-                $groups[] = ['is_kv' => $currentIsKv, 'lines' => $currentGroup];
-            }
-
-            foreach ($groups as $grp) {
-                if ($grp['is_kv']) {
-                    $htmlOutput .= '<div style="margin:16px 0; background-color:#fffaf5; border:1px solid #fed7aa; border-left:4px solid #ea580c; border-radius:10px; padding:12px 18px;">';
-                    $htmlOutput .= '<table width="100%" cellpadding="0" cellspacing="0" style="font-size:13px;">';
-                    $count = count($grp['lines']);
-                    foreach ($grp['lines'] as $idx => $kvLine) {
-                        preg_match('/^([A-Za-z0-9\s#\-_]{2,32}):\s*(.+)$/u', $kvLine, $m);
-                        $label = htmlspecialchars(trim($m[1]), ENT_QUOTES, 'UTF-8');
-                        $valRaw = trim($m[2]);
-                        $valEscaped = htmlspecialchars($valRaw, ENT_QUOTES, 'UTF-8');
-
-                        if (stripos($label, 'OTP') !== false) {
-                            $valHtml = "<span style=\"display:inline-block; background-color:#ffedd5; border:1px dashed #ea580c; color:#c2410c; font-size:16px; font-weight:800; letter-spacing:2.5px; padding:3px 10px; border-radius:6px; font-family:monospace, monospace;\">{$valEscaped}</span>";
-                        } elseif (stripos($label, 'Amount') !== false || stripos($label, 'Total') !== false || stripos($label, 'Paid') !== false) {
-                            $valHtml = "<strong style=\"color:#ea580c; font-size:14px; font-weight:700;\">{$valEscaped}</strong>";
-                        } else {
-                            $valHtml = "<span style=\"color:#0f172a; font-weight:600;\">{$valEscaped}</span>";
-                        }
-
-                        $borderStyle = ($idx < $count - 1) ? 'border-bottom:1px solid #ffedd5;' : '';
-                        $htmlOutput .= '<tr>';
-                        $htmlOutput .= "<td style=\"padding:8px 0; width:36%; color:#9a3412; font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:0.5px; vertical-align:top; {$borderStyle}\">{$label}</td>";
-                        $htmlOutput .= "<td style=\"padding:8px 0 8px 14px; vertical-align:top; {$borderStyle}\">{$valHtml}</td>";
-                        $htmlOutput .= '</tr>';
-                    }
-                    $htmlOutput .= '</table></div>';
-                } else {
-                    $pContent = implode('<br>', array_map(fn ($l) => htmlspecialchars($l, ENT_QUOTES, 'UTF-8'), $grp['lines']));
-                    $htmlOutput .= "<p style=\"margin:0 0 14px 0; font-size:14px; line-height:22px; color:#334155;\">{$pContent}</p>";
-                }
-            }
-        }
-
-        return $htmlOutput;
     }
 
     /**
