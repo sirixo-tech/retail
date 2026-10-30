@@ -2198,6 +2198,36 @@ class SaleController
         return null;
     }
 
+    public function posDynamicQr(Request $request, string $store): JsonResponse
+    {
+        $model = $this->store($request, $store);
+        if ($model instanceof JsonResponse) {
+            return $model;
+        }
+
+        $data = $request->validate([
+            'amount_paise' => ['required', 'integer', 'min:1'],
+            'order_ref' => ['nullable', 'string', 'max:64'],
+        ]);
+
+        $orderRef = (string) ($data['order_ref'] ?? ('ORD-' . date('YmdHis')));
+        $qrResult = app(PaymentGatewayService::class)->generatePosQr($model, (int) $data['amount_paise'], $orderRef);
+
+        return ApiResponse::ok($qrResult);
+    }
+
+    public function posDynamicQrStatus(Request $request, string $store, string $transactionId): JsonResponse
+    {
+        $model = $this->store($request, $store);
+        if ($model instanceof JsonResponse) {
+            return $model;
+        }
+
+        $status = app(PaymentGatewayService::class)->verifyPosQrStatus($model, $transactionId);
+
+        return ApiResponse::ok($status);
+    }
+
     private function catalog(string $name): string
     {
         return DB::getDriverName() === 'pgsql' ? 'catalog.'.$name : 'catalog_'.$name;

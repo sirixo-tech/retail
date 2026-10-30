@@ -78,14 +78,14 @@ const GATEWAY_CATALOG: GatewayMeta[] = [
     fields: [
       {
         name: "key_id",
-        label: "Merchant ID (MID)",
-        placeholder: "e.g. PGTESTPAYUAT86",
+        label: "Merchant ID",
+        placeholder: "SIRIXO01",
         required: true,
         helper: "Issued in your PhonePe Business Dashboard under Developer Settings.",
       },
       {
         name: "key_secret",
-        label: "Salt Key",
+        label: "Salt key",
         placeholder: "Enter PhonePe Salt Key",
         type: "password",
         required: true,
@@ -93,19 +93,33 @@ const GATEWAY_CATALOG: GatewayMeta[] = [
       },
       {
         name: "salt_index",
-        label: "Salt Key Index",
+        label: "Salt index",
         placeholder: "1",
         type: "number",
       },
       {
-        name: "store_terminal_id",
-        label: "POS Store / Terminal ID",
-        placeholder: "TERM-COUNTER-01",
+        name: "provider_id",
+        label: "Provider ID (X-PROVIDER-ID)",
+        placeholder: "SIRIXOPOS",
+        helper: "Required for PhonePe Mercury Dynamic UPI QR POS terminals.",
+      },
+      {
+        name: "store_id",
+        label: "Store ID (UPI DQR)",
+        placeholder: "STORE01",
+        helper: "Optional store code identifier for PhonePe Dynamic QR.",
+      },
+      {
+        name: "terminal_id",
+        label: "Terminal ID (UPI DQR)",
+        placeholder: "TERM01",
+        helper: "Optional counter terminal identifier for PhonePe Dynamic QR.",
       },
       {
         name: "upi_vpa",
-        label: "Merchant UPI VPA Handle",
-        placeholder: "merchant@ybl",
+        label: "UPI ID (optional fallback)",
+        placeholder: "SIRIXO01@ybl",
+        helper: "Optional fallback VPA if DQR service is unreachable.",
       },
       {
         name: "callback_url",

@@ -4119,14 +4119,18 @@ function SettingsAndTemplatesSection({ mode }: { mode: string }) {
                 docUrl: "https://razorpay.com/docs/api",
               },
               phonepe: {
-                name: "PhonePe PG",
+                name: "PhonePe PG & POS DQR",
                 logo: "/superadmin/logos/phonepe.svg",
                 desc: "Direct UPI intent, dynamic QR, cards, and netbanking for high-conversion retail checkouts in India.",
                 currencies: ["INR"],
                 fields: [
-                  { key: "merchant_id", label: "Merchant ID (MID)", placeholder: "SELFXONLINE" },
+                  { key: "merchant_id", label: "Merchant ID (MID)", placeholder: "SIRIXO01" },
                   { key: "salt_key", label: "Salt Key", placeholder: "PhonePe Production Salt Key...", secret: true },
                   { key: "salt_index", label: "Salt Index", placeholder: "1" },
+                  { key: "provider_id", label: "Provider ID (X-PROVIDER-ID)", placeholder: "SIRIXOPOS" },
+                  { key: "store_id", label: "Store ID (UPI DQR)", placeholder: "STORE01" },
+                  { key: "terminal_id", label: "Terminal ID (UPI DQR)", placeholder: "TERM01" },
+                  { key: "upi_vpa", label: "UPI ID (optional fallback)", placeholder: "SIRIXO01@ybl" },
                 ],
                 steps: [
                   "Log in to PhonePe Merchant portal and access API Credentials.",

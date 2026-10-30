@@ -279,9 +279,12 @@ function PosScreen() {
   const [countedRupees, setCountedRupees] = useState("");
   const [noteCounts, setNoteCounts] = useState<Record<number, string>>({});
   const [page, setPage] = useState(1);
-  const [storeUpiVpa, setStoreUpiVpa] = useState<string>("");
-  const [storePayeeName, setStorePayeeName] = useState<string>("");
+  const [storeUpiVpa, setStoreUpiVpa] = useState<string>("SIRIXO01@ybl");
+  const [storePayeeName, setStorePayeeName] = useState<string>("SIRIXO");
   const [posUpiQrUrl, setPosUpiQrUrl] = useState<string | null>(null);
+  const [activePosTxnId, setActivePosTxnId] = useState<string | null>(null);
+  const [qrGenerating, setQrGenerating] = useState(false);
+  const [autoCaptureSuccess, setAutoCaptureSuccess] = useState(false);
 
   useEffect(() => {
     const loaded = loadPosSettings();
@@ -1231,8 +1234,8 @@ function PosScreen() {
     const w = window.open("", "_blank", "width=320,height=480");
     if (!w) return;
     const totalStr = (totalDuePaise / 100).toFixed(2);
-    const vpaStr = storeUpiVpa || "SIRIX001@ybl";
-    const nameStr = storePayeeName || "Retail Store";
+    const vpaStr = storeUpiVpa || "SIRIXO01@ybl";
+    const nameStr = storePayeeName || "SIRIXO";
     w.document.write(`
       <!DOCTYPE html>
       <html>
@@ -1266,19 +1269,107 @@ function PosScreen() {
     w.document.close();
   };
 
+  // Generate PhonePe Mercury DQR or Local fallback
   useEffect(() => {
-    if ((payMethod !== "upi" && payMethod !== "upi_qr") || totalDuePaise <= 0) {
-      setPosUpiQrUrl(null);
-      return;
-    }
-    const vpa = storeUpiVpa || "SIRIX001@ybl";
-    const amount = (totalDuePaise / 100).toFixed(2);
-    const payee = encodeURIComponent(storePayeeName || "Retail Store");
-    const uri = `upi://pay?pa=${encodeURIComponent(vpa)}&pn=${payee}&am=${amount}&cu=INR&tn=${encodeURIComponent(posTempOrderRef)}`;
-    QRCode.toDataURL(uri, { width: 280, margin: 1, color: { dark: "#0f172a", light: "#ffffff" } })
-      .then((url) => setPosUpiQrUrl(url))
-      .catch(() => {});
-  }, [payMethod, totalDuePaise, storeUpiVpa, storePayeeName, posTempOrderRef]);
+    if (!upiQrModalOpen || totalDuePaise <= 0 || !storeId) return;
+
+    let cancelled = false;
+    setQrGenerating(true);
+    setAutoCaptureSuccess(false);
+
+    // Call server to generate official gateway Dynamic QR (PhonePe Mercury DQR)
+    fetch(`/api/v1/stores/${storeId}/pos/dynamic-qr`, {
+      method: "POST",
+      credentials: "include",
+      headers: {
+        Accept: "application/json",
+        "Content-Type": "application/json",
+        "X-XSRF-TOKEN": csrf(),
+      },
+      body: JSON.stringify({
+        amount_paise: totalDuePaise,
+        order_ref: posTempOrderRef,
+      }),
+    })
+      .then((res) => (res.ok ? res.json() : null))
+      .then(async (body) => {
+        if (cancelled) return;
+        const d = body?.data;
+        if (d?.qr_string) {
+          if (d.vpa) setStoreUpiVpa(d.vpa);
+          if (d.payee_name) setStorePayeeName(d.payee_name);
+          if (d.transaction_id) setActivePosTxnId(d.transaction_id);
+
+          const url = await QRCode.toDataURL(d.qr_string, {
+            width: 280,
+            margin: 1,
+            color: { dark: "#0f172a", light: "#ffffff" },
+          });
+          if (!cancelled) setPosUpiQrUrl(url);
+        } else {
+          // Local fallback
+          const vpa = storeUpiVpa || "SIRIXO01@ybl";
+          const amount = (totalDuePaise / 100).toFixed(2);
+          const payee = encodeURIComponent(storePayeeName || "SIRIXO");
+          const uri = `upi://pay?pa=${encodeURIComponent(vpa)}&pn=${payee}&am=${amount}&cu=INR&tn=${encodeURIComponent(posTempOrderRef)}`;
+          const url = await QRCode.toDataURL(uri, {
+            width: 280,
+            margin: 1,
+            color: { dark: "#0f172a", light: "#ffffff" },
+          });
+          if (!cancelled) setPosUpiQrUrl(url);
+        }
+      })
+      .catch(async () => {
+        if (cancelled) return;
+        const vpa = storeUpiVpa || "SIRIXO01@ybl";
+        const amount = (totalDuePaise / 100).toFixed(2);
+        const payee = encodeURIComponent(storePayeeName || "SIRIXO");
+        const uri = `upi://pay?pa=${encodeURIComponent(vpa)}&pn=${payee}&am=${amount}&cu=INR&tn=${encodeURIComponent(posTempOrderRef)}`;
+        const url = await QRCode.toDataURL(uri, {
+          width: 280,
+          margin: 1,
+          color: { dark: "#0f172a", light: "#ffffff" },
+        });
+        if (!cancelled) setPosUpiQrUrl(url);
+      })
+      .finally(() => {
+        if (!cancelled) setQrGenerating(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [upiQrModalOpen, totalDuePaise, storeId, posTempOrderRef]);
+
+  // Dynamic QR auto-status polling
+  useEffect(() => {
+    if (!upiQrModalOpen || !activePosTxnId || !storeId || autoCaptureSuccess) return;
+
+    const poll = setInterval(() => {
+      fetch(`/api/v1/stores/${storeId}/pos/dynamic-qr/${encodeURIComponent(activePosTxnId)}/status`, {
+        credentials: "include",
+        headers: { Accept: "application/json", "X-XSRF-TOKEN": csrf() },
+      })
+        .then((res) => (res.ok ? res.json() : null))
+        .then((body) => {
+          if (body?.data?.paid === true) {
+            clearInterval(poll);
+            setAutoCaptureSuccess(true);
+            if (settings.tapSound) playPosSound("chime", settings.soundVolume);
+            showNotice("Payment confirmed by PhonePe! Completing order...", "ok");
+            setTimeout(async () => {
+              setPayMethod("upi");
+              setUpiQrModalOpen(false);
+              await pay();
+            }, 1000);
+          }
+        })
+        .catch(() => {});
+    }, 3000);
+
+    return () => clearInterval(poll);
+  }, [upiQrModalOpen, activePosTxnId, storeId, autoCaptureSuccess, settings]);
 
   useEffect(() => {
     try {

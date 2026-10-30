@@ -298,6 +298,8 @@ Route::middleware(['auth', 'password.changed', 'kind:staff', 'tenant.enforce'])-
     Route::get('stores/{store}/shifts/current', [SaleController::class, 'currentShift']);
     Route::get('stores/{store}/receipt', [SaleController::class, 'receiptSettings']);
     Route::put('stores/{store}/receipt', [SaleController::class, 'updateReceiptSettings']);
+    Route::post('stores/{store}/pos/dynamic-qr', [SaleController::class, 'posDynamicQr']);
+    Route::get('stores/{store}/pos/dynamic-qr/{transactionId}/status', [SaleController::class, 'posDynamicQrStatus']);
     Route::get('stores/{store}/hours', [SaleController::class, 'hours']);
     Route::put('stores/{store}/hours', [SaleController::class, 'updateHours']);
     Route::post('stores/{store}/shifts/close', [SaleController::class, 'closeShift']);
