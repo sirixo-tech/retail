@@ -73,6 +73,8 @@ type OrderLine = {
   qty: number;
   unit_price_paise: number;
   total_paise?: number;
+  image_url?: string | null;
+  image?: string | null;
 };
 
 type PastOrder = {
@@ -90,6 +92,7 @@ type PastOrder = {
   store_slug: string;
   store_name: string;
   items_count: number;
+  image_url?: string | null;
   lines: OrderLine[];
 };
 
@@ -952,43 +955,64 @@ export default function AccountPage() {
                   {filteredOrders.map((ord) => {
                     const ratings = orderRatings[ord.id] || { food: 0, delivery: 0 };
                     const isDelivered = ord.status === "delivered" || ord.status === "completed";
+                    const firstLine = ord.lines?.[0];
+                    const orderImageUrl = firstLine?.image_url || firstLine?.image || ord.image_url;
 
                     return (
                       <div
                         key={ord.id}
                         className="rounded-3xl border border-slate-200 bg-white p-4 sm:p-5 shadow-2xs transition hover:border-slate-300 space-y-3.5"
                       >
-                        {/* Order Header (Store Name, Status Pill) */}
-                        <div className="flex items-start justify-between gap-3">
-                          <div className="flex items-center gap-2.5 min-w-0">
-                            <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-orange-100 text-orange-600 shrink-0 font-black text-sm">
-                              {ord.store_name?.charAt(0).toUpperCase() || <Store className="h-5 w-5" />}
-                            </div>
-                            <div className="min-w-0">
-                              <h4 className="text-sm font-bold text-slate-900 truncate">
-                                {ord.store_name || brandName}
-                              </h4>
-                              <p className="text-[11px] text-slate-400 font-mono">
-                                Order #{ord.number}
-                              </p>
+                        {/* Order Header: Product Image on left + Store Name with small inline Status Pill */}
+                        <div className="flex items-center gap-3">
+                          <div className="relative h-11 w-11 rounded-xl overflow-hidden bg-orange-50 border border-slate-200/80 flex items-center justify-center shrink-0 shadow-2xs">
+                            {orderImageUrl ? (
+                              // eslint-disable-next-line @next/next/no-img-element
+                              <img
+                                src={orderImageUrl}
+                                alt={firstLine?.name || ord.store_name || brandName}
+                                className="h-full w-full object-cover"
+                                onError={(e) => {
+                                  (e.currentTarget as HTMLElement).style.display = "none";
+                                  const fallback = e.currentTarget.parentElement?.querySelector(".fallback-img") as HTMLElement | null;
+                                  if (fallback) fallback.style.display = "flex";
+                                }}
+                              />
+                            ) : null}
+                            <div
+                              className={`fallback-img h-full w-full items-center justify-center text-orange-600 bg-orange-50 ${
+                                orderImageUrl ? "hidden" : "flex"
+                              }`}
+                            >
+                              <ShoppingBag size={18} className="text-orange-500" />
                             </div>
                           </div>
 
-                          <div className="flex items-center gap-1.5">
-                            <span
-                              className={`inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-[11px] font-bold ${
-                                isDelivered
-                                  ? "bg-emerald-50 text-emerald-700 border border-emerald-200"
-                                  : ord.status === "out_for_delivery"
-                                  ? "bg-blue-50 text-blue-700 border border-blue-200"
-                                  : ord.status === "cancelled"
-                                  ? "bg-rose-50 text-rose-700 border border-rose-200"
-                                  : "bg-amber-50 text-amber-700 border border-amber-200"
-                              }`}
-                            >
-                              {isDelivered && <CheckCircle2 className="h-3 w-3" />}
-                              <span>{ord.status.toUpperCase().replace("_", " ")}</span>
-                            </span>
+                          <div className="min-w-0 flex-1">
+                            <div className="flex items-center gap-1.5 flex-wrap">
+                              <h4 className="text-sm font-bold text-slate-900 truncate">
+                                {ord.store_name || brandName}
+                              </h4>
+
+                              <span
+                                className={`inline-flex items-center gap-0.5 rounded-full px-1.5 py-0.5 text-[10px] font-bold shrink-0 ${
+                                  isDelivered
+                                    ? "bg-emerald-50 text-emerald-700 border border-emerald-200/60"
+                                    : ord.status === "out_for_delivery"
+                                    ? "bg-blue-50 text-blue-700 border border-blue-200/60"
+                                    : ord.status === "cancelled"
+                                    ? "bg-rose-50 text-rose-700 border border-rose-200/60"
+                                    : "bg-amber-50 text-amber-700 border border-amber-200/60"
+                                }`}
+                              >
+                                {isDelivered && <CheckCircle2 size={10} className="text-emerald-600 fill-emerald-100" />}
+                                <span>{isDelivered ? "Delivered" : ord.status.toUpperCase().replace("_", " ")}</span>
+                              </span>
+                            </div>
+
+                            <p className="text-[11px] text-slate-400 font-mono mt-0.5">
+                              Order #{ord.number}
+                            </p>
                           </div>
                         </div>
 

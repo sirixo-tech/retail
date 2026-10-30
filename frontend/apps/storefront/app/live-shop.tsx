@@ -6273,47 +6273,72 @@ export function LiveShop() {
                               })
                             : "Recent";
 
+                          const firstLine = ord.lines?.[0];
+                          const matchingCatalogItem = firstLine
+                            ? items.find((i) => i.id === firstLine.store_item_id || i.name?.toLowerCase() === firstLine.name?.toLowerCase())
+                            : null;
+                          const orderImageUrl =
+                            firstLine?.image_url ||
+                            firstLine?.image ||
+                            ord.image_url ||
+                            (matchingCatalogItem ? productImageFor(matchingCatalogItem) : null);
+
                           return (
                             <div
                               key={ord.number}
                               className="rounded-2xl border border-slate-200/80 bg-white p-4 shadow-sm space-y-3 transition hover:shadow-md hover:border-slate-300"
                             >
-                              {/* Order Card Header (Image 4 Style) */}
-                              <div className="flex items-start justify-between gap-3">
-                                <div className="flex items-center gap-3 min-w-0">
-                                  <div className="h-11 w-11 rounded-xl bg-orange-50 border border-orange-100 flex items-center justify-center font-black text-orange-600 text-base shrink-0 shadow-2xs">
-                                    {displayStoreName.charAt(0).toUpperCase()}
+                              {/* Order Card Header: Item Thumbnail on left of Store Name + Inline Status Pill */}
+                              <div className="flex items-center gap-3">
+                                <div className="relative h-11 w-11 rounded-xl overflow-hidden bg-orange-50 border border-slate-200/80 flex items-center justify-center shrink-0 shadow-2xs">
+                                  {orderImageUrl ? (
+                                    // eslint-disable-next-line @next/next/no-img-element
+                                    <img
+                                      src={orderImageUrl}
+                                      alt={firstLine?.name || displayStoreName}
+                                      className="h-full w-full object-cover"
+                                      onError={(e) => {
+                                        (e.currentTarget as HTMLElement).style.display = "none";
+                                        const fallback = e.currentTarget.parentElement?.querySelector(".fallback-img") as HTMLElement | null;
+                                        if (fallback) fallback.style.display = "flex";
+                                      }}
+                                    />
+                                  ) : null}
+                                  <div
+                                    className={`fallback-img h-full w-full items-center justify-center text-orange-600 bg-orange-50 ${
+                                      orderImageUrl ? "hidden" : "flex"
+                                    }`}
+                                  >
+                                    <ShoppingBag size={18} className="text-orange-500" />
                                   </div>
-                                  <div className="min-w-0">
+                                </div>
+                                <div className="min-w-0 flex-1">
+                                  <div className="flex items-center gap-1.5 flex-wrap">
                                     <h5 className="font-bold text-sm text-slate-900 truncate">
                                       {displayStoreName}
                                     </h5>
-                                    <p className="text-[11px] text-slate-500">
-                                      {isDeliv ? "Doorstep Delivery" : "Store Counter Pickup"} · {dateStr}
-                                    </p>
+                                    {isDelivered ? (
+                                      <span className="font-bold text-[10px] text-emerald-700 inline-flex items-center gap-0.5 bg-emerald-50 px-1.5 py-0.5 rounded-full border border-emerald-200/60 shrink-0">
+                                        <span>Delivered</span>
+                                        <CheckCircle2 size={10} className="text-emerald-600 fill-emerald-100" />
+                                      </span>
+                                    ) : ord.status === "out_for_delivery" ? (
+                                      <span className="font-bold text-[10px] text-blue-700 inline-flex items-center bg-blue-50 px-1.5 py-0.5 rounded-full border border-blue-200/60 shrink-0">
+                                        Out for Delivery
+                                      </span>
+                                    ) : ord.status === "cancelled" ? (
+                                      <span className="font-bold text-[10px] text-rose-700 inline-flex items-center bg-rose-50 px-1.5 py-0.5 rounded-full border border-rose-200/60 shrink-0">
+                                        Cancelled
+                                      </span>
+                                    ) : (
+                                      <span className="font-bold text-[10px] text-amber-700 inline-flex items-center bg-amber-50 px-1.5 py-0.5 rounded-full border border-amber-200/60 shrink-0">
+                                        Order Placed
+                                      </span>
+                                    )}
                                   </div>
-                                </div>
-
-                                {/* Status Badge (Image 4: Delivered with Checkmark) */}
-                                <div>
-                                  {isDelivered ? (
-                                    <span className="font-bold text-xs text-emerald-600 flex items-center gap-1 bg-emerald-50 px-2 py-0.5 rounded-full border border-emerald-200/60">
-                                      <span>Delivered</span>
-                                      <CheckCircle2 size={13} className="text-emerald-500 fill-emerald-100" />
-                                    </span>
-                                  ) : ord.status === "out_for_delivery" ? (
-                                    <span className="font-bold text-xs text-blue-600 bg-blue-50 px-2 py-0.5 rounded-full border border-blue-200/60">
-                                      Out for Delivery
-                                    </span>
-                                  ) : ord.status === "cancelled" ? (
-                                    <span className="font-bold text-xs text-rose-600 bg-rose-50 px-2 py-0.5 rounded-full border border-rose-200/60">
-                                      Cancelled
-                                    </span>
-                                  ) : (
-                                    <span className="font-bold text-xs text-amber-600 bg-amber-50 px-2 py-0.5 rounded-full border border-amber-200/60">
-                                      Order Placed
-                                    </span>
-                                  )}
+                                  <p className="text-[11px] text-slate-500 truncate mt-0.5">
+                                    {isDeliv ? "Doorstep Delivery" : "Store Counter Pickup"} · {dateStr}
+                                  </p>
                                 </div>
                               </div>
 
@@ -6397,26 +6422,13 @@ export function LiveShop() {
                                 </button>
                               </div>
 
-                              {/* Card Footer: Metadata, Live Map, Tax Invoice */}
+                              {/* Card Footer: Metadata & Tax Invoice */}
                               <div className="flex flex-wrap items-center justify-between gap-2 border-t border-slate-100 pt-2.5 text-xs">
                                 <span className="text-[11px] text-slate-500 font-medium">
                                   Order #{ord.number} · <strong className="text-slate-900 font-mono">{formatStorePrice(ord.total_paise || 0)}</strong>
                                 </span>
 
                                 <div className="flex items-center gap-2.5">
-                                  <button
-                                    type="button"
-                                    onClick={() => {
-                                      setOrdersDrawerOpen(false);
-                                      setCustomerProfileOpen(false);
-                                      setLiveMapModalOrder(ord);
-                                    }}
-                                    className="inline-flex items-center gap-1 text-[11px] font-bold text-blue-600 hover:text-blue-700 cursor-pointer"
-                                  >
-                                    <Navigation size={12} />
-                                    <span>Live Map</span>
-                                  </button>
-
                                   <Link
                                     href={`/track?order=${encodeURIComponent(ord.number)}`}
                                     onClick={() => {

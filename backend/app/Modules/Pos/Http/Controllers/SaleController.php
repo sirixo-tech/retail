@@ -1015,8 +1015,17 @@ class SaleController
             ->get(['from_status', 'to_status', 'created_at']);
 
         $lines = DB::table('order_lines')
-            ->where('order_id', $row->id)
-            ->get(['store_item_id', 'name_snapshot', 'qty', 'unit_price_paise']);
+            ->leftJoin('store_items', 'order_lines.store_item_id', '=', 'store_items.id')
+            ->where('order_lines.order_id', $row->id)
+            ->get([
+                'order_lines.store_item_id',
+                'order_lines.name_snapshot',
+                'order_lines.qty',
+                'order_lines.unit_price_paise',
+                'store_items.image',
+                'store_items.image_url',
+                'store_items.details',
+            ]);
 
         $store = DB::table('stores')->where('id', $row->store_id)->first();
         $storeSettings = $store && $store->settings ? (is_string($store->settings) ? json_decode($store->settings, true) : (array) $store->settings) : [];
@@ -1075,13 +1084,18 @@ class SaleController
                 'lng' => $storeLng ? (float) $storeLng : null,
                 'google_maps_api_key' => $mapsKey,
             ],
-            'lines' => $lines->map(fn($l) => [
-                'store_item_id' => $l->store_item_id,
-                'name' => $l->name_snapshot,
-                'qty' => (float) $l->qty,
-                'unit_price_paise' => (int) $l->unit_price_paise,
-                'total_paise' => (int) ($l->qty * $l->unit_price_paise),
-            ]),
+            'lines' => $lines->map(function ($l) {
+                $rawDetails = ! empty($l->details) ? (is_string($l->details) ? json_decode($l->details, true) : (array) $l->details) : [];
+                $img = $l->image_url ?: ($l->image ?: ($rawDetails['images'][0] ?? ($rawDetails['image'] ?? null)));
+                return [
+                    'store_item_id' => $l->store_item_id,
+                    'name' => $l->name_snapshot,
+                    'qty' => (float) $l->qty,
+                    'unit_price_paise' => (int) $l->unit_price_paise,
+                    'total_paise' => (int) ($l->qty * $l->unit_price_paise),
+                    'image_url' => $img,
+                ];
+            }),
             'timeline' => $events,
         ]);
     }
@@ -1106,8 +1120,18 @@ class SaleController
 
         $orderIds = $orders->pluck('id');
         $lines = DB::table('order_lines')
-            ->whereIn('order_id', $orderIds)
-            ->get(['order_id', 'store_item_id', 'name_snapshot', 'qty', 'unit_price_paise']);
+            ->leftJoin('store_items', 'order_lines.store_item_id', '=', 'store_items.id')
+            ->whereIn('order_lines.order_id', $orderIds)
+            ->get([
+                'order_lines.order_id',
+                'order_lines.store_item_id',
+                'order_lines.name_snapshot',
+                'order_lines.qty',
+                'order_lines.unit_price_paise',
+                'store_items.image',
+                'store_items.image_url',
+                'store_items.details',
+            ]);
 
         $stores = DB::table('stores')->whereIn('id', $orders->pluck('store_id'))->get()->keyBy('id');
 
@@ -1118,6 +1142,21 @@ class SaleController
             $custLat = $order->latitude ?? ($addressData['latitude'] ?? null);
             $custLng = $order->longitude ?? ($addressData['longitude'] ?? null);
             $liveLoc = $order->live_location_url ?? ($addressData['live_location_url'] ?? ($custLat && $custLng ? "https://www.google.com/maps?q={$custLat},{$custLng}" : null));
+
+            $mappedLines = $orderLines->map(function ($l) {
+                $rawDetails = ! empty($l->details) ? (is_string($l->details) ? json_decode($l->details, true) : (array) $l->details) : [];
+                $img = $l->image_url ?: ($l->image ?: ($rawDetails['images'][0] ?? ($rawDetails['image'] ?? null)));
+                return [
+                    'store_item_id' => $l->store_item_id,
+                    'name' => $l->name_snapshot,
+                    'qty' => (float) $l->qty,
+                    'unit_price_paise' => (int) $l->unit_price_paise,
+                    'total_paise' => (int) ($l->qty * $l->unit_price_paise),
+                    'image_url' => $img,
+                ];
+            });
+
+            $orderImg = $mappedLines->first()['image_url'] ?? null;
 
             return [
                 'id' => $order->id,
@@ -1144,13 +1183,8 @@ class SaleController
                 'store_slug' => $store?->public_slug ?? ($store?->slug ?? 'bangalore'),
                 'store_name' => $store?->name ?? 'Retail Store',
                 'items_count' => $orderLines->count(),
-                'lines' => $orderLines->map(fn($l) => [
-                    'store_item_id' => $l->store_item_id,
-                    'name' => $l->name_snapshot,
-                    'qty' => (float) $l->qty,
-                    'unit_price_paise' => (int) $l->unit_price_paise,
-                    'total_paise' => (int) ($l->qty * $l->unit_price_paise),
-                ]),
+                'image_url' => $orderImg,
+                'lines' => $mappedLines,
             ];
         });
 
