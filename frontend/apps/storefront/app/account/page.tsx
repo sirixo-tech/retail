@@ -701,28 +701,28 @@ export default function AccountPage() {
         ) : (
           /* Production-Grade Account Dashboard (Image 3 & 4 Swiggy Aesthetic) */
           <div className="space-y-4 sm:space-y-5">
-            {/* HERO PROFILE GRADIENT BANNER (Image 3 Inspiration) */}
-            <div className="relative overflow-hidden rounded-3xl bg-gradient-to-br from-[#c2410c] via-[#ea580c] to-[#9a3412] text-white p-6 sm:p-8 shadow-md">
+            {/* HERO PROFILE LIGHT ORANGE GRADIENT BANNER (Image 3 Inspiration) */}
+            <div className="relative overflow-hidden rounded-3xl bg-gradient-to-br from-[#ff723b] via-[#f97316] to-[#f59e0b] text-white p-6 sm:p-8 shadow-sm">
               {/* Atmospheric decorative circles (Matching Image 3) */}
-              <div className="absolute -top-12 -right-12 h-52 w-52 rounded-full bg-white/10 blur-xl pointer-events-none" />
-              <div className="absolute top-1/2 -right-8 h-44 w-44 rounded-full border border-white/15 pointer-events-none" />
-              <div className="absolute -bottom-10 right-20 h-32 w-32 rounded-full bg-black/10 blur-md pointer-events-none" />
+              <div className="absolute -top-12 -right-12 h-52 w-52 rounded-full bg-white/15 blur-xl pointer-events-none" />
+              <div className="absolute top-1/2 -right-8 h-44 w-44 rounded-full border border-white/20 pointer-events-none" />
+              <div className="absolute -bottom-10 right-20 h-32 w-32 rounded-full bg-white/10 blur-md pointer-events-none" />
 
               <div className="relative flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 pb-4">
                 <div className="min-w-0 space-y-1">
                   <h2 className="text-2xl sm:text-3xl font-black tracking-tight truncate leading-snug">
                     {userName || "Customer"}
                   </h2>
-                  <p className="text-xs sm:text-sm font-semibold text-white/90 font-mono">
+                  <p className="text-xs sm:text-sm font-semibold text-white/95 font-mono">
                     +91 - {phone}
                   </p>
                   {userEmail ? (
-                    <p className="text-xs text-white/80 truncate">{userEmail}</p>
+                    <p className="text-xs text-white/90 truncate">{userEmail}</p>
                   ) : (
                     <button
                       type="button"
                       onClick={() => setEditProfileModalOpen(true)}
-                      className="text-xs text-amber-200 hover:text-white underline font-semibold cursor-pointer"
+                      className="text-xs text-amber-100 hover:text-white underline font-semibold cursor-pointer"
                     >
                       + Add email address
                     </button>
@@ -742,7 +742,7 @@ export default function AccountPage() {
                   <button
                     type="button"
                     onClick={handleSignOut}
-                    className="inline-flex items-center gap-1.5 rounded-xl bg-black/25 hover:bg-black/35 backdrop-blur-md border border-white/20 px-3.5 py-1.5 text-xs font-bold text-rose-200 shadow-xs transition cursor-pointer"
+                    className="inline-flex items-center gap-1.5 rounded-xl bg-black/20 hover:bg-black/30 backdrop-blur-md border border-white/20 px-3.5 py-1.5 text-xs font-bold text-rose-200 shadow-xs transition cursor-pointer"
                   >
                     <LogOut className="h-3.5 w-3.5" />
                     <span>Sign Out</span>
@@ -752,7 +752,7 @@ export default function AccountPage() {
             </div>
 
             {/* OVERLAPPING MEMBERSHIP & REWARDS CARD (Image 3 "ONE Active" Banner) */}
-            <div className="-mt-8 rounded-2xl border border-slate-100 bg-white p-4 sm:p-5 shadow-md relative z-10 transition hover:shadow-lg">
+            <div className="-mt-8 rounded-2xl border border-slate-100 bg-white p-4 sm:p-5 shadow-lg relative z-20 transition hover:shadow-xl">
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2">
                   <span className="text-sm font-black text-orange-600 tracking-tight">SelfX Club</span>

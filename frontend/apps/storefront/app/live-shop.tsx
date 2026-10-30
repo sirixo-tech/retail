@@ -5958,13 +5958,13 @@ export function LiveShop() {
                 </div>
               </>
             ) : (
-              <>
-                {/* HERO PROFILE GRADIENT HEADER (Image 3 Inspiration) */}
-                <div className="relative overflow-hidden bg-gradient-to-br from-[#c2410c] via-[#ea580c] to-[#9a3412] text-white shrink-0 shadow-sm">
+              <div className="flex-1 overflow-y-auto">
+                {/* HERO PROFILE LIGHT ORANGE GRADIENT BANNER (Image 3 Inspiration) */}
+                <div className="relative overflow-hidden bg-gradient-to-br from-[#ff723b] via-[#f97316] to-[#f59e0b] text-white shadow-sm pb-11">
                   {/* Atmospheric decorative circles (Matching Image 3) */}
-                  <div className="absolute -top-12 -right-12 h-48 w-48 rounded-full bg-white/10 blur-xl pointer-events-none" />
-                  <div className="absolute top-1/2 -right-8 h-40 w-40 rounded-full border border-white/15 pointer-events-none" />
-                  <div className="absolute -bottom-10 right-16 h-28 w-28 rounded-full bg-black/10 blur-md pointer-events-none" />
+                  <div className="absolute -top-12 -right-12 h-52 w-52 rounded-full bg-white/15 blur-xl pointer-events-none" />
+                  <div className="absolute top-1/2 -right-8 h-44 w-44 rounded-full border border-white/20 pointer-events-none" />
+                  <div className="absolute -bottom-10 right-16 h-32 w-32 rounded-full bg-white/10 blur-md pointer-events-none" />
 
                   {/* Top Navigation Bar */}
                   <div className="relative flex items-center justify-between px-4 sm:px-5 pt-4 pb-2 z-20">
@@ -5974,7 +5974,7 @@ export function LiveShop() {
                         setOrdersDrawerOpen(false);
                         setCustomerProfileOpen(false);
                       }}
-                      className="rounded-full p-2 text-white/90 hover:bg-white/15 hover:text-white transition cursor-pointer"
+                      className="rounded-full p-2 text-white hover:bg-white/20 transition cursor-pointer"
                       aria-label="Back to store"
                     >
                       <ArrowLeft size={20} />
@@ -5984,7 +5984,7 @@ export function LiveShop() {
                       <button
                         type="button"
                         onClick={() => setContactModalOpen(true)}
-                        className="rounded-full bg-black/25 hover:bg-black/35 backdrop-blur-md border border-white/20 px-3.5 py-1 text-xs font-semibold text-white transition flex items-center gap-1.5 cursor-pointer shadow-xs"
+                        className="rounded-full bg-black/20 hover:bg-black/30 backdrop-blur-md border border-white/25 px-3.5 py-1 text-xs font-semibold text-white transition flex items-center gap-1.5 cursor-pointer shadow-xs"
                       >
                         <span>Help</span>
                       </button>
@@ -5993,7 +5993,7 @@ export function LiveShop() {
                         <button
                           type="button"
                           onClick={() => setProfileMenuOpen((prev) => !prev)}
-                          className="rounded-full p-1.5 text-white/90 hover:bg-white/15 hover:text-white transition cursor-pointer"
+                          className="rounded-full p-1.5 text-white hover:bg-white/20 transition cursor-pointer"
                           aria-label="Profile options"
                         >
                           <MoreVertical size={20} />
@@ -6032,20 +6032,20 @@ export function LiveShop() {
                   </div>
 
                   {/* Hero Customer Information (Image 3 Style) */}
-                  <div className="relative px-5 sm:px-6 pt-2 pb-10 space-y-1">
+                  <div className="relative px-5 sm:px-6 pt-2 pb-2 space-y-1">
                     <h2 className="text-2xl font-black text-white tracking-tight leading-snug">
                       {name || "Customer"}
                     </h2>
-                    <p className="text-xs text-white/90 font-semibold flex items-center gap-1.5">
+                    <p className="text-xs text-white/95 font-semibold flex items-center gap-1.5">
                       <span>+91 - {phone}</span>
                     </p>
                     {email ? (
-                      <p className="text-xs text-white/80 font-medium truncate">{email}</p>
+                      <p className="text-xs text-white/90 font-medium truncate">{email}</p>
                     ) : (
                       <button
                         type="button"
                         onClick={() => setProfileEditOpen(true)}
-                        className="text-xs text-amber-200 hover:text-white underline font-semibold cursor-pointer"
+                        className="text-xs text-amber-100 hover:text-white underline font-semibold cursor-pointer"
                       >
                         + Add email address
                       </button>
@@ -6053,10 +6053,10 @@ export function LiveShop() {
                   </div>
                 </div>
 
-                {/* Drawer Content Body */}
-                <div className="flex-1 overflow-y-auto px-4 sm:px-5 pb-6 space-y-3.5">
+                {/* Drawer Content Body with Overlapping Card */}
+                <div className="px-4 sm:px-5 pb-8 space-y-3.5">
                   {/* OVERLAPPING MEMBERSHIP & REWARDS CARD (Image 3 "ONE Active" Banner) */}
-                  <div className="-mt-7 rounded-2xl border border-slate-100 bg-white p-4 shadow-md relative z-10 transition hover:shadow-lg">
+                  <div className="-mt-7 rounded-2xl border border-slate-100 bg-white p-4 sm:p-5 shadow-lg relative z-20 transition hover:shadow-xl">
                     <div className="flex items-center justify-between">
                       <div className="flex items-center gap-2">
                         <span className="text-sm font-black text-orange-600 tracking-tight">SelfX Club</span>
@@ -6441,7 +6441,7 @@ export function LiveShop() {
                     )}
                   </div>
                 </div>
-              </>
+              </div>
             )}
           </div>
         </div>
