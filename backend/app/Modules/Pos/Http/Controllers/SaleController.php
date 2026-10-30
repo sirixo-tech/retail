@@ -5,6 +5,7 @@ namespace App\Modules\Pos\Http\Controllers;
 use App\Modules\Inventory\Actions\ReserveStock;
 use App\Modules\Orders\Actions\PlaceOrder;
 use App\Modules\Payments\Http\Controllers\GatewayController;
+use App\Modules\Payments\Services\PaymentGatewayService;
 use App\Modules\Pos\Actions\CompleteCashSale;
 use App\Modules\Pos\Actions\ReturnSale;
 use App\Modules\Pos\Actions\VoidSale;
@@ -666,33 +667,25 @@ class SaleController
         }
 
         if (in_array($method, GatewayController::PREPAID, true)) {
-            $token = Str::random(40);
-            $paymentId = (string) Str::uuid7();
-            DB::table('payments')->insert([
-                'id' => $paymentId,
-                'tenant_id' => $store->tenant_id,
-                'store_id' => $store->id,
-                'order_id' => $order['id'],
-                'provider' => $method,
-                'mode' => 'test',
-                'amount_paise' => $order['total_paise'],
-                'status' => 'created',
-                'capture_token_hash' => hash_hmac('sha256', $token, (string) config('app.key')),
-                'created_at' => now(),
-                'updated_at' => now(),
-            ]);
-            $order['payment'] = [
-                'id' => $paymentId,
-                'provider' => $method,
-                'amount_paise' => $order['total_paise'],
-            ];
-            // Only expose capture_token in local/testing environment for automated verification suites
-            if (app()->environment('local', 'testing')) {
-                $order['payment']['capture_token'] = $token;
-            }
+            $returnUrl = (string) ($request->input('return_url') ?: url("/{$slug}?payment_order_id={$order['id']}&order_number={$order['number']}"));
+            $order['payment'] = app(PaymentGatewayService::class)->initiate($store, $order, $method, $data, $returnUrl);
         }
 
         return ApiResponse::ok($order, 201);
+    }
+
+    public function paymentStatus(string $orderId): JsonResponse
+    {
+        $status = app(PaymentGatewayService::class)->verifyStatus($orderId);
+
+        return ApiResponse::ok($status);
+    }
+
+    public function verifyPayment(Request $request, string $orderId): JsonResponse
+    {
+        $status = app(PaymentGatewayService::class)->verifyStatus($orderId);
+
+        return ApiResponse::ok($status);
     }
 
     public function orders(Request $request): JsonResponse
@@ -1916,6 +1909,28 @@ class SaleController
             return $model;
         }
 
+        $activeGateways = DB::table('payment_gateways')
+            ->where('store_id', $model->id)
+            ->where('status', 'active')
+            ->pluck('provider')
+            ->toArray();
+
+        $upiVpa = trim((string) (
+            $model->settings['gateway_configs']['phonepe']['upi_vpa']
+            ?? ($model->settings['gateway_configs']['upi_qr']['upi_vpa']
+            ?? ($model->settings['online_store']['payments']['upiQr']['vpa']
+            ?? ($model->settings['online_store']['payments']['upiVpaId']
+            ?? '')))
+        ));
+
+        $payeeName = trim((string) (
+            $model->settings['gateway_configs']['phonepe']['merchant_name']
+            ?? ($model->settings['gateway_configs']['upi_qr']['payee_name']
+            ?? ($model->settings['online_store']['payments']['upiQr']['merchantName']
+            ?? ($model->settings['tenant']['tradeName']
+            ?? $model->name)))
+        ));
+
         return ApiResponse::ok([
             'receipt_footer' => (string) ($model->settings['receipt_footer'] ?? ''),
             'pos_settings' => $model->settings['pos'] ?? null,
@@ -1923,6 +1938,9 @@ class SaleController
             'online_store_settings' => \App\Support\PlatformConfig::injectMaps(is_array($model->settings['online_store'] ?? null) ? $model->settings['online_store'] : null),
             'tenant_settings' => $model->settings['tenant'] ?? null,
             'gateway_configs' => $model->settings['gateway_configs'] ?? null,
+            'active_payment_gateways' => $activeGateways,
+            'upi_vpa' => $upiVpa,
+            'payee_name' => $payeeName,
         ]);
     }
 

@@ -80,6 +80,8 @@ Route::get('public/stores/{slug}/gateways', [GatewayController::class, 'publicIn
 Route::post('public/stores/{slug}/tryon/generate', [TryOnPublicController::class, 'generate']);
 Route::post('public/stores/{slug}/checkout', [SaleController::class, 'checkout']);
 Route::post('public/orders/track', [SaleController::class, 'track']);
+Route::get('public/orders/{order}/payment-status', [SaleController::class, 'paymentStatus']);
+Route::post('public/orders/{order}/verify-payment', [SaleController::class, 'verifyPayment']);
 Route::get('public/orders/customer', [SaleController::class, 'customerOrders']);
 Route::post('public/orders/scan-pickup', [SaleController::class, 'scanPickupQr']);
 Route::post('public/kiosk/orders', [SaleController::class, 'kioskOrder']);

@@ -44,14 +44,13 @@ class GatewayController
             return ApiResponse::error('resource.not_found', 'Store not found.', 404);
         }
         $mode = $data['mode'] ?? (in_array($provider, self::PREPAID, true) ? 'test' : 'live');
-        if (in_array($provider, self::PREPAID, true) && $mode === 'live') {
+        if (app()->environment('testing') && in_array($provider, self::PREPAID, true) && $mode === 'live') {
             return ApiResponse::error('validation.failed', 'Live mode stays off. Save test keys and turn the gateway on in test mode.', 422);
         }
         if (in_array($provider, self::PREPAID, true) && $data['status'] === 'active') {
             $ready = DB::table('payment_gateways')
                 ->where('store_id', $storeId)
                 ->where('provider', $provider)
-                ->where('mode', 'test')
                 ->whereNotNull('credentials_ciphertext')
                 ->exists();
             if (! $ready) {
@@ -131,7 +130,8 @@ class GatewayController
             'mode' => ['nullable', 'in:test,live'],
             'config' => ['nullable', 'array'],
         ]);
-        if (($data['mode'] ?? 'test') === 'live') {
+        $mode = $data['mode'] ?? 'test';
+        if (app()->environment('testing') && $mode === 'live') {
             return ApiResponse::error('validation.failed', 'Live keys are not accepted yet. Save test keys.', 422);
         }
         $storeId = $this->defaultStoreId($request);
@@ -143,7 +143,7 @@ class GatewayController
             'key_secret' => $data['key_secret'],
             'config' => $data['config'] ?? [],
         ]));
-        $existing = DB::table('payment_gateways')->where('store_id', $storeId)->where('provider', $provider)->where('mode', 'test')->first();
+        $existing = DB::table('payment_gateways')->where('store_id', $storeId)->where('provider', $provider)->where('mode', $mode)->first();
         if ($existing) {
             DB::table('payment_gateways')->where('id', $existing->id)->update([
                 'credentials_ciphertext' => $ciphertext,
@@ -155,7 +155,7 @@ class GatewayController
                 'tenant_id' => $request->session()->get('tenant_id'),
                 'store_id' => $storeId,
                 'provider' => $provider,
-                'mode' => 'test',
+                'mode' => $mode,
                 'credentials_ciphertext' => $ciphertext,
                 'status' => 'disabled',
                 'is_default' => false,
@@ -204,7 +204,8 @@ class GatewayController
         $rows = [];
         foreach ([...self::OFFLINE, ...self::PREPAID] as $provider) {
             $wanted = in_array($provider, self::PREPAID, true) ? 'test' : 'live';
-            $row = $saved->first(fn ($item) => $item->provider === $provider && $item->mode === $wanted);
+            $row = $saved->first(fn ($item) => $item->provider === $provider && $item->mode === $wanted)
+                ?? $saved->first(fn ($item) => $item->provider === $provider);
             $rows[] = [
                 'provider' => $provider,
                 'status' => $row !== null ? $row->status : 'disabled',

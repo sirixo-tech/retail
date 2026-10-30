@@ -650,6 +650,15 @@ export default function CartPage() {
       const orderData = body.data;
       const pickupQrCode = orderData.pickup_qr || `SELFX-ORD-${orderData.number}`;
 
+      // Check if prepaid gateway returned a redirect URL (PhonePe, Paytm, Razorpay)
+      const paymentUrl = orderData.payment?.payment_url || orderData.payment?.redirect_url;
+      const isPrepaid = ["phonepe", "paytm", "razorpay"].includes(payment);
+
+      if (isPrepaid && paymentUrl) {
+        window.location.href = paymentUrl;
+        return;
+      }
+
       let qrImgUrl: string | null = null;
       try {
         qrImgUrl = await QRCode.toDataURL(pickupQrCode, {
@@ -895,33 +904,6 @@ export default function CartPage() {
               <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
             {/* Left Column: Order details & fulfillment */}
             <div className="space-y-6 lg:col-span-8">
-              {/* Step Header */}
-              <div className="flex items-center justify-between pb-1">
-                <div className="flex items-center gap-2.5">
-                  <div
-                    className="flex h-9 w-9 items-center justify-center rounded-xl text-white shadow-2xs shrink-0"
-                    style={{ backgroundColor: brandPrimaryColor }}
-                  >
-                    <User size={18} />
-                  </div>
-                  <div>
-                    <h2 className="text-base sm:text-lg font-bold text-slate-900 leading-tight">Delivery Details</h2>
-                    <p className="text-xs text-slate-500">
-                      {isVerifiedSignIn
-                        ? "Review or select your delivery address"
-                        : "Enter your contact info and delivery address"}
-                    </p>
-                  </div>
-                </div>
-
-                {isVerifiedSignIn && (
-                  <div className="inline-flex items-center gap-1.5 rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 text-xs font-bold text-emerald-800">
-                    <CheckCircle2 size={13} className="text-emerald-600 shrink-0" />
-                    <span>Saved Profile (+91 {phone.slice(-4)})</span>
-                  </div>
-                )}
-              </div>
-
               {/* Registered Details Header with Dropdown (2nd Order Onwards for Signed-in Customers) */}
               {isVerifiedSignIn && savedAddresses.length > 0 && !isAddingNewAddress && (
                 <div className="rounded-2xl border border-slate-200/90 bg-white p-4 sm:p-5 shadow-2xs space-y-3.5 transition-all">

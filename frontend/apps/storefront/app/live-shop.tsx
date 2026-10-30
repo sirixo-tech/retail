@@ -675,6 +675,89 @@ export function LiveShop() {
           // ignore
         }
       }
+
+      // Check for returning payment order (from PhonePe, Paytm, or URL redirect)
+      const urlParams = typeof window !== "undefined" ? new URLSearchParams(window.location.search) : null;
+      const paymentOrderId = urlParams?.get("payment_order_id");
+      const pendingRaw = window.localStorage.getItem("selfx_pending_payment_order");
+
+      let orderIdToCheck = paymentOrderId;
+      let pendingData: any = null;
+
+      if (!orderIdToCheck && pendingRaw) {
+        try {
+          pendingData = JSON.parse(pendingRaw);
+          if (pendingData?.orderId && Date.now() - (pendingData.timestamp || 0) < 30 * 60 * 1000) {
+            orderIdToCheck = pendingData.orderId;
+          }
+        } catch {
+          // ignore
+        }
+      }
+
+      if (orderIdToCheck) {
+        void fetch(`/api/v1/public/orders/${encodeURIComponent(orderIdToCheck)}/verify-payment`, {
+          method: "POST",
+          headers: { Accept: "application/json", "Content-Type": "application/json" },
+        })
+          .then((res) => (res.ok ? res.json() : null))
+          .then(async (body) => {
+            if (body?.data?.paid || body?.data?.status === "captured") {
+              try {
+                window.localStorage.removeItem("selfx_pending_payment_order");
+                window.localStorage.removeItem(CART_STORAGE_KEY);
+              } catch {}
+              setQty({});
+
+              if (paymentOrderId && typeof window !== "undefined") {
+                const cleanUrl = window.location.pathname;
+                window.history.replaceState({}, document.title, cleanUrl);
+              }
+
+              if (pendingData) {
+                setOrderConfirmed({
+                  id: pendingData.orderId,
+                  number: pendingData.orderNumber,
+                  totalPaise: pendingData.totalPaise,
+                  fulfillment: pendingData.fulfillment,
+                  payment: pendingData.payment,
+                  deliverySlot: pendingData.deliverySlot,
+                  pickupQr: pendingData.pickupQr,
+                  deliveryOtp: pendingData.deliveryOtp,
+                  address: pendingData.address,
+                });
+                setViewMode("catalog");
+              } else {
+                void fetch("/api/v1/public/orders/track", {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json", Accept: "application/json" },
+                  body: JSON.stringify({ number: orderIdToCheck }),
+                })
+                  .then((r) => (r.ok ? r.json() : null))
+                  .then((trackBody) => {
+                    if (trackBody?.data) {
+                      const o = trackBody.data;
+                      setOrderConfirmed({
+                        id: o.id,
+                        number: o.number,
+                        totalPaise: o.total_paise,
+                        fulfillment: o.fulfillment,
+                        payment: o.payment_method,
+                        deliverySlot: o.delivery_slot ?? null,
+                        pickupQr: o.pickup_qr,
+                        deliveryOtp: computeVerificationCode(o.number, o.id),
+                        address: o.address_snapshot?.address || "Store Counter",
+                      });
+                      setViewMode("catalog");
+                    }
+                  });
+              }
+            } else if (paymentOrderId) {
+              setMessage("Payment was not completed. If amount was debited, it will be updated within a couple of minutes.");
+            }
+          })
+          .catch(() => {});
+      }
     } catch {
       // ignore
     }
@@ -1536,6 +1619,10 @@ export function LiveShop() {
     gatewayStatuses["phonepe"] === "active" ||
     activePaymentGateways.includes("phonepe");
 
+  const isPaytmActiveInGateway =
+    gatewayStatuses["paytm"] === "active" ||
+    activePaymentGateways.includes("paytm");
+
   const isCodEnabled = isCodActiveInGateway && paymentsConfig.cod?.enabled !== false;
   const isPayAtStoreEnabled = isPayAtStoreActiveInGateway && paymentsConfig.payAtStore?.enabled !== false;
 
@@ -1547,6 +1634,9 @@ export function LiveShop() {
   const isPhonePeEnabled =
     isPhonePeActiveInGateway ||
     (paymentsConfig.phonepe?.enabled === true && Boolean(paymentsConfig.phonepe?.merchantId));
+  const isPaytmEnabled =
+    isPaytmActiveInGateway ||
+    ((paymentsConfig as any).paytm?.enabled === true && Boolean((paymentsConfig as any).paytm?.merchantId));
 
   // Resolve Static UPI configuration (Standee / Direct VPA)
   const upiConfig = useMemo(() => {
@@ -1881,7 +1971,7 @@ export function LiveShop() {
   };
 
   // Place Order Action
-  const handlePlaceOrder = async () => {
+  const handlePlaceOrder = async (overrideMethod?: string) => {
     const lines = Object.entries(qty)
       .filter(([, count]) => count > 0)
       .map(([id, count]) => ({ store_item_id: id, qty: count }));
@@ -1902,6 +1992,8 @@ export function LiveShop() {
       );
       return;
     }
+
+    const resolvedMethod = overrideMethod || (fulfillment === "pickup" ? "pay_at_store" : payment);
 
     const maxOrderAmt = Number(onlineSettings?.basics?.maxOrderAmount ?? 0);
     if (maxOrderAmt > 0 && grossSubtotalPaise > maxOrderAmt * 100) {
@@ -1999,8 +2091,8 @@ export function LiveShop() {
         customer_phone: phone.trim() || "9999999999",
         customer_email: email.trim() || null,
         fulfillment,
-        payment_method: fulfillment === "pickup" ? "pay_at_store" : payment,
-        upi_utr: payment === "upi_qr" ? upiUtr.trim() : undefined,
+        payment_method: resolvedMethod,
+        upi_utr: resolvedMethod === "upi_qr" ? upiUtr.trim() : undefined,
         delivery_slot: resolvedSlot,
         customer_auth_mode: isVerifiedSignIn ? "signed_in" : "guest",
         pincode: pincode.trim() || undefined,
@@ -2029,6 +2121,36 @@ export function LiveShop() {
 
       const orderData = body.data;
       const pickupQrCode = orderData.pickup_qr || `SELFX-ORD-${orderData.number}`;
+
+      // Check if prepaid gateway returned a redirect URL (PhonePe, Paytm, etc.)
+      const paymentUrl = orderData.payment?.payment_url || orderData.payment?.redirect_url;
+      const isPrepaidMethod = ["phonepe", "paytm", "razorpay"].includes(resolvedMethod);
+
+      if (isPrepaidMethod && paymentUrl) {
+        try {
+          window.localStorage.setItem(
+            "selfx_pending_payment_order",
+            JSON.stringify({
+              orderId: orderData.id,
+              orderNumber: orderData.number,
+              totalPaise: grandTotalPaise,
+              fulfillment,
+              payment: resolvedMethod,
+              deliverySlot: resolvedSlot ?? null,
+              address: address || "Store Counter",
+              pickupQr: pickupQrCode,
+              name,
+              phone,
+              timestamp: Date.now(),
+            }),
+          );
+        } catch {
+          // ignore
+        }
+
+        window.location.href = paymentUrl;
+        return;
+      }
 
       // Generate visual QR code Data URL ONLY for In-Store Pickup / Pay at Store
       let qrImgUrl: string | null = null;
@@ -3630,41 +3752,6 @@ export function LiveShop() {
             <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
               {/* Left Column: Customer Details, Registered Address Dropdown, & Delivery Location */}
               <div className="space-y-4 sm:space-y-6 lg:col-span-8">
-                {/* Step Header */}
-                <div className="flex items-center justify-between pb-1">
-                  <div className="flex items-center gap-2.5">
-                    <div
-                      className="flex h-9 w-9 items-center justify-center rounded-xl text-white shadow-2xs shrink-0"
-                      style={{ backgroundColor: brandPrimaryColor }}
-                    >
-                      <User size={18} />
-                    </div>
-                    <div>
-                      <h2 className="text-base sm:text-lg font-bold text-slate-900 leading-tight">Delivery Details</h2>
-                      <p className="text-xs text-slate-500">
-                        {isVerifiedSignIn
-                          ? "Review or select your delivery address"
-                          : "Sign in with OTP or continue as guest"}
-                      </p>
-                    </div>
-                  </div>
-
-                  {/* Verified Sign-In Status Pill */}
-                  {isVerifiedSignIn && (
-                    <div className="inline-flex items-center gap-1.5 sm:gap-2 rounded-full border border-emerald-200 bg-emerald-50 px-2.5 sm:px-3 py-1 text-[10px] sm:text-[11px] font-bold text-emerald-800">
-                      <CheckCircle2 size={13} className="text-emerald-600 shrink-0" />
-                      <span>Signed In (+91 {phone.slice(-4)})</span>
-                      <button
-                        type="button"
-                        onClick={handleSignOutCustomer}
-                        className="ml-1 text-[10px] font-semibold text-rose-600 hover:underline cursor-pointer"
-                      >
-                        Sign out
-                      </button>
-                    </div>
-                  )}
-                </div>
-
                 {/* Registered Details Header with Dropdown (2nd Order Onwards for Signed-in Customers) */}
                 {isVerifiedSignIn && savedAddresses.length > 0 && !isAddingNewAddress && (
                   <div className="rounded-2xl border border-slate-200/90 bg-white p-4 sm:p-5 shadow-2xs space-y-3.5 transition-all">
@@ -4670,6 +4757,8 @@ export function LiveShop() {
               isPayAtStoreEnabled={isPayAtStoreEnabled}
               isRazorpayEnabled={isRazorpayEnabled}
               isPhonePeEnabled={isPhonePeEnabled}
+              isPaytmEnabled={isPaytmEnabled}
+              totalItemsCount={totalItemsCount}
               upiConfig={upiConfig}
               upiQrDataUrl={upiQrDataUrl}
               upiUtr={upiUtr}

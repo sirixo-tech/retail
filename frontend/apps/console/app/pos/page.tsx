@@ -51,6 +51,7 @@ import {
 import { useEffect, useMemo, useState } from "react";
 import { ReceiptData, ReceiptModal } from "../../components/receipt-modal";
 import { ToastContainer, useToast } from "../../components/pos-toast";
+import QRCode from "qrcode";
 import { PasswordGate } from "../password-gate";
 import { usePrintJobPoller } from "../lib/print-transport";
 
@@ -268,6 +269,9 @@ function PosScreen() {
   const [countedRupees, setCountedRupees] = useState("");
   const [noteCounts, setNoteCounts] = useState<Record<number, string>>({});
   const [page, setPage] = useState(1);
+  const [storeUpiVpa, setStoreUpiVpa] = useState<string>("");
+  const [storePayeeName, setStorePayeeName] = useState<string>("");
+  const [posUpiQrUrl, setPosUpiQrUrl] = useState<string | null>(null);
 
   useEffect(() => {
     const loaded = loadPosSettings();
@@ -382,8 +386,10 @@ function PosScreen() {
         setShiftOpen(shift.data?.status === "open");
       }
       if (receiptRes.ok) {
-        const rData = ((await receiptRes.json()) as { data?: { receipt_footer?: string; pos_settings?: Partial<PosSettings> | null } }).data;
+        const rData = ((await receiptRes.json()) as { data?: { receipt_footer?: string; pos_settings?: Partial<PosSettings> | null; upi_vpa?: string; payee_name?: string } }).data;
         if (rData?.receipt_footer != null) setReceiptFooter(rData.receipt_footer);
+        if (rData?.upi_vpa) setStoreUpiVpa(rData.upi_vpa);
+        if (rData?.payee_name) setStorePayeeName(rData.payee_name);
         if (rData?.pos_settings) {
           const merged = { ...loadPosSettings(), ...rData.pos_settings, allowOversell: rData.pos_settings.allowOversell ?? true };
           setSettings(merged);
@@ -1158,6 +1164,20 @@ function PosScreen() {
     Math.round((( Math.max(0, total - manualDiscountPaise) ) * Number(taxPercent || 0)) / 100),
   );
   const netPayablePaise = Math.max(0, total - manualDiscountPaise + extraTaxPaise + shippingPaise);
+
+  useEffect(() => {
+    if (payMethod !== "upi" || netPayablePaise <= 0) {
+      setPosUpiQrUrl(null);
+      return;
+    }
+    const vpa = storeUpiVpa || "merchant@ybl";
+    const amount = (netPayablePaise / 100).toFixed(2);
+    const payee = encodeURIComponent(storePayeeName || "Retail Store");
+    const uri = `upi://pay?pa=${encodeURIComponent(vpa)}&pn=${payee}&am=${amount}&cu=INR&tn=${encodeURIComponent("POS Counter Bill")}`;
+    QRCode.toDataURL(uri, { width: 220, margin: 1, color: { dark: "#0f172a", light: "#ffffff" } })
+      .then((url) => setPosUpiQrUrl(url))
+      .catch(() => {});
+  }, [payMethod, netPayablePaise, storeUpiVpa, storePayeeName]);
 
   useEffect(() => {
     try {
@@ -2881,6 +2901,51 @@ function PosScreen() {
                             </button>
                           ))}
                         </div>
+
+                        {/* Integrated Dynamic UPI QR Display */}
+                        {payMethod === "upi" && (
+                          <div className="mt-3 rounded-2xl border border-indigo-200 bg-indigo-50/50 p-3.5 space-y-2.5 animate-in fade-in duration-150">
+                            <div className="flex items-center justify-between">
+                              <div className="flex items-center gap-2">
+                                <div className="h-2 w-2 rounded-full bg-emerald-500 animate-pulse" />
+                                <span className="text-xs font-bold text-slate-900">
+                                  Counter Dynamic UPI QR
+                                </span>
+                              </div>
+                              <span className="text-xs font-bold text-indigo-700 font-mono">
+                                ₹{(netPayablePaise / 100).toFixed(2)}
+                              </span>
+                            </div>
+
+                            <div className="flex items-center gap-3 bg-white p-2.5 rounded-xl border border-indigo-100 shadow-2xs">
+                              <div className="h-24 w-24 shrink-0 bg-white border border-slate-200 rounded-lg p-1 flex items-center justify-center">
+                                {posUpiQrUrl ? (
+                                  <img src={posUpiQrUrl} alt="UPI QR" className="h-full w-full object-contain" />
+                                ) : (
+                                  <div className="text-[10px] text-slate-400 text-center">Generating QR...</div>
+                                )}
+                              </div>
+
+                              <div className="flex-1 space-y-1 text-xs min-w-0">
+                                <div>
+                                  <span className="text-[10px] text-slate-500 block">VPA</span>
+                                  <span className="font-mono font-bold text-slate-800 text-[11px] truncate block">
+                                    {storeUpiVpa || "merchant@ybl"}
+                                  </span>
+                                </div>
+                                <div>
+                                  <span className="text-[10px] text-slate-500 block">Payee</span>
+                                  <span className="font-semibold text-slate-700 text-[11px] truncate block">
+                                    {storePayeeName || "Retail Store"}
+                                  </span>
+                                </div>
+                                <p className="text-[10px] text-slate-400 pt-0.5">
+                                  Customer scans with PhonePe, GPay, or Paytm.
+                                </p>
+                              </div>
+                            </div>
+                          </div>
+                        )}
                       </div>
                     ) : (
                       /* Multi-Tender Split Billing Rows */
