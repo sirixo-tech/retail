@@ -4124,13 +4124,13 @@ function SettingsAndTemplatesSection({ mode }: { mode: string }) {
                 desc: "Direct UPI intent, dynamic QR, cards, and netbanking for high-conversion retail checkouts in India.",
                 currencies: ["INR"],
                 fields: [
-                  { key: "merchant_id", label: "Merchant ID (MID)", placeholder: "e.g. SIRIXO01 / MERCHANT_ID" },
+                  { key: "merchant_id", label: "Merchant ID (MID)", placeholder: "Enter Merchant ID" },
                   { key: "salt_key", label: "Salt Key", placeholder: "PhonePe Production Salt Key...", secret: true },
                   { key: "salt_index", label: "Salt Index", placeholder: "1" },
-                  { key: "provider_id", label: "Provider ID (X-PROVIDER-ID)", placeholder: "e.g. SIRIXOPOS / PROVIDER_ID" },
+                  { key: "provider_id", label: "Provider ID (X-PROVIDER-ID)", placeholder: "Enter Provider ID" },
                   { key: "store_id", label: "Store ID (UPI DQR)", placeholder: "STORE01" },
                   { key: "terminal_id", label: "Terminal ID (UPI DQR)", placeholder: "TERM01" },
-                  { key: "upi_vpa", label: "UPI ID (optional fallback)", placeholder: "e.g. merchant@ybl" },
+                  { key: "upi_vpa", label: "UPI ID (optional fallback)", placeholder: "Enter UPI ID (optional)" },
                 ],
                 steps: [
                   "Log in to PhonePe Merchant portal and access API Credentials.",

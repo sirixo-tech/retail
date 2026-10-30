@@ -79,7 +79,7 @@ const GATEWAY_CATALOG: GatewayMeta[] = [
       {
         name: "key_id",
         label: "Merchant ID",
-        placeholder: "e.g. SIRIXO01 / MERCHANT_ID",
+        placeholder: "Enter Merchant ID (MID)",
         required: true,
         helper: "Issued in your PhonePe Business Dashboard under Developer Settings.",
       },
@@ -100,7 +100,7 @@ const GATEWAY_CATALOG: GatewayMeta[] = [
       {
         name: "provider_id",
         label: "Provider ID (X-PROVIDER-ID)",
-        placeholder: "e.g. SIRIXOPOS / PROVIDER_ID",
+        placeholder: "Enter Provider ID (e.g. from PhonePe POS onboarding)",
         helper: "Required for PhonePe Mercury Dynamic UPI QR POS terminals.",
       },
       {

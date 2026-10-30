@@ -56,16 +56,6 @@ class PaymentGatewayService
                         if (empty($config['provider_id'])) {
                             $config['provider_id'] = $config['x_provider_id'] ?? ($config['store_terminal_id'] ?? null);
                         }
-                        // Smart auto-fill: if user has not explicitly typed VPA, derive or leave for dynamic extraction
-                        if (empty($config['upi_vpa']) && ! empty($keyId)) {
-                            // If it's SIRIXO01, map to its registered VPA; otherwise leave blank so PhonePe signed response provides it
-                            if ($keyId === 'SIRIXO01' || $keyId === 'SIRIX001') {
-                                if (empty($config['provider_id'])) {
-                                    $config['provider_id'] = 'SIRIXOPOS';
-                                }
-                                $config['upi_vpa'] = 'SIRIXO01@ybl';
-                            }
-                        }
                     }
 
                     return [
