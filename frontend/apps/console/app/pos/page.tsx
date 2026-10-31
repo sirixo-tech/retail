@@ -482,9 +482,10 @@ function PosScreen() {
     };
   }, []);
 
-  async function loadPosOrders() {
+  async function loadPosOrders(options?: { quiet?: boolean }) {
+    const quiet = options?.quiet === true;
     try {
-      setPosOrdersLoading(true);
+      if (!quiet) setPosOrdersLoading(true);
       const res = await fetch("/api/v1/orders", {
         credentials: "include",
         headers: { Accept: "application/json" },
@@ -506,19 +507,9 @@ function PosScreen() {
     } catch {
       // ignore
     } finally {
-      setPosOrdersLoading(false);
+      if (!quiet) setPosOrdersLoading(false);
     }
   }
-
-  useEffect(() => {
-    const timer = window.setInterval(() => void loadPosOrders(), 5000);
-    const onNew = () => void loadPosOrders();
-    window.addEventListener("selfx-new-order", onNew);
-    return () => {
-      window.clearInterval(timer);
-      window.removeEventListener("selfx-new-order", onNew);
-    };
-  }, [storeId]);
 
   useEffect(() => {
     const seen = new Set<string>();
@@ -534,10 +525,20 @@ function PosScreen() {
       if (!ready) {
         fresh.forEach((row) => claimOrderAnnouncement(row.id));
       } else {
+        const created = [];
         for (const row of fresh) {
           if (seen.has(row.id)) continue;
           if (!claimOrderAnnouncement(row.id)) continue;
+          created.push(row);
           showToast(`Order ${row.number ?? "new"} placed.`, "ok", 3000);
+        }
+        if (created.length > 0) {
+          setPosOrders((current) => {
+            const known = new Set(current.map((order) => order.id));
+            const added = created.filter((order) => !known.has(order.id));
+            if (added.length === 0) return current;
+            return [...added, ...current];
+          });
         }
       }
       seen.clear();
@@ -563,7 +564,7 @@ function PosScreen() {
       });
       if (res.ok) {
         showNotice(`Order marked as ${toStatus}.`, "ok");
-        await loadPosOrders();
+        await loadPosOrders({ quiet: true });
       } else {
         const data = await res.json();
         showNotice(data?.error?.message ?? "Status transition failed.", "error");
@@ -1651,7 +1652,7 @@ function PosScreen() {
           <button
             type="button"
             onClick={() => {
-              void loadPosOrders();
+              void loadPosOrders({ quiet: true });
               setPosOrdersTab("all");
               setPanel("pos-orders");
             }}
@@ -2268,7 +2269,7 @@ function PosScreen() {
           <button
             type="button"
             onClick={() => {
-              void loadPosOrders();
+              void loadPosOrders({ quiet: true });
               setPosOrdersTab("held");
               setPanel("pos-orders");
             }}
@@ -2368,7 +2369,7 @@ function PosScreen() {
               <div className="flex items-center gap-2">
                 <button
                   type="button"
-                  onClick={() => void loadPosOrders()}
+                  onClick={() => void loadPosOrders({ quiet: true })}
                   disabled={posOrdersLoading}
                   title="Refresh activity"
                   className="flex h-9 w-9 items-center justify-center rounded-lg border border-slate-200 bg-white text-slate-600 hover:bg-slate-50 hover:text-slate-900 transition disabled:opacity-50 cursor-pointer"
