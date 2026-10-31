@@ -533,6 +533,7 @@ export function LiveShop() {
   const [submittingOrder, setSubmittingOrder] = useState(false);
 
   // Confirmed Order with Pickup QR (for Store Pickup) or Delivery Verification OTP (for Delivery Orders)
+  const [confirmingPayment, setConfirmingPayment] = useState(false);
   const [orderConfirmed, setOrderConfirmed] = useState<{
     id?: string;
     number: string;
@@ -696,6 +697,7 @@ export function LiveShop() {
       const pendingFresh = pending?.orderId && Date.now() - (pending.timestamp || 0) < 30 * 60 * 1000;
       const orderId = paymentOrderId || (pendingFresh ? pending.orderId : null);
       if (!orderId) return;
+      setConfirmingPayment(true);
       const res = await fetch(`/api/v1/public/orders/${encodeURIComponent(orderId)}/verify-payment`, {
         method: "POST",
         headers: { Accept: "application/json", "Content-Type": "application/json" },
@@ -725,6 +727,7 @@ export function LiveShop() {
         deliveryOtp: confirmed.deliveryOtp ?? null,
         address: confirmed.address ?? null,
       });
+      setConfirmingPayment(false);
       setViewMode("catalog");
       setCheckoutStep("details");
     };
@@ -2098,32 +2101,6 @@ export function LiveShop() {
       const orderData = body.data;
       const pickupQrCode = orderData.pickup_qr || `SELFX-ORD-${orderData.number}`;
 
-      // Check if prepaid gateway returned a redirect URL (PhonePe, Paytm, etc.)
-      const phoneAppUrl = (orderData.payment?.app_url || orderData.payment?.qr_string) as string | undefined;
-      if (resolvedMethod === "phonepe" && typeof phoneAppUrl === "string" && (phoneAppUrl.startsWith("upi://") || phoneAppUrl.startsWith("phonepe://"))) {
-        const appUrl = phoneAppUrl.startsWith("phonepe://") ? phoneAppUrl : `phonepe://${phoneAppUrl.slice("upi://".length)}`;
-        try {
-          window.localStorage.setItem(
-            "selfx_pending_payment_order",
-            JSON.stringify({
-              orderId: orderData.id,
-              orderNumber: orderData.number,
-              totalPaise: grandTotalPaise,
-              fulfillment,
-              payment: "phonepe",
-              address: address || "Store Counter",
-              name,
-              phone,
-              timestamp: Date.now(),
-            }),
-          );
-        } catch {
-          // ignore
-        }
-        window.location.href = appUrl;
-        return;
-      }
-
       const paymentUrl = orderData.payment?.redirect_url || orderData.payment?.payment_url;
       const redirectForm = orderData.payment?.redirect_form;
       const isPrepaidMethod = ["phonepe", "paytm", "razorpay", "stripe"].includes(resolvedMethod);
@@ -2146,7 +2123,11 @@ export function LiveShop() {
       }
 
       if (isPrepaidMethod) {
-        if (canRedirect) {
+        const phoneAppUrl = (orderData.payment?.app_url || orderData.payment?.qr_string) as string | undefined;
+        const appUrl = typeof phoneAppUrl === "string" && (phoneAppUrl.startsWith("upi://") || phoneAppUrl.startsWith("phonepe://"))
+          ? (phoneAppUrl.startsWith("phonepe://") ? phoneAppUrl : `phonepe://${phoneAppUrl.slice("upi://".length)}`)
+          : "";
+        if (canRedirect || appUrl) {
           try {
             window.localStorage.setItem(
               "selfx_pending_payment_order",
@@ -2167,8 +2148,8 @@ export function LiveShop() {
           } catch {
             // ignore
           }
-
-          window.location.href = paymentUrl;
+          setConfirmingPayment(true);
+          window.location.href = canRedirect ? paymentUrl : appUrl;
           return;
         } else {
           setMessage(
@@ -2654,6 +2635,16 @@ export function LiveShop() {
       )}
 
       {/* Order Confirmation Screen — Blinkit & Myntra Style Eyefeasting Animated Success Experience */}
+      {confirmingPayment && !orderConfirmed && (
+        <div className="mx-auto mt-8 max-w-lg px-4">
+          <div className="rounded-3xl border border-slate-200 bg-white p-8 text-center shadow-sm">
+            <p className="text-sm font-semibold uppercase tracking-wide text-emerald-700">Confirming payment</p>
+            <h2 className="mt-2 text-xl font-semibold text-slate-900">Waiting for the bank to confirm</h2>
+            <p className="mt-2 text-sm text-slate-500">Stay on this page after you pay. The order is placed only when the payment is confirmed.</p>
+          </div>
+        </div>
+      )}
+
       {orderConfirmed && (
         <div className="mx-auto mt-4 sm:mt-8 max-w-2xl px-4 sm:px-6 relative animate-in fade-in zoom-in-95 duration-300">
           {/* Confetti & Fireworks CSS Keyframe Animations */}
@@ -3773,7 +3764,7 @@ export function LiveShop() {
       )}
 
       {/* 4. TWO-STEP CHECKOUT SCREEN (Details & Address -> Payment Options) */}
-      {viewMode === "checkout" && !orderConfirmed && (
+      {viewMode === "checkout" && !orderConfirmed && !confirmingPayment && (
         <main className="mx-auto max-w-7xl px-3.5 sm:px-6 py-4 sm:py-8 pb-32 sm:pb-28">
           {checkoutStep === "details" ? (
             /* STEP 1: CUSTOMER DETAILS & SAVED ADDRESSES */
@@ -4802,7 +4793,7 @@ export function LiveShop() {
       )}
 
       {/* FIXED BOTTOM BAR ON DETAILS PAGE (Matches Image 1 UX with Total & View Detailed Bill) */}
-      {viewMode === "checkout" && checkoutStep === "details" && !orderConfirmed && totalItemsCount > 0 && (
+      {viewMode === "checkout" && checkoutStep === "details" && !orderConfirmed && !confirmingPayment && totalItemsCount > 0 && (
         <div className="lg:hidden fixed bottom-0 left-0 right-0 z-40 bg-white/95 backdrop-blur-md border-t border-slate-200/90 shadow-[0_-8px_30px_rgba(0,0,0,0.08)] px-4 py-3 sm:px-6 sm:py-3.5 animate-in fade-in slide-in-from-bottom-2 duration-150">
           <div className="mx-auto max-w-7xl flex items-center justify-between gap-3">
             {/* Left: Total Amount & Clickable View Detailed Bill */}

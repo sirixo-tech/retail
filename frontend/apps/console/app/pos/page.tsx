@@ -520,15 +520,15 @@ function PosScreen() {
       const rows = ((await response.json()) as { data?: { id: string; status?: string; number?: string; channel?: string; payment_status?: string }[] }).data ?? [];
       const fresh = rows.filter((row) => {
         if (row.channel === "counter") return row.status !== "voided";
-        return row.payment_status === "captured" || ["placed", "awaiting_payment", "accepted", "packing", "ready", "ready_for_pickup", "out_for_delivery"].includes(String(row.status));
+        return row.payment_status === "captured" || ["placed", "accepted", "packing", "ready", "ready_for_pickup", "out_for_delivery", "completed"].includes(String(row.status));
       });
       if (!ready) {
-        fresh.forEach((row) => claimOrderAnnouncement(row.id));
+        fresh.forEach((row) => claimOrderAnnouncement(`paid:${row.id}`));
       } else {
         const created = [];
         for (const row of fresh) {
           if (seen.has(row.id)) continue;
-          if (!claimOrderAnnouncement(row.id)) continue;
+          if (!claimOrderAnnouncement(`paid:${row.id}`)) continue;
           created.push(row);
           showToast(`Order ${row.number ?? "new"} placed.`, "ok", 3000);
         }
@@ -916,7 +916,7 @@ function PosScreen() {
       return;
     }
     if (settings.tapSound) playPosSound("chime", settings.soundVolume);
-    if (!body.data?.id || claimOrderAnnouncement(body.data.id)) {
+    if (!body.data?.id || claimOrderAnnouncement(`paid:${body.data.id}`)) {
       showToast(`Order ${body.data?.number ?? "new"} placed.`, "ok", 3000);
     }
     setLastSaleId(body.data?.id ?? null);

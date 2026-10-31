@@ -218,11 +218,15 @@ class PaymentGatewayService
         $data = is_array($body['data'] ?? null) ? $body['data'] : [];
         $code = strtoupper((string) ($body['code'] ?? ''));
         $state = strtoupper((string) ($data['state'] ?? $data['paymentState'] ?? ''));
+        $responseCode = strtoupper((string) ($data['responseCode'] ?? $data['payResponseCode'] ?? ''));
         if (in_array($code, ['PAYMENT_SUCCESS', 'PAYMENT_COMPLETED'], true)) {
             return true;
         }
+        if (in_array($state, ['COMPLETED', 'SUCCESS', 'PAYMENT_SUCCESS', 'TRANSACTION_SUCCESS'], true)) {
+            return true;
+        }
 
-        return in_array($state, ['COMPLETED', 'SUCCESS', 'PAYMENT_SUCCESS'], true);
+        return $responseCode === 'SUCCESS' && ! in_array($state, ['PENDING', 'FAILED', 'DECLINED', 'CANCELLED'], true);
     }
 
     /**
@@ -469,7 +473,7 @@ class PaymentGatewayService
                     $gatewayError = $qrInit['error'];
                 }
 
-                if (! $mercurySuccess) {
+                if ($paymentUrl === null) {
                     $phonePeBase = $hosts['pg'];
 
                     $custPhone = substr(preg_replace('/\D/', '', (string) ($customerData['phone'] ?? '9999999999')), -10);
@@ -1396,7 +1400,7 @@ class PaymentGatewayService
         if (! is_array($decoded)) {
             return false;
         }
-        $txnId = (string) ($decoded['data']['merchantTransactionId'] ?? '');
+        $txnId = (string) ($decoded['data']['merchantTransactionId'] ?? $decoded['data']['transactionId'] ?? '');
         $payment = $txnId === '' ? null : DB::table('payments')->where('provider_reference', $txnId)->where('provider', 'phonepe')->first();
         if (! $payment) {
             return false;
