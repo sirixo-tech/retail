@@ -26,6 +26,10 @@ class GatewayController
             return ApiResponse::error('resource.not_found', 'Store not found.', 404);
         }
 
+        foreach (self::PREPAID as $provider) {
+            $this->reconcileGateway($storeId, $provider);
+        }
+
         return ApiResponse::ok($this->rows($storeId));
     }
 
@@ -43,24 +47,19 @@ class GatewayController
         if (! $storeId) {
             return ApiResponse::error('resource.not_found', 'Store not found.', 404);
         }
-        $mode = $data['mode'] ?? (in_array($provider, self::PREPAID, true) ? 'test' : 'live');
-        if (app()->environment('testing') && in_array($provider, self::PREPAID, true) && $mode === 'live') {
-            return ApiResponse::error('validation.failed', 'Live mode stays off. Save test keys and turn the gateway on in test mode.', 422);
-        }
-        if (in_array($provider, self::PREPAID, true) && $data['status'] === 'active') {
-            $ready = DB::table('payment_gateways')
-                ->where('store_id', $storeId)
-                ->where('provider', $provider)
-                ->whereNotNull('credentials_ciphertext')
-                ->exists();
-            if (! $ready) {
-                return ApiResponse::error('validation.failed', 'Save the key id and key secret before turning this gateway on.', 422);
-            }
+        $existing = $this->providerRow($storeId, $provider);
+        $mode = $data['mode'] ?? ($existing?->mode ?? (app()->environment('testing') ? 'test' : 'live'));
+        if (in_array($provider, self::PREPAID, true) && $data['status'] === 'active' && ! $this->hasCredentials($storeId, $provider)) {
+            return ApiResponse::error('validation.failed', 'Save the merchant id and secret before turning this gateway on.', 422);
         }
 
-        $existing = DB::table('payment_gateways')->where('store_id', $storeId)->where('provider', $provider)->where('mode', $mode)->first();
         if ($existing) {
-            DB::table('payment_gateways')->where('id', $existing->id)->update(['status' => $data['status'], 'updated_at' => now()]);
+            DB::table('payment_gateways')->where('id', $existing->id)->update([
+                'status' => $data['status'],
+                'mode' => $mode,
+                'updated_at' => now(),
+            ]);
+            $this->dropDuplicateGatewayRows($storeId, $provider, (string) $existing->id);
         } else {
             DB::table('payment_gateways')->insert([
                 'id' => (string) Str::uuid7(),
@@ -126,29 +125,39 @@ class GatewayController
         }
         $data = $request->validate([
             'key_id' => ['required', 'string', 'max:120'],
-            'key_secret' => ['required', 'string', 'min:8', 'max:200'],
+            'key_secret' => ['nullable', 'string', 'max:200'],
             'mode' => ['nullable', 'in:test,live'],
             'config' => ['nullable', 'array'],
         ]);
-        $mode = $data['mode'] ?? 'test';
-        if (app()->environment('testing') && $mode === 'live') {
-            return ApiResponse::error('validation.failed', 'Live keys are not accepted yet. Save test keys.', 422);
-        }
         $storeId = $this->defaultStoreId($request);
         if (! $storeId) {
             return ApiResponse::error('resource.not_found', 'Store not found.', 404);
         }
+        $existing = $this->providerRow($storeId, $provider);
+        $previous = $this->decryptCredentials($existing);
+        $secret = trim((string) ($data['key_secret'] ?? ''));
+        if ($secret === '') {
+            $secret = (string) ($previous['key_secret'] ?? '');
+        }
+        if (strlen($secret) < 8) {
+            return ApiResponse::error('validation.failed', 'Enter the secret key. It must be at least 8 characters.', 422);
+        }
+        if (app()->environment('testing') && ($data['mode'] ?? null) === 'live') {
+            return ApiResponse::error('validation.failed', 'Live keys are not accepted yet. Save test keys.', 422);
+        }
+        $mode = $data['mode'] ?? ($existing?->mode ?? (app()->environment('testing') ? 'test' : 'live'));
         $ciphertext = Crypt::encryptString(json_encode([
             'key_id' => $data['key_id'],
-            'key_secret' => $data['key_secret'],
+            'key_secret' => $secret,
             'config' => $data['config'] ?? [],
         ]));
-        $existing = DB::table('payment_gateways')->where('store_id', $storeId)->where('provider', $provider)->where('mode', $mode)->first();
         if ($existing) {
             DB::table('payment_gateways')->where('id', $existing->id)->update([
                 'credentials_ciphertext' => $ciphertext,
+                'mode' => $mode,
                 'updated_at' => now(),
             ]);
+            $this->dropDuplicateGatewayRows($storeId, $provider, (string) $existing->id);
         } else {
             DB::table('payment_gateways')->insert([
                 'id' => (string) Str::uuid7(),
@@ -163,16 +172,18 @@ class GatewayController
                 'updated_at' => now(),
             ]);
         }
-        if (! empty($data['config']) && is_array($data['config'])) {
-            $storeModel = Store::query()->find($storeId);
-            if ($storeModel) {
-                $settings = $storeModel->settings ?? [];
-                $gwConfigs = is_array($settings['gateway_configs'] ?? null) ? $settings['gateway_configs'] : [];
-                $gwConfigs[$provider] = array_merge($gwConfigs[$provider] ?? [], $data['config'], ['key_id_hint' => substr($data['key_id'], 0, 8).'••••']);
-                $settings['gateway_configs'] = $gwConfigs;
-                $storeModel->settings = $settings;
-                $storeModel->save();
-            }
+        $storeModel = Store::query()->find($storeId);
+        if ($storeModel) {
+            $settings = $storeModel->settings ?? [];
+            $gwConfigs = is_array($settings['gateway_configs'] ?? null) ? $settings['gateway_configs'] : [];
+            $gwConfigs[$provider] = array_merge($gwConfigs[$provider] ?? [], is_array($data['config'] ?? null) ? $data['config'] : [], [
+                'key_id' => $data['key_id'],
+                'key_id_hint' => substr($data['key_id'], 0, 8).'••••',
+            ]);
+            unset($gwConfigs[$provider]['key_secret'], $gwConfigs[$provider]['salt_key'], $gwConfigs[$provider]['saltKey']);
+            $settings['gateway_configs'] = $gwConfigs;
+            $storeModel->settings = $settings;
+            $storeModel->save();
         }
         AuditLog::write((string) $request->session()->get('tenant_id'), $request->user()->id, 'gateway.credentials_saved', $storeId);
 
@@ -204,13 +215,25 @@ class GatewayController
         $rows = [];
         foreach ([...self::OFFLINE, ...self::PREPAID] as $provider) {
             $matches = $saved->filter(fn ($item) => $item->provider === $provider);
-            $row = $matches->sortByDesc(fn ($item) => ($item->status === 'active' ? '1' : '0').(string) $item->updated_at)->first();
+            $row = $matches->sortByDesc(function ($item) {
+                $cred = $item->credentials_ciphertext ? '1' : '0';
+                $active = $item->status === 'active' ? '1' : '0';
+
+                return $active.$cred.(string) $item->updated_at;
+            })->first();
+            $decoded = $this->decryptCredentials($row);
+            $config = $gwConfigs[$provider] ?? [];
+            unset($config['key_secret'], $config['salt_key'], $config['saltKey']);
+            if (! empty($decoded['key_id'])) {
+                $config['key_id'] = $decoded['key_id'];
+            }
             $rows[] = [
                 'provider' => $provider,
                 'status' => $row !== null ? $row->status : 'disabled',
-                'mode' => $row !== null ? $row->mode : (in_array($provider, self::PREPAID, true) ? 'test' : 'live'),
+                'mode' => $row !== null ? $row->mode : 'live',
                 'has_credentials' => $row !== null && $row->credentials_ciphertext !== null,
-                'config' => $gwConfigs[$provider] ?? [],
+                'key_id' => $decoded['key_id'] ?? ($config['key_id'] ?? null),
+                'config' => $config,
             ];
         }
 
@@ -230,5 +253,70 @@ class GatewayController
 
         return DB::table('stores')->where('tenant_id', $tenantId)->where('is_default', true)->orderBy('created_at')->value('id')
             ?? DB::table('stores')->where('tenant_id', $tenantId)->orderBy('created_at')->value('id');
+    }
+
+    private function providerRow(string $storeId, string $provider): ?object
+    {
+        return DB::table('payment_gateways')
+            ->where('store_id', $storeId)
+            ->where('provider', $provider)
+            ->orderByRaw('CASE WHEN credentials_ciphertext IS NULL THEN 1 ELSE 0 END')
+            ->orderByDesc('updated_at')
+            ->first();
+    }
+
+    private function hasCredentials(string $storeId, string $provider): bool
+    {
+        return DB::table('payment_gateways')
+            ->where('store_id', $storeId)
+            ->where('provider', $provider)
+            ->whereNotNull('credentials_ciphertext')
+            ->exists();
+    }
+
+    private function reconcileGateway(string $storeId, string $provider): void
+    {
+        $rows = DB::table('payment_gateways')->where('store_id', $storeId)->where('provider', $provider)->get();
+        if ($rows->count() < 2) {
+            return;
+        }
+        $keep = $rows->sortBy(fn ($row) => $row->credentials_ciphertext ? 0 : 1)->first();
+        if (! $keep) {
+            return;
+        }
+        $wasActive = $rows->contains(fn ($row) => $row->status === 'active');
+        if ($wasActive && $keep->credentials_ciphertext && $keep->status !== 'active') {
+            DB::table('payment_gateways')->where('id', $keep->id)->update([
+                'status' => 'active',
+                'updated_at' => now(),
+            ]);
+        }
+        $this->dropDuplicateGatewayRows($storeId, $provider, (string) $keep->id);
+    }
+
+    private function dropDuplicateGatewayRows(string $storeId, string $provider, string $keepId): void
+    {
+        DB::table('payment_gateways')
+            ->where('store_id', $storeId)
+            ->where('provider', $provider)
+            ->where('id', '!=', $keepId)
+            ->delete();
+    }
+
+    /**
+     * @return array{key_id?: string, key_secret?: string}
+     */
+    private function decryptCredentials(?object $row): array
+    {
+        if (! $row || ! $row->credentials_ciphertext) {
+            return [];
+        }
+        try {
+            $decoded = json_decode(Crypt::decryptString($row->credentials_ciphertext), true);
+        } catch (\Throwable) {
+            return [];
+        }
+
+        return is_array($decoded) ? $decoded : [];
     }
 }

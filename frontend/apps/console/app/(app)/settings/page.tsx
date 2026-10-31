@@ -37,6 +37,7 @@ export type GatewayRow = {
   status: string;
   mode: string;
   has_credentials: boolean;
+  key_id?: string | null;
   config?: Record<string, unknown>;
 };
 
@@ -107,13 +108,13 @@ const GATEWAY_CATALOG: GatewayMeta[] = [
         name: "store_id",
         label: "Store ID (UPI DQR)",
         placeholder: "STORE01",
-        helper: "Required for the POS QR. Copy the Store ID from the PhonePe dashboard. It is not the same as the Merchant ID.",
+        helper: "Optional. PhonePe POS works with Merchant ID, salt key, salt index, and Provider ID. Add a Store ID only if PhonePe gave you one.",
       },
       {
         name: "terminal_id",
         label: "Terminal ID (UPI DQR)",
         placeholder: "TERM01",
-        helper: "Required for the POS QR. Copy the Terminal ID from the PhonePe dashboard.",
+        helper: "Optional. Leave blank unless PhonePe gave you a separate terminal id.",
       },
       {
         name: "upi_vpa",
@@ -604,7 +605,7 @@ export function PaymentGatewaysSection({
       return externalSaveSetup(provider, isPrepaid, keyId, keySecret, config);
     }
     setInternalConfigs((prev) => ({ ...prev, [provider]: config }));
-    if (isPrepaid && keyId.trim() && keySecret.trim()) {
+    if (isPrepaid && keyId.trim()) {
       const res = await fetch(`/api/v1/gateways/${provider}/credentials`, {
         method: "PUT",
         credentials: "include",
@@ -615,7 +616,7 @@ export function PaymentGatewaysSection({
         },
         body: JSON.stringify({
           key_id: keyId,
-          key_secret: keySecret,
+          key_secret: keySecret.trim() || null,
           mode: config.gateway_mode === "test" ? "test" : "live",
           config,
         }),
@@ -864,7 +865,7 @@ export function PaymentGatewaysSection({
           {/* Left Column: Credentials & Operational Settings (7 cols) */}
           <div className="lg:col-span-7">
             <form
-              key={currentMeta.provider}
+              key={`${currentMeta.provider}-${currentRow?.key_id ?? "new"}-${hasCurrentKeys ? "saved" : "empty"}`}
               onSubmit={async (e) => {
                 e.preventDefault();
                 setSavingSetup(true);
@@ -932,10 +933,13 @@ export function PaymentGatewaysSection({
 
               <div className="grid gap-4 sm:grid-cols-2">
                 {currentMeta.fields.map((field) => {
+                  const secretAlreadySaved = field.name === "key_secret" && hasCurrentKeys;
                   const defaultVal =
-                    field.name === "key_id" || field.name === "key_secret"
+                    field.name === "key_secret"
                       ? ""
-                      : String(currentSavedCfg[field.name] ?? "");
+                      : field.name === "key_id"
+                        ? String(currentRow?.key_id ?? currentSavedCfg.key_id ?? "")
+                        : String(currentSavedCfg[field.name] ?? "");
                   const isSecret = field.type === "password" || field.name === "key_secret" || field.name === "webhook_secret";
                   const showSecret = Boolean(showSecretMap[field.name]);
 
@@ -972,10 +976,10 @@ export function PaymentGatewaysSection({
                             <input
                               name={field.name}
                               type={isSecret ? (showSecret ? "text" : "password") : field.type ?? "text"}
-                              required={field.required}
-                              minLength={field.name === "key_secret" ? 8 : undefined}
+                              required={Boolean(field.required) && !secretAlreadySaved}
+                              minLength={field.name === "key_secret" && !secretAlreadySaved ? 8 : undefined}
                               defaultValue={defaultVal}
-                              placeholder={field.placeholder}
+                              placeholder={secretAlreadySaved ? "Saved. Leave blank to keep the current key." : field.placeholder}
                               autoComplete="off"
                               className="h-full w-full bg-transparent text-xs font-medium text-slate-900 outline-none placeholder:text-slate-400"
                             />
@@ -1435,6 +1439,10 @@ export function SettingsWorkspace({ section = "profile" }: { section?: TenantSet
     config: Record<string, unknown>,
   ): Promise<boolean> {
     if (isPrepaid) {
+      if (!keyId.trim()) {
+        setNotice({ text: "Enter the merchant id or key id.", tone: "bad" });
+        return false;
+      }
       const response = await fetch(`/api/v1/gateways/${provider}/credentials`, {
         method: "PUT",
         credentials: "include",
@@ -1445,7 +1453,7 @@ export function SettingsWorkspace({ section = "profile" }: { section?: TenantSet
         },
         body: JSON.stringify({
           key_id: keyId,
-          key_secret: keySecret,
+          key_secret: keySecret.trim() || null,
           mode: config.gateway_mode === "test" ? "test" : "live",
           config,
         }),
