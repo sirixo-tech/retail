@@ -55,8 +55,7 @@ import {
 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { ReceiptData, ReceiptModal } from "../../components/receipt-modal";
-import { ToastContainer, useToast } from "../../components/pos-toast";
-import { PosOrderAlert } from "../../components/pos-order-alert";
+import { claimOrderAnnouncement, ToastContainer, useToast } from "../../components/pos-toast";
 import QRCode from "qrcode";
 import { PasswordGate } from "../password-gate";
 import { usePrintJobPoller } from "../lib/print-transport";
@@ -521,6 +520,35 @@ function PosScreen() {
     };
   }, [storeId]);
 
+  useEffect(() => {
+    const seen = new Set<string>();
+    let ready = false;
+    const tick = async () => {
+      const response = await fetch("/api/v1/orders", { credentials: "include", headers: { Accept: "application/json" } });
+      if (!response.ok) return;
+      const rows = ((await response.json()) as { data?: { id: string; status?: string; number?: string; channel?: string; payment_status?: string }[] }).data ?? [];
+      const fresh = rows.filter((row) => {
+        if (row.channel === "counter") return row.status !== "voided";
+        return row.payment_status === "captured" || ["placed", "awaiting_payment", "accepted", "packing", "ready", "ready_for_pickup", "out_for_delivery"].includes(String(row.status));
+      });
+      if (!ready) {
+        fresh.forEach((row) => claimOrderAnnouncement(row.id));
+      } else {
+        for (const row of fresh) {
+          if (seen.has(row.id)) continue;
+          if (!claimOrderAnnouncement(row.id)) continue;
+          showToast(`Order ${row.number ?? "new"} placed.`, "ok", 3000);
+        }
+      }
+      seen.clear();
+      fresh.forEach((row) => seen.add(row.id));
+      ready = true;
+    };
+    void tick();
+    const timer = window.setInterval(() => void tick(), 5000);
+    return () => window.clearInterval(timer);
+  }, [showToast]);
+
   async function transitionPosOrder(orderId: string, toStatus: string) {
     try {
       const res = await fetch(`/api/v1/orders/${orderId}/transitions`, {
@@ -887,7 +915,9 @@ function PosScreen() {
       return;
     }
     if (settings.tapSound) playPosSound("chime", settings.soundVolume);
-    showNotice(`Order ${body.data?.number} placed.`, "ok");
+    if (!body.data?.id || claimOrderAnnouncement(body.data.id)) {
+      showToast(`Order ${body.data?.number ?? "new"} placed.`, "ok", 3000);
+    }
     setLastSaleId(body.data?.id ?? null);
     setPrintStatus({
       type: "queued",
@@ -2542,48 +2572,40 @@ function PosScreen() {
                       cancelled: { bg: "bg-rose-50", text: "text-rose-800", border: "border-rose-200" },
                       voided: { bg: "bg-rose-50", text: "text-rose-800", border: "border-rose-200" },
                     };
-                    const color = statusColors[order.status] || { bg: "bg-slate-100", text: "text-slate-800", border: "border-slate-200" };
+                    const color = statusColors[order.status] || { bg: "bg-white/20", text: "text-white", border: "border-white/30" };
+                    const headerTone = !isOnline
+                      ? "bg-emerald-600"
+                      : order.status === "awaiting_payment"
+                        ? "bg-amber-500"
+                        : isDelivery
+                          ? "bg-sky-600"
+                          : "bg-indigo-600";
+                    const typeLabel = !isOnline ? "Counter" : isDelivery ? "Delivery" : "Pickup";
 
                     return (
                       <div
                         key={`${order.channel}-${order.id}`}
-                        className="rounded-xl border border-slate-200 bg-white p-4 shadow-2xs hover:border-slate-300 transition"
+                        className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-2xs"
                       >
-                        {/* Header Row */}
-                        <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 pb-2.5">
-                          <div className="flex items-center gap-2">
-                            <span className="font-mono text-xs font-bold text-slate-900">
+                        <div className={`flex items-center justify-between gap-2 px-3 py-2 text-white ${headerTone}`}>
+                          <div className="flex min-w-0 items-center gap-1.5">
+                            <span className="truncate font-mono text-[12px] font-bold tracking-tight">
                               #{order.number}
                             </span>
-                            {isOnline ? (
-                              <span className="inline-flex items-center gap-1 rounded-md bg-indigo-50 px-2 py-0.5 text-[10px] font-bold text-indigo-700 border border-indigo-100">
-                                <Globe size={11} />
-                                Online Store
-                              </span>
-                            ) : (
-                              <span className="inline-flex items-center gap-1 rounded-md bg-emerald-50 px-2 py-0.5 text-[10px] font-bold text-emerald-700 border border-emerald-100">
-                                <Store size={11} />
-                                POS Counter
-                              </span>
-                            )}
-                            <span className="inline-flex items-center gap-1 rounded-md bg-slate-100 px-2 py-0.5 text-[10px] font-semibold text-slate-700">
-                              {isDelivery ? <Truck size={10} /> : <ShoppingBag size={10} />}
-                              {isDelivery ? "Delivery" : "Store Pickup"}
+                            <span className="inline-flex items-center gap-1 rounded-full bg-white/15 px-1.5 py-0.5 text-[10px] font-semibold">
+                              {isOnline ? <Globe size={10} /> : <Store size={10} />}
+                              {typeLabel}
                             </span>
                           </div>
-
-                          <div className="flex items-center gap-2">
-                            <span
-                              className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10.5px] font-bold border ${color.bg} ${color.text} ${color.border}`}
-                            >
-                              <span className="h-1.5 w-1.5 rounded-full bg-current" />
-                              {order.status.replace(/_/g, " ").toUpperCase()}
-                            </span>
-                          </div>
+                          <span className={`inline-flex shrink-0 items-center gap-1 rounded-full border px-1.5 py-0.5 text-[10px] font-bold ${color.bg} ${color.text} ${color.border}`}>
+                            <span className="h-1.5 w-1.5 rounded-full bg-current" />
+                            {String(order.status || "open").replace(/_/g, " ").toUpperCase()}
+                          </span>
                         </div>
+                        <div className="px-3 pt-2">
 
                         {/* Customer & Fulfillment Details */}
-                        <div className="mt-2.5 grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs">
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5 text-xs">
                           <div>
                             <div className="font-semibold text-slate-900 flex items-center gap-1.5">
                               <span>{order.customer_name || "Walk-in Customer"}</span>
@@ -2639,8 +2661,8 @@ function PosScreen() {
                         ) : null}
 
                         {/* Items List Preview */}
-                        <div className="mt-3 border-t border-slate-100 pt-2.5">
-                          <div className="text-[11px] font-semibold text-slate-500 uppercase tracking-wider mb-1">
+                        <div className="mt-2 border-t border-slate-100 pt-2">
+                          <div className="text-[10px] font-semibold text-slate-500 uppercase tracking-wider mb-1">
                             Items ({order.lines?.length || 0})
                           </div>
                           <div className="space-y-1">
@@ -2658,7 +2680,8 @@ function PosScreen() {
                         </div>
 
                         {/* Payment & Total Row */}
-                        <div className="mt-3 flex items-center justify-between border-t border-slate-100 pt-2.5 bg-slate-50/50 -mx-4 -mb-4 px-4 py-3 rounded-b-xl">
+                        </div>
+                        <div className="mt-2 flex items-center justify-between gap-2 border-t border-slate-100 bg-slate-50 px-3 py-2">
                           <div>
                             <div className="flex items-center gap-1.5">
                               <span className="text-xs text-slate-500">Total:</span>
@@ -2669,10 +2692,10 @@ function PosScreen() {
                             <div className="flex items-center gap-1.5 mt-0.5">
                               <span
                                 className={`text-[10px] font-bold uppercase ${
-                                  order.payment_status === "paid" ? "text-emerald-600" : "text-amber-600"
+                                  order.payment_status === "paid" || order.payment_status === "captured" ? "text-emerald-600" : "text-amber-600"
                                 }`}
                               >
-                                {order.payment_status === "paid" ? "● Paid" : "○ Unpaid / COD"}
+                                {order.payment_status === "paid" || order.payment_status === "captured" ? "● Paid" : "○ Unpaid / COD"}
                               </span>
                               <span className="text-[10px] text-slate-400">·</span>
                               <span className="text-[10px] font-semibold text-slate-600 uppercase">
@@ -3850,7 +3873,6 @@ function PosScreen() {
 
       {/* Top-Right Notification Toasts matching Image 3 */}
       <ToastContainer toasts={toasts} onDismiss={dismissToast} />
-      <PosOrderAlert />
 
       {/* Print Job Status Notifications & Fallback Dialog */}
       {printStatus?.type === "queued" ? (

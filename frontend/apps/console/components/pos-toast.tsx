@@ -10,7 +10,17 @@ export type ToastItem = {
   message: string;
   tone?: ToastTone;
   createdAt: number;
+  durationMs: number;
 };
+
+const announcedOrders = new Set<string>();
+
+/** Returns true the first time this order should raise a toast. */
+export function claimOrderAnnouncement(id: string): boolean {
+  if (!id || announcedOrders.has(id)) return false;
+  announcedOrders.add(id);
+  return true;
+}
 
 export function useToast() {
   const [toasts, setToasts] = useState<ToastItem[]>([]);
@@ -27,6 +37,7 @@ export function useToast() {
         message,
         tone,
         createdAt: Date.now(),
+        durationMs,
       };
       setToasts((prev) => [...prev, item]);
 
@@ -55,7 +66,7 @@ export function ToastContainer({
   return (
     <div
       aria-live="polite"
-      className="pointer-events-none fixed top-5 right-5 z-50 flex flex-col gap-2.5 max-w-[360px]"
+      className="pointer-events-none fixed top-5 right-5 z-[80] flex flex-col gap-2.5 max-w-[380px]"
     >
       {toasts.map((toast) => {
         const isError = toast.tone === "error";
@@ -65,7 +76,7 @@ export function ToastContainer({
           <div
             key={toast.id}
             role="status"
-            className={`pointer-events-auto flex items-center gap-3 rounded-[14px] border bg-white px-4 py-3 shadow-[0_10px_25px_-5px_rgba(0,0,0,0.1),0_8px_10px_-6px_rgba(0,0,0,0.06)] transition-all duration-200 animate-in fade-in slide-in-from-top-2 ${
+            className={`pointer-events-auto relative flex items-center gap-3 overflow-hidden rounded-[14px] border bg-white px-4 py-3 shadow-[0_10px_25px_-5px_rgba(0,0,0,0.1),0_8px_10px_-6px_rgba(0,0,0,0.06)] transition-all duration-200 animate-in fade-in slide-in-from-top-2 ${
               isError
                 ? "border-rose-200"
                 : isInfo
@@ -73,6 +84,12 @@ export function ToastContainer({
                   : "border-emerald-200/90"
             }`}
           >
+            <span
+              className={`absolute inset-x-0 bottom-0 h-[3px] origin-left ${
+                isError ? "bg-rose-500" : isInfo ? "bg-indigo-500" : "bg-emerald-500"
+              }`}
+              style={{ animation: `selfx-toast-life ${toast.durationMs}ms linear forwards` }}
+            />
             {/* Tone Circular Icon matching Image 3 */}
             <div
               className={`flex size-6 shrink-0 items-center justify-center rounded-full border ${
@@ -109,6 +126,7 @@ export function ToastContainer({
           </div>
         );
       })}
+      <style>{`@keyframes selfx-toast-life { from { transform: scaleX(1); } to { transform: scaleX(0); } }`}</style>
     </div>
   );
 }

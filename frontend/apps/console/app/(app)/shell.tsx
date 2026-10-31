@@ -1,6 +1,7 @@
 "use client";
 
 import { AppShell, type NavGroup } from "@selfx/ui";
+import { claimOrderAnnouncement, ToastContainer, useToast } from "../../components/pos-toast";
 import {
   BarChart3,
   Bell,
@@ -478,14 +479,7 @@ export function ConsoleShell({ children }: { children: ReactNode }) {
     void loadTodaySummary();
   }
 
-  const [orderAlert, setOrderAlert] = useState<{
-    id: string;
-    number: string;
-    customer_name?: string;
-    total_paise?: number;
-    channel?: string;
-    fulfillment?: string;
-  } | null>(null);
+  const { toasts, showToast, dismissToast } = useToast();
 
   useEffect(() => {
     const seen = new Set<string>();
@@ -499,17 +493,18 @@ export function ConsoleShell({ children }: { children: ReactNode }) {
         return row.payment_status === "captured" || ["placed", "awaiting_payment", "accepted", "packing", "ready", "ready_for_pickup", "out_for_delivery"].includes(row.status);
       });
       const arrived = fresh.filter((row) => !seen.has(row.id));
-      if (ready && arrived.length > 0) {
-        beep();
-        const latest = arrived[0];
-        setOrderAlert({
-          id: latest.id,
-          number: latest.number ?? latest.id,
-          customer_name: latest.customer_name,
-          total_paise: latest.total_paise,
-          channel: latest.channel,
-          fulfillment: latest.fulfillment,
-        });
+      if (!ready) {
+        fresh.forEach((row) => claimOrderAnnouncement(row.id));
+      } else if (arrived.length > 0) {
+        let played = false;
+        for (const row of arrived) {
+          if (!claimOrderAnnouncement(row.id)) continue;
+          if (!played) {
+            beep();
+            played = true;
+          }
+          showToast(`Order ${row.number ?? "new"} placed.`, "ok", 3000);
+        }
         window.dispatchEvent(new CustomEvent("selfx-new-order"));
       }
       seen.clear();
@@ -519,7 +514,7 @@ export function ConsoleShell({ children }: { children: ReactNode }) {
     void tick();
     const timer = window.setInterval(() => void tick(), 5000);
     return () => window.clearInterval(timer);
-  }, []);
+  }, [showToast]);
 
   async function stopViewing() {
     const token = decodeURIComponent(document.cookie.split("; ").find((row) => row.startsWith("XSRF-TOKEN="))?.slice("XSRF-TOKEN=".length) ?? "");
@@ -1216,28 +1211,7 @@ export function ConsoleShell({ children }: { children: ReactNode }) {
           </aside>
         </div>
       ) : null}
-      {orderAlert ? (
-        <div className="fixed right-4 top-4 z-[80] w-[min(100%-2rem,360px)] rounded-2xl border border-slate-200 bg-white p-4 shadow-lg">
-          <div className="flex items-start justify-between gap-3">
-            <div>
-              <p className="text-[11px] font-semibold uppercase tracking-wide text-emerald-700">Order received</p>
-              <p className="mt-1 text-sm font-semibold text-slate-900">
-                {orderAlert.number} · {orderAlert.customer_name || "Customer"}
-              </p>
-              <p className="mt-1 text-xs text-slate-500">
-                {orderAlert.channel === "counter" ? "POS counter" : orderAlert.fulfillment === "pickup" ? "Store pickup" : "Online order"}
-                {typeof orderAlert.total_paise === "number" ? ` · ₹${(orderAlert.total_paise / 100).toFixed(2)}` : ""}
-              </p>
-            </div>
-            <button type="button" className="text-xs font-semibold text-slate-500" onClick={() => setOrderAlert(null)}>
-              Close
-            </button>
-          </div>
-          <a href="/orders" className="mt-3 inline-flex text-xs font-semibold text-indigo-700">
-            Open orders
-          </a>
-        </div>
-      ) : null}
+      <ToastContainer toasts={toasts} onDismiss={dismissToast} />
       <TenantAiAssistantWidget />
     </AppShell>
   );
