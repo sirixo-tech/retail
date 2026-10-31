@@ -240,9 +240,7 @@ class PaymentGatewayService
         if (str_starts_with($callback, 'https://')) {
             $headers['X-CALLBACK-URL'] = $callback;
         }
-        $bases = $this->phonePeIsLive($creds)
-            ? ['https://mercury.phonepe.com/enterprise', 'https://mercury.phonepe.com']
-            : ['https://mercury-uat.phonepe.com/enterprise-sandbox', 'https://mercury-uat.phonepe.com'];
+        $bases = $this->phonePeDqrBases($this->phonePeIsLive($creds));
         $lastError = 'PhonePe did not return a QR.';
         foreach ($bases as $base) {
             try {
@@ -250,8 +248,10 @@ class PaymentGatewayService
                     'request' => $encoded,
                 ]);
                 $body = $response->json() ?? [];
-                $qr = (string) ($body['data']['qrString'] ?? $body['data']['qrData'] ?? '');
-                if ($response->successful() && ! empty($body['success']) && $qr !== '') {
+                $instrument = is_array($body['data']['instrumentResponse'] ?? null) ? $body['data']['instrumentResponse'] : [];
+                $qr = (string) ($body['data']['qrString'] ?? $body['data']['qrData'] ?? $instrument['qrData'] ?? $instrument['intentUrl'] ?? '');
+                $accepted = ! empty($body['success']) || in_array((string) ($body['code'] ?? ''), ['SUCCESS', 'PAYMENT_INITIATED'], true);
+                if ($response->successful() && $accepted && $qr !== '') {
                     return ['ok' => true, 'qr' => $qr, 'error' => null];
                 }
                 $lastError = $this->phonePeFailure(is_array($body) ? $body : [], $response->status());
@@ -277,6 +277,72 @@ class PaymentGatewayService
         }
 
         return $qr;
+    }
+
+    /**
+     * @param  array{key_id?: string, key_secret?: string, mode?: string, config?: array<string, mixed>}  $creds
+     * @return array{ok: bool, qr: ?string, error: ?string}
+     */
+    private function phonePeHermesQr(array $creds, string $txnId, int $amountPaise): array
+    {
+        $merchantId = trim((string) ($creds['key_id'] ?? ''));
+        $saltKey = trim((string) ($creds['key_secret'] ?? ''));
+        $saltIndex = trim((string) ($creds['config']['salt_index'] ?? ''));
+        if ($saltIndex === '') {
+            $saltIndex = '1';
+        }
+        $providerId = trim((string) ($creds['config']['provider_id'] ?? ''));
+        $payload = [
+            'merchantId' => $merchantId,
+            'merchantTransactionId' => $txnId,
+            'merchantUserId' => substr('POS'.$txnId, 0, 36),
+            'amount' => $amountPaise,
+            'paymentInstrument' => ['type' => 'UPI_QR'],
+        ];
+        $callback = url('/api/v1/public/webhooks/phonepe');
+        if (str_starts_with($callback, 'https://')) {
+            $payload['callbackUrl'] = $callback;
+        }
+        $encoded = base64_encode((string) json_encode($payload, JSON_UNESCAPED_SLASHES));
+        $checksum = hash('sha256', $encoded.'/pg/v1/pay'.$saltKey).'###'.$saltIndex;
+        $headers = [
+            'Content-Type' => 'application/json',
+            'Accept' => 'application/json',
+            'X-VERIFY' => $checksum,
+            'X-MERCHANT-ID' => $merchantId,
+        ];
+        if ($providerId !== '') {
+            $headers['X-PROVIDER-ID'] = $providerId;
+        }
+
+        try {
+            $base = $this->phonePeHosts($this->phonePeIsLive($creds))['pg'];
+            $response = Http::withHeaders($headers)->timeout(8)->post($base.'/pg/v1/pay', [
+                'request' => $encoded,
+            ]);
+            $body = $response->json() ?? [];
+            $instrument = is_array($body['data']['instrumentResponse'] ?? null) ? $body['data']['instrumentResponse'] : [];
+            $qr = (string) ($instrument['qrData'] ?? $instrument['intentUrl'] ?? '');
+            if ($response->successful() && $qr !== '') {
+                return ['ok' => true, 'qr' => $qr, 'error' => null];
+            }
+
+            return ['ok' => false, 'qr' => null, 'error' => $this->phonePeFailure(is_array($body) ? $body : [], $response->status())];
+        } catch (\Throwable $e) {
+            Log::warning('PhonePe UPI QR error', ['error' => $e->getMessage()]);
+
+            return ['ok' => false, 'qr' => null, 'error' => 'PhonePe could not be reached.'];
+        }
+    }
+
+    /**
+     * @return list<string>
+     */
+    private function phonePeDqrBases(bool $live): array
+    {
+        return $live
+            ? ['https://mercury.phonepe.com/enterprise', 'https://mercury.phonepe.com']
+            : ['https://mercury-uat.phonepe.com/enterprise-sandbox', 'https://mercury-uat.phonepe.com'];
     }
 
     /**
@@ -573,19 +639,10 @@ class PaymentGatewayService
         $phonePeError = null;
         if ($creds && ! empty($creds['key_id']) && ! empty($creds['key_secret'])) {
             $merchantId = $creds['key_id'];
-            $saltKey = $creds['key_secret'];
-            $saltIndex = (string) ($creds['config']['salt_index'] ?? '1');
-            $providerId = trim((string) (
-                $creds['config']['provider_id']
-                ?? ($creds['config']['x_provider_id']
-                ?? ($creds['config']['store_terminal_id'] ?? ''))
-            ));
             $storeDqrId = trim((string) ($creds['config']['store_id'] ?? ''));
             $terminalDqrId = trim((string) ($creds['config']['terminal_id'] ?? ''));
 
             $txnId = $this->phonePeRef('POS'.$orderRef.(string) time());
-            $hosts = $this->phonePeHosts($this->phonePeIsLive($creds));
-            $mercuryBase = $hosts['dqr'];
 
             $payload = [
                 'merchantId' => $merchantId,
@@ -602,6 +659,9 @@ class PaymentGatewayService
             }
 
             $qrInit = $this->phonePeQrInit($creds, $payload);
+            if (! ($qrInit['ok'] && is_string($qrInit['qr']))) {
+                $qrInit = $this->phonePeHermesQr($creds, $txnId, $amountPaise);
+            }
             if ($qrInit['ok'] && is_string($qrInit['qr'])) {
                 $qrString = $qrInit['qr'];
                 $vpa = '';
@@ -631,8 +691,10 @@ class PaymentGatewayService
         $fallbackVpa = trim((string) (
             (is_array($creds) ? ($creds['config']['upi_vpa'] ?? null) : null)
             ?: ($store->settings['gateway_configs']['phonepe']['upi_vpa']
+            ?? ($store->settings['online_store']['payments']['phonepe']['upi_vpa']
             ?? ($store->settings['online_store']['payments']['upiQr']['vpa']
-            ?? ''))
+            ?? ($store->settings['online_store']['payments']['upiVpaId']
+            ?? ''))))
         ));
         if ($this->validVpa($fallbackVpa)) {
             $payee = (string) ((is_array($creds) ? ($creds['config']['merchant_name'] ?? null) : null) ?: ($store->name ?: 'Store'));
@@ -708,7 +770,6 @@ class PaymentGatewayService
 
             $endpoint = "/v3/transaction/{$merchantId}/{$transactionId}/status";
             $checksum = hash('sha256', $endpoint . $saltKey) . '###' . $saltIndex;
-            $mercuryBase = $this->phonePeHosts($this->phonePeIsLive($creds))['dqr'];
 
             $headers = [
                 'Content-Type' => 'application/json',
@@ -719,12 +780,40 @@ class PaymentGatewayService
                 $headers['X-PROVIDER-ID'] = $providerId;
             }
 
+            foreach ($this->phonePeDqrBases($this->phonePeIsLive($creds)) as $mercuryBase) {
+                try {
+                    $res = Http::withHeaders($headers)->timeout(5)->get("{$mercuryBase}{$endpoint}");
+                    if ($res->successful()) {
+                        $body = $res->json();
+                        $state = $body['data']['paymentState'] ?? ($body['code'] ?? null);
+                        if ($state === 'COMPLETED' || $state === 'SUCCESS' || $state === 'PAYMENT_SUCCESS') {
+                            return ['paid' => true, 'status' => 'COMPLETED'];
+                        }
+                    }
+                } catch (\Throwable $e) {
+                    // Ignore transient network errors during status poll
+                }
+            }
+
+            $phonePeBase = $this->phonePeHosts($this->phonePeIsLive($creds))['pg'];
+            $hermesEndpoint = "/pg/v1/status/{$merchantId}/{$transactionId}";
+            $hermesChecksum = hash('sha256', $hermesEndpoint.$saltKey).'###'.$saltIndex;
+            $hermesHeaders = [
+                'Content-Type' => 'application/json',
+                'Accept' => 'application/json',
+                'X-VERIFY' => $hermesChecksum,
+                'X-MERCHANT-ID' => $merchantId,
+            ];
+            if ($providerId !== '') {
+                $hermesHeaders['X-PROVIDER-ID'] = $providerId;
+            }
             try {
-                $res = Http::withHeaders($headers)->timeout(5)->get("{$mercuryBase}{$endpoint}");
-                if ($res->successful()) {
-                    $body = $res->json();
-                    $state = $body['data']['paymentState'] ?? ($body['code'] ?? null);
-                    if ($state === 'COMPLETED' || $state === 'SUCCESS' || $state === 'PAYMENT_SUCCESS') {
+                $hermes = Http::withHeaders($hermesHeaders)->timeout(6)->get($phonePeBase.$hermesEndpoint);
+                if ($hermes->successful()) {
+                    $hermesBody = $hermes->json();
+                    $code = $hermesBody['code'] ?? null;
+                    $state = $hermesBody['data']['state'] ?? null;
+                    if ($code === 'PAYMENT_SUCCESS' || $state === 'COMPLETED') {
                         return ['paid' => true, 'status' => 'COMPLETED'];
                     }
                 }
@@ -788,7 +877,7 @@ class PaymentGatewayService
                     ?? ($creds['config']['store_terminal_id'] ?? ''))
                 ));
 
-                $txnId = $this->phonePeRef('TXN'.$order->number.$order->id);
+                $txnId = (string) ($payment->provider_reference ?: $this->phonePeRef('TXN'.$order->number.$order->id));
 
                 // 1. Try Mercury DQR Status
                 $mercuryEndpoint = "/v3/transaction/{$merchantId}/{$txnId}/status";
@@ -802,23 +891,24 @@ class PaymentGatewayService
                     $mercuryHeaders['X-PROVIDER-ID'] = $providerId;
                 }
 
-                try {
-                    $mercuryBase = $this->phonePeHosts($this->phonePeIsLive($creds))['dqr'];
-                    $mRes = Http::withHeaders($mercuryHeaders)->timeout(6)->get("{$mercuryBase}{$mercuryEndpoint}");
-                    if ($mRes->successful()) {
-                        $mBody = $mRes->json();
-                        $state = $mBody['data']['paymentState'] ?? ($mBody['code'] ?? null);
-                        if ($state === 'COMPLETED' || $state === 'SUCCESS' || $state === 'PAYMENT_SUCCESS') {
-                            $this->capture->captureFromProvider($payment->id);
-                            return [
-                                'paid' => true,
-                                'status' => 'captured',
-                                'method' => 'phonepe',
-                                'sale_id' => DB::table('orders')->where('id', $orderId)->value('sale_id'),
-                            ];
+                foreach ($this->phonePeDqrBases($this->phonePeIsLive($creds)) as $mercuryBase) {
+                    try {
+                        $mRes = Http::withHeaders($mercuryHeaders)->timeout(6)->get("{$mercuryBase}{$mercuryEndpoint}");
+                        if ($mRes->successful()) {
+                            $mBody = $mRes->json();
+                            $state = $mBody['data']['paymentState'] ?? ($mBody['code'] ?? null);
+                            if ($state === 'COMPLETED' || $state === 'SUCCESS' || $state === 'PAYMENT_SUCCESS') {
+                                $this->capture->captureFromProvider($payment->id);
+                                return [
+                                    'paid' => true,
+                                    'status' => 'captured',
+                                    'method' => 'phonepe',
+                                    'sale_id' => DB::table('orders')->where('id', $orderId)->value('sale_id'),
+                                ];
+                            }
                         }
-                    }
-                } catch (\Throwable $e) {}
+                    } catch (\Throwable $e) {}
+                }
 
                 // 2. Try Hermes PG Status
                 $phonePeBase = $this->phonePeHosts($this->phonePeIsLive($creds))['pg'];
@@ -827,12 +917,16 @@ class PaymentGatewayService
                 $checksum = hash('sha256', $endpoint . $saltKey) . '###' . $saltIndex;
 
                 try {
-                    $response = Http::withHeaders([
+                    $statusHeaders = [
                         'Content-Type' => 'application/json',
                         'Accept' => 'application/json',
                         'X-VERIFY' => $checksum,
                         'X-MERCHANT-ID' => $merchantId,
-                    ])->timeout(8)->get("{$phonePeBase}{$endpoint}");
+                    ];
+                    if ($providerId !== '') {
+                        $statusHeaders['X-PROVIDER-ID'] = $providerId;
+                    }
+                    $response = Http::withHeaders($statusHeaders)->timeout(8)->get("{$phonePeBase}{$endpoint}");
 
                     if ($response->successful()) {
                         $resData = $response->json();

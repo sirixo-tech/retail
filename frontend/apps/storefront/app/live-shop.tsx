@@ -563,6 +563,9 @@ export function LiveShop() {
   }, [slug, phone, onlineSettings?.loyalty?.enabled]);
 
   useEffect(() => {
+    let paidTimer = 0;
+    let paidStop = 0;
+    let onReturn: (() => void) | null = null;
     try {
       const savedCart = window.localStorage.getItem(CART_STORAGE_KEY);
       if (savedCart) setQty(JSON.parse(savedCart) as Record<string, number>);
@@ -685,11 +688,12 @@ export function LiveShop() {
       let orderIdToCheck = paymentOrderId;
       let pendingData: any = null;
 
-      if (!orderIdToCheck && pendingRaw) {
+      if (pendingRaw) {
         try {
-          pendingData = JSON.parse(pendingRaw);
-          if (pendingData?.orderId && Date.now() - (pendingData.timestamp || 0) < 30 * 60 * 1000) {
-            orderIdToCheck = pendingData.orderId;
+          const parsed = JSON.parse(pendingRaw);
+          if (parsed?.orderId && Date.now() - (parsed.timestamp || 0) < 30 * 60 * 1000) {
+            pendingData = parsed;
+            if (!orderIdToCheck) orderIdToCheck = parsed.orderId;
           }
         } catch {
           // ignore
@@ -697,71 +701,61 @@ export function LiveShop() {
       }
 
       if (orderIdToCheck) {
-        void fetch(`/api/v1/public/orders/${encodeURIComponent(orderIdToCheck)}/verify-payment`, {
-          method: "POST",
-          headers: { Accept: "application/json", "Content-Type": "application/json" },
-        })
-          .then((res) => (res.ok ? res.json() : null))
-          .then(async (body) => {
-            if (body?.data?.paid || body?.data?.status === "captured") {
-              try {
-                window.localStorage.removeItem("selfx_pending_payment_order");
-                window.localStorage.removeItem(CART_STORAGE_KEY);
-              } catch {}
-              setQty({});
-
-              if (paymentOrderId && typeof window !== "undefined") {
-                const cleanUrl = window.location.pathname;
-                window.history.replaceState({}, document.title, cleanUrl);
-              }
-
-              if (pendingData) {
-                setOrderConfirmed({
-                  id: pendingData.orderId,
-                  number: pendingData.orderNumber,
-                  totalPaise: pendingData.totalPaise,
-                  fulfillment: pendingData.fulfillment,
-                  payment: pendingData.payment,
-                  deliverySlot: pendingData.deliverySlot,
-                  pickupQr: pendingData.pickupQr,
-                  deliveryOtp: pendingData.deliveryOtp,
-                  address: pendingData.address,
-                });
-                setViewMode("catalog");
-              } else {
-                void fetch("/api/v1/public/orders/track", {
-                  method: "POST",
-                  headers: { "Content-Type": "application/json", Accept: "application/json" },
-                  body: JSON.stringify({ number: orderIdToCheck }),
-                })
-                  .then((r) => (r.ok ? r.json() : null))
-                  .then((trackBody) => {
-                    if (trackBody?.data) {
-                      const o = trackBody.data;
-                      setOrderConfirmed({
-                        id: o.id,
-                        number: o.number,
-                        totalPaise: o.total_paise,
-                        fulfillment: o.fulfillment,
-                        payment: o.payment_method,
-                        deliverySlot: o.delivery_slot ?? null,
-                        pickupQr: o.pickup_qr,
-                        deliveryOtp: computeVerificationCode(o.number, o.id),
-                        address: o.address_snapshot?.address || "Store Counter",
-                      });
-                      setViewMode("catalog");
-                    }
-                  });
-              }
-            } else if (paymentOrderId) {
-              setMessage("Payment was not completed. If amount was debited, it will be updated within a couple of minutes.");
-            }
-          })
-          .catch(() => {});
+        const confirmPaid = async () => {
+          const res = await fetch(`/api/v1/public/orders/${encodeURIComponent(orderIdToCheck)}/verify-payment`, {
+            method: "POST",
+            headers: { Accept: "application/json", "Content-Type": "application/json" },
+          });
+          const paidBody = await res.json().catch(() => null);
+          if (!(paidBody?.data?.paid || paidBody?.data?.status === "captured")) return false;
+          try {
+            window.localStorage.removeItem("selfx_pending_payment_order");
+            window.localStorage.removeItem(CART_STORAGE_KEY);
+          } catch {}
+          setQty({});
+          if (paymentOrderId && typeof window !== "undefined") {
+            window.history.replaceState({}, document.title, window.location.pathname);
+          }
+          const confirmed = pendingData ?? {};
+          setOrderConfirmed({
+            id: confirmed.orderId ?? orderIdToCheck,
+            number: confirmed.orderNumber ?? paidBody?.data?.number ?? "",
+            totalPaise: confirmed.totalPaise ?? 0,
+            fulfillment: confirmed.fulfillment ?? "delivery",
+            payment: confirmed.payment ?? "phonepe",
+            deliverySlot: confirmed.deliverySlot ?? null,
+            pickupQr: confirmed.pickupQr ?? null,
+            deliveryOtp: confirmed.deliveryOtp ?? null,
+            address: confirmed.address ?? null,
+          });
+          setViewMode("catalog");
+          setCheckoutStep("details");
+          return true;
+        };
+        void confirmPaid();
+        paidTimer = window.setInterval(() => {
+          void confirmPaid().then((done) => {
+            if (done) window.clearInterval(paidTimer);
+          });
+        }, 3000);
+        paidStop = window.setTimeout(() => window.clearInterval(paidTimer), 120000);
+        onReturn = () => {
+          if (document.visibilityState === "visible") void confirmPaid();
+        };
+        document.addEventListener("visibilitychange", onReturn);
+        window.addEventListener("pageshow", onReturn);
       }
     } catch {
       // ignore
     }
+    return () => {
+      if (paidTimer) window.clearInterval(paidTimer);
+      if (paidStop) window.clearTimeout(paidStop);
+      if (onReturn) {
+        document.removeEventListener("visibilitychange", onReturn);
+        window.removeEventListener("pageshow", onReturn);
+      }
+    };
   }, []);
 
   useEffect(() => {

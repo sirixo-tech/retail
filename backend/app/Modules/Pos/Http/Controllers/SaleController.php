@@ -2222,12 +2222,12 @@ class SaleController
         }
 
         $data = $request->validate([
-            'amount_paise' => ['required', 'integer', 'min:1'],
+            'amount_paise' => ['required', 'numeric', 'min:1'],
             'order_ref' => ['nullable', 'string', 'max:64'],
         ]);
 
         $orderRef = (string) ($data['order_ref'] ?? ('ORD-' . date('YmdHis')));
-        $qrResult = app(PaymentGatewayService::class)->generatePosQr($model, (int) $data['amount_paise'], $orderRef);
+        $qrResult = app(PaymentGatewayService::class)->generatePosQr($model, (int) round((float) $data['amount_paise']), $orderRef);
 
         return ApiResponse::ok($qrResult);
     }

@@ -179,6 +179,13 @@ export default function OrdersPage() {
 
   useEffect(() => {
     void load();
+    const timer = window.setInterval(() => void load(), 5000);
+    const onNew = () => void load();
+    window.addEventListener("selfx-new-order", onNew);
+    return () => {
+      window.clearInterval(timer);
+      window.removeEventListener("selfx-new-order", onNew);
+    };
   }, [load]);
 
   async function saveZone() {

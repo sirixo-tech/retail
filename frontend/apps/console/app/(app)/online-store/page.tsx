@@ -990,6 +990,22 @@ export function OnlineStoreWorkspace({ initialSection = "settings" }: { initialS
     })();
   }, []);
 
+  useEffect(() => {
+    const refreshOrders = async () => {
+      const res = await fetch("/api/v1/orders", { credentials: "include", headers: { Accept: "application/json" } });
+      if (!res.ok) return;
+      const body = (await res.json()) as { data?: OnlineOrderRow[] };
+      setOrders((body.data ?? []).filter((order) => order.fulfillment !== "counter"));
+    };
+    const timer = window.setInterval(() => void refreshOrders(), 5000);
+    const onNew = () => void refreshOrders();
+    window.addEventListener("selfx-new-order", onNew);
+    return () => {
+      window.clearInterval(timer);
+      window.removeEventListener("selfx-new-order", onNew);
+    };
+  }, []);
+
   const storefrontUrl = useMemo(() => {
     const slug = config.basics.storeUrlPath.trim() || storeSlug;
     const origin = typeof window !== "undefined" ? window.location.origin : "https://retail.sirixo.com";

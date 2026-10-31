@@ -56,6 +56,7 @@ import {
 import { useEffect, useMemo, useState } from "react";
 import { ReceiptData, ReceiptModal } from "../../components/receipt-modal";
 import { ToastContainer, useToast } from "../../components/pos-toast";
+import { PosOrderAlert } from "../../components/pos-order-alert";
 import QRCode from "qrcode";
 import { PasswordGate } from "../password-gate";
 import { usePrintJobPoller } from "../lib/print-transport";
@@ -509,6 +510,16 @@ function PosScreen() {
       setPosOrdersLoading(false);
     }
   }
+
+  useEffect(() => {
+    const timer = window.setInterval(() => void loadPosOrders(), 5000);
+    const onNew = () => void loadPosOrders();
+    window.addEventListener("selfx-new-order", onNew);
+    return () => {
+      window.clearInterval(timer);
+      window.removeEventListener("selfx-new-order", onNew);
+    };
+  }, [storeId]);
 
   async function transitionPosOrder(orderId: string, toStatus: string) {
     try {
@@ -1286,7 +1297,7 @@ function PosScreen() {
         "X-XSRF-TOKEN": csrf(),
       },
       body: JSON.stringify({
-        amount_paise: totalDuePaise,
+        amount_paise: Math.round(totalDuePaise),
         order_ref: posTempOrderRef,
       }),
     })
@@ -1314,7 +1325,9 @@ function PosScreen() {
           setPosUpiQrUrl(null);
           setUpiQrError(
             d?.error ||
-              "PhonePe did not return a QR. Re-save the Merchant ID, salt key, salt index, and Provider ID in Live mode.",
+              body?.error?.message ||
+              body?.message ||
+              (!ok ? "The POS could not ask PhonePe for a QR. Stay signed in and try again." : "PhonePe did not return a QR. Check the Merchant ID, salt key, salt index, and Provider ID, then turn PhonePe on in Live mode."),
           );
         }
       })
@@ -3835,6 +3848,7 @@ function PosScreen() {
 
       {/* Top-Right Notification Toasts matching Image 3 */}
       <ToastContainer toasts={toasts} onDismiss={dismissToast} />
+      <PosOrderAlert />
 
       {/* Print Job Status Notifications & Fallback Dialog */}
       {printStatus?.type === "queued" ? (
