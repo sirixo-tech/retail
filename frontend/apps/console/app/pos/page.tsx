@@ -1288,18 +1288,13 @@ function PosScreen() {
     setAutoCaptureSuccess(false);
 
     // Call server to generate official gateway Dynamic QR (PhonePe Mercury DQR)
-    fetch(`/api/v1/stores/${storeId}/pos/dynamic-qr`, {
-      method: "POST",
+    const qrParams = new URLSearchParams({
+      amount_paise: String(Math.round(totalDuePaise)),
+      order_ref: posTempOrderRef,
+    });
+    fetch(`/api/v1/stores/${storeId}/receipt?${qrParams.toString()}`, {
       credentials: "include",
-      headers: {
-        Accept: "application/json",
-        "Content-Type": "application/json",
-        "X-XSRF-TOKEN": csrf(),
-      },
-      body: JSON.stringify({
-        amount_paise: Math.round(totalDuePaise),
-        order_ref: posTempOrderRef,
-      }),
+      headers: { Accept: "application/json" },
     })
       .then(async (res) => {
         const body = await res.json().catch(() => null);
@@ -1308,7 +1303,7 @@ function PosScreen() {
       .then(async ({ ok, body }) => {
         if (cancelled) return;
         const d = body?.data;
-        if (ok && d?.success !== false && d?.qr_string) {
+        if (ok && d?.qr_string && d?.success !== false) {
           if (typeof d.vpa === "string" && d.vpa.includes("@")) setStoreUpiVpa(d.vpa);
           if (d.payee_name) setStorePayeeName(d.payee_name);
           if (d.provider) setPosQrProvider(d.provider);
@@ -1325,6 +1320,9 @@ function PosScreen() {
           setPosUpiQrUrl(null);
           setUpiQrError(
             d?.error ||
+              (Array.isArray(d?.active_payment_gateways)
+                ? "This server is still serving the previous POS build. Deploy the latest backend, then open the QR again."
+                : "") ||
               body?.error?.message ||
               body?.message ||
               (!ok ? "The POS could not ask PhonePe for a QR. Stay signed in and try again." : "PhonePe did not return a QR. Check the Merchant ID, salt key, salt index, and Provider ID, then turn PhonePe on in Live mode."),
@@ -1350,9 +1348,13 @@ function PosScreen() {
     if (!upiQrModalOpen || !activePosTxnId || !storeId || autoCaptureSuccess) return;
 
     const poll = setInterval(() => {
-      fetch(`/api/v1/stores/${storeId}/pos/dynamic-qr/${encodeURIComponent(activePosTxnId)}/status?provider=${encodeURIComponent(posQrProvider)}`, {
+      const statusParams = new URLSearchParams({
+        transaction_id: activePosTxnId,
+        provider: posQrProvider || "phonepe",
+      });
+      fetch(`/api/v1/stores/${storeId}/receipt?${statusParams.toString()}`, {
         credentials: "include",
-        headers: { Accept: "application/json", "X-XSRF-TOKEN": csrf() },
+        headers: { Accept: "application/json" },
       })
         .then((res) => (res.ok ? res.json() : null))
         .then((body) => {

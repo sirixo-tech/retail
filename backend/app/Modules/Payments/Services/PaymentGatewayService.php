@@ -211,6 +211,21 @@ class PaymentGatewayService
     }
 
     /**
+     * @param  array<string, mixed>  $body
+     */
+    private function phonePeLooksPaid(array $body): bool
+    {
+        $data = is_array($body['data'] ?? null) ? $body['data'] : [];
+        $code = strtoupper((string) ($body['code'] ?? ''));
+        $state = strtoupper((string) ($data['state'] ?? $data['paymentState'] ?? ''));
+        if (in_array($code, ['PAYMENT_SUCCESS', 'PAYMENT_COMPLETED'], true)) {
+            return true;
+        }
+
+        return in_array($state, ['COMPLETED', 'SUCCESS', 'PAYMENT_SUCCESS'], true);
+    }
+
+    /**
      * Dynamic QR used by POS and the storefront. PhonePe accounts onboarded with a
      * Provider ID are authorized on this API, not always on the hosted pay-page API.
      *
@@ -785,8 +800,7 @@ class PaymentGatewayService
                     $res = Http::withHeaders($headers)->timeout(5)->get("{$mercuryBase}{$endpoint}");
                     if ($res->successful()) {
                         $body = $res->json();
-                        $state = $body['data']['paymentState'] ?? ($body['code'] ?? null);
-                        if ($state === 'COMPLETED' || $state === 'SUCCESS' || $state === 'PAYMENT_SUCCESS') {
+                        if (is_array($body) && $this->phonePeLooksPaid($body)) {
                             return ['paid' => true, 'status' => 'COMPLETED'];
                         }
                     }
@@ -811,9 +825,7 @@ class PaymentGatewayService
                 $hermes = Http::withHeaders($hermesHeaders)->timeout(6)->get($phonePeBase.$hermesEndpoint);
                 if ($hermes->successful()) {
                     $hermesBody = $hermes->json();
-                    $code = $hermesBody['code'] ?? null;
-                    $state = $hermesBody['data']['state'] ?? null;
-                    if ($code === 'PAYMENT_SUCCESS' || $state === 'COMPLETED') {
+                    if (is_array($hermesBody) && $this->phonePeLooksPaid($hermesBody)) {
                         return ['paid' => true, 'status' => 'COMPLETED'];
                     }
                 }
@@ -837,11 +849,15 @@ class PaymentGatewayService
             return ['paid' => false, 'status' => 'not_found'];
         }
 
-        if ($order->payment_status === 'captured') {
+        $prepaid = in_array((string) $order->payment_method, ['razorpay', 'phonepe', 'paytm', 'stripe'], true);
+        if ($order->payment_status === 'captured' || ($prepaid && $order->status === 'placed')) {
             return [
                 'paid' => true,
                 'status' => 'captured',
                 'method' => (string) $order->payment_method,
+                'number' => $order->number,
+                'total_paise' => (int) $order->total_paise,
+                'fulfillment' => $order->fulfillment,
                 'sale_id' => $order->sale_id,
             ];
         }
@@ -896,14 +912,18 @@ class PaymentGatewayService
                         $mRes = Http::withHeaders($mercuryHeaders)->timeout(6)->get("{$mercuryBase}{$mercuryEndpoint}");
                         if ($mRes->successful()) {
                             $mBody = $mRes->json();
-                            $state = $mBody['data']['paymentState'] ?? ($mBody['code'] ?? null);
-                            if ($state === 'COMPLETED' || $state === 'SUCCESS' || $state === 'PAYMENT_SUCCESS') {
+                            if (is_array($mBody) && $this->phonePeLooksPaid($mBody)) {
                                 $this->capture->captureFromProvider($payment->id);
+                                $fresh = DB::table('orders')->where('id', $orderId)->first();
+
                                 return [
                                     'paid' => true,
                                     'status' => 'captured',
                                     'method' => 'phonepe',
-                                    'sale_id' => DB::table('orders')->where('id', $orderId)->value('sale_id'),
+                                    'number' => $fresh->number ?? null,
+                                    'total_paise' => isset($fresh->total_paise) ? (int) $fresh->total_paise : null,
+                                    'fulfillment' => $fresh->fulfillment ?? null,
+                                    'sale_id' => $fresh->sale_id ?? null,
                                 ];
                             }
                         }
@@ -930,16 +950,18 @@ class PaymentGatewayService
 
                     if ($response->successful()) {
                         $resData = $response->json();
-                        $code = $resData['code'] ?? null;
-                        $state = $resData['data']['state'] ?? null;
-
-                        if ($code === 'PAYMENT_SUCCESS' || $state === 'COMPLETED') {
+                        if (is_array($resData) && $this->phonePeLooksPaid($resData)) {
                             $this->capture->captureFromProvider($payment->id);
+                            $fresh = DB::table('orders')->where('id', $orderId)->first();
+
                             return [
                                 'paid' => true,
                                 'status' => 'captured',
                                 'method' => 'phonepe',
-                                'sale_id' => DB::table('orders')->where('id', $orderId)->value('sale_id'),
+                                'number' => $fresh->number ?? null,
+                                'total_paise' => isset($fresh->total_paise) ? (int) $fresh->total_paise : null,
+                                'fulfillment' => $fresh->fulfillment ?? null,
+                                'sale_id' => $fresh->sale_id ?? null,
                             ];
                         }
                     }
@@ -1272,6 +1294,9 @@ class PaymentGatewayService
      */
     public function handleNativeWebhook(string $provider, string $raw, ?string $signature, array $form = []): ?array
     {
+        if ($provider === 'phonepe' && isset($form['response']) && is_string($form['response'])) {
+            return ['status' => $this->acceptPhonePeWebhook($form['response'], $signature) ? 200 : 400];
+        }
         if ($provider === 'paytm' && isset($form['CHECKSUMHASH'], $form['ORDERID'])) {
             $paid = $this->acceptPaytmCallback($form);
             $redirect = Cache::get('paytm_return_'.(string) $form['ORDERID']);
@@ -1383,7 +1408,9 @@ class PaymentGatewayService
         $saltIndex = (string) ($creds['config']['salt_index'] ?? '1');
         $expected = hash('sha256', $encoded.(string) $creds['key_secret']).'###'.$saltIndex;
         if (! is_string($signature) || ! hash_equals($expected, $signature)) {
-            return false;
+            $checked = $this->verifyStatus((string) $payment->order_id);
+
+            return (bool) ($checked['paid'] ?? false);
         }
         $code = (string) ($decoded['code'] ?? '');
         if ($code === 'PAYMENT_SUCCESS') {

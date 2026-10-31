@@ -1915,6 +1915,27 @@ class SaleController
             return $model;
         }
 
+        // Served on the receipt route because that path is already registered.
+        // A cached route list on the server was returning 404 for /pos/dynamic-qr.
+        if ($request->filled('transaction_id')) {
+            $status = app(\App\Modules\Payments\Services\PaymentGatewayService::class)->verifyPosQrStatus(
+                $model,
+                (string) $request->query('transaction_id'),
+                (string) $request->query('provider', 'phonepe'),
+            );
+
+            return ApiResponse::ok($status);
+        }
+        if ($request->filled('amount_paise')) {
+            $amount = (int) round((float) $request->query('amount_paise'));
+            if ($amount < 1) {
+                return ApiResponse::error('validation.failed', 'Enter an amount to collect.', 422);
+            }
+            $orderRef = substr((string) ($request->query('order_ref') ?: ('ORD-'.date('YmdHis'))), 0, 64);
+
+            return ApiResponse::ok(app(\App\Modules\Payments\Services\PaymentGatewayService::class)->generatePosQr($model, $amount, $orderRef));
+        }
+
         $activeGateways = DB::table('payment_gateways')
             ->where('store_id', $model->id)
             ->where('status', 'active')

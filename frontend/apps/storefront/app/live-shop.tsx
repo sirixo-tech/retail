@@ -563,9 +563,6 @@ export function LiveShop() {
   }, [slug, phone, onlineSettings?.loyalty?.enabled]);
 
   useEffect(() => {
-    let paidTimer = 0;
-    let paidStop = 0;
-    let onReturn: (() => void) | null = null;
     try {
       const savedCart = window.localStorage.getItem(CART_STORAGE_KEY);
       if (savedCart) setQty(JSON.parse(savedCart) as Record<string, number>);
@@ -680,81 +677,72 @@ export function LiveShop() {
         }
       }
 
-      // Check for returning payment order (from PhonePe, Paytm, or URL redirect)
-      const urlParams = typeof window !== "undefined" ? new URLSearchParams(window.location.search) : null;
-      const paymentOrderId = urlParams?.get("payment_order_id");
-      const pendingRaw = window.localStorage.getItem("selfx_pending_payment_order");
-
-      let orderIdToCheck = paymentOrderId;
-      let pendingData: any = null;
-
-      if (pendingRaw) {
-        try {
-          const parsed = JSON.parse(pendingRaw);
-          if (parsed?.orderId && Date.now() - (parsed.timestamp || 0) < 30 * 60 * 1000) {
-            pendingData = parsed;
-            if (!orderIdToCheck) orderIdToCheck = parsed.orderId;
-          }
-        } catch {
-          // ignore
-        }
-      }
-
-      if (orderIdToCheck) {
-        const confirmPaid = async () => {
-          const res = await fetch(`/api/v1/public/orders/${encodeURIComponent(orderIdToCheck)}/verify-payment`, {
-            method: "POST",
-            headers: { Accept: "application/json", "Content-Type": "application/json" },
-          });
-          const paidBody = await res.json().catch(() => null);
-          if (!(paidBody?.data?.paid || paidBody?.data?.status === "captured")) return false;
-          try {
-            window.localStorage.removeItem("selfx_pending_payment_order");
-            window.localStorage.removeItem(CART_STORAGE_KEY);
-          } catch {}
-          setQty({});
-          if (paymentOrderId && typeof window !== "undefined") {
-            window.history.replaceState({}, document.title, window.location.pathname);
-          }
-          const confirmed = pendingData ?? {};
-          setOrderConfirmed({
-            id: confirmed.orderId ?? orderIdToCheck,
-            number: confirmed.orderNumber ?? paidBody?.data?.number ?? "",
-            totalPaise: confirmed.totalPaise ?? 0,
-            fulfillment: confirmed.fulfillment ?? "delivery",
-            payment: confirmed.payment ?? "phonepe",
-            deliverySlot: confirmed.deliverySlot ?? null,
-            pickupQr: confirmed.pickupQr ?? null,
-            deliveryOtp: confirmed.deliveryOtp ?? null,
-            address: confirmed.address ?? null,
-          });
-          setViewMode("catalog");
-          setCheckoutStep("details");
-          return true;
-        };
-        void confirmPaid();
-        paidTimer = window.setInterval(() => {
-          void confirmPaid().then((done) => {
-            if (done) window.clearInterval(paidTimer);
-          });
-        }, 3000);
-        paidStop = window.setTimeout(() => window.clearInterval(paidTimer), 120000);
-        onReturn = () => {
-          if (document.visibilityState === "visible") void confirmPaid();
-        };
-        document.addEventListener("visibilitychange", onReturn);
-        window.addEventListener("pageshow", onReturn);
-      }
     } catch {
       // ignore
     }
-    return () => {
-      if (paidTimer) window.clearInterval(paidTimer);
-      if (paidStop) window.clearTimeout(paidStop);
-      if (onReturn) {
-        document.removeEventListener("visibilitychange", onReturn);
-        window.removeEventListener("pageshow", onReturn);
+  }, []);
+
+  useEffect(() => {
+    let stopped = false;
+    const confirmPaid = async () => {
+      const params = new URLSearchParams(window.location.search);
+      const paymentOrderId = params.get("payment_order_id");
+      let pending: any = null;
+      try {
+        pending = JSON.parse(window.localStorage.getItem("selfx_pending_payment_order") || "null");
+      } catch {
+        pending = null;
       }
+      const pendingFresh = pending?.orderId && Date.now() - (pending.timestamp || 0) < 30 * 60 * 1000;
+      const orderId = paymentOrderId || (pendingFresh ? pending.orderId : null);
+      if (!orderId) return;
+      const res = await fetch(`/api/v1/public/orders/${encodeURIComponent(orderId)}/verify-payment`, {
+        method: "POST",
+        headers: { Accept: "application/json", "Content-Type": "application/json" },
+      });
+      const paidBody = await res.json().catch(() => null);
+      if (stopped || !(paidBody?.data?.paid || paidBody?.data?.status === "captured")) return;
+      try {
+        window.localStorage.removeItem("selfx_pending_payment_order");
+        window.localStorage.removeItem(CART_STORAGE_KEY);
+      } catch {
+        // ignore
+      }
+      setQty({});
+      const url = new URL(window.location.href);
+      url.searchParams.delete("payment_order_id");
+      url.searchParams.delete("order_number");
+      window.history.replaceState({}, document.title, `${url.pathname}${url.search}`);
+      const confirmed = pendingFresh ? pending : {};
+      setOrderConfirmed({
+        id: confirmed.orderId ?? orderId,
+        number: confirmed.orderNumber ?? paidBody?.data?.number ?? "",
+        totalPaise: confirmed.totalPaise ?? paidBody?.data?.total_paise ?? 0,
+        fulfillment: confirmed.fulfillment ?? paidBody?.data?.fulfillment ?? "delivery",
+        payment: confirmed.payment ?? paidBody?.data?.method ?? "phonepe",
+        deliverySlot: confirmed.deliverySlot ?? null,
+        pickupQr: confirmed.pickupQr ?? null,
+        deliveryOtp: confirmed.deliveryOtp ?? null,
+        address: confirmed.address ?? null,
+      });
+      setViewMode("catalog");
+      setCheckoutStep("details");
+    };
+    const onReturn = () => {
+      if (document.visibilityState === "hidden") return;
+      void confirmPaid();
+    };
+    void confirmPaid();
+    const timer = window.setInterval(() => void confirmPaid(), 3000);
+    document.addEventListener("visibilitychange", onReturn);
+    window.addEventListener("pageshow", onReturn);
+    window.addEventListener("focus", onReturn);
+    return () => {
+      stopped = true;
+      window.clearInterval(timer);
+      document.removeEventListener("visibilitychange", onReturn);
+      window.removeEventListener("pageshow", onReturn);
+      window.removeEventListener("focus", onReturn);
     };
   }, []);
 
@@ -2086,7 +2074,12 @@ export function LiveShop() {
         special_instructions: combinedInstructions || undefined,
         coupon_code: appliedCoupon?.code || coupon.trim() || undefined,
         loyalty_points: loyaltyPoints > 0 ? loyaltyPoints : undefined,
-        return_url: typeof window !== "undefined" ? window.location.origin + window.location.pathname : undefined,
+        return_url: typeof window !== "undefined" ? (() => {
+          const url = new URL(window.location.href);
+          url.searchParams.delete("payment_order_id");
+          url.searchParams.delete("order_number");
+          return url.toString();
+        })() : undefined,
         lines,
       };
 

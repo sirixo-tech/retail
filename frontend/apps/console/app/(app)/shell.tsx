@@ -494,7 +494,10 @@ export function ConsoleShell({ children }: { children: ReactNode }) {
       const response = await fetch("/api/v1/orders", { credentials: "include", headers: { Accept: "application/json" } });
       if (!response.ok) return;
       const rows = ((await response.json()) as { data: { id: string; status: string; number?: string; customer_name?: string; total_paise?: number; channel?: string; fulfillment?: string; payment_status?: string }[] }).data ?? [];
-      const fresh = rows.filter((row) => row.channel === "counter" || row.status === "placed" || row.payment_status === "captured");
+      const fresh = rows.filter((row) => {
+        if (row.channel === "counter") return row.status !== "voided";
+        return row.payment_status === "captured" || ["placed", "awaiting_payment", "accepted", "packing", "ready", "ready_for_pickup", "out_for_delivery"].includes(row.status);
+      });
       const arrived = fresh.filter((row) => !seen.has(row.id));
       if (ready && arrived.length > 0) {
         beep();
