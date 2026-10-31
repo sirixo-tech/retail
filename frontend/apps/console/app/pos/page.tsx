@@ -525,7 +525,7 @@ function PosScreen() {
       if (!ready) {
         fresh.forEach((row) => claimOrderAnnouncement(`paid:${row.id}`));
       } else {
-        const created = [];
+        const created: any[] = [];
         for (const row of fresh) {
           if (seen.has(row.id)) continue;
           if (!claimOrderAnnouncement(`paid:${row.id}`)) continue;

@@ -11,6 +11,7 @@ import {
   ExternalLink,
   Eye,
   MapPin,
+  MessageSquare,
   Navigation,
   Package,
   Phone,
@@ -27,9 +28,11 @@ import {
   X,
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import Link from "next/link";
 import { ReceiptData, ReceiptModal } from "../../../components/receipt-modal";
 import { ToastContainer, useToast } from "../../../components/pos-toast";
 import { DeliveryOrderMapModal } from "./delivery-order-map-modal";
+import { DeliveryNav } from "./delivery-nav";
 
 type DeliveryOrder = {
   id: string;
@@ -640,6 +643,9 @@ export default function DeliveryManagementPage() {
         }
       />
 
+      {/* Sub-Navigation Bar */}
+      <DeliveryNav />
+
       {/* KPI Cards */}
       <section className="grid grid-cols-2 gap-3 sm:gap-4 lg:grid-cols-4">
         <KpiCard
@@ -999,9 +1005,16 @@ export default function DeliveryManagementPage() {
                       </div>
                       {order.customer_phone && (
                         <div className="flex items-center gap-1.5 shrink-0">
+                          <Link
+                            href={`/delivery/chat?orderId=${order.id}`}
+                            className="inline-flex items-center gap-1 rounded-lg border border-indigo-200 bg-indigo-50/80 px-2 py-1 text-[11px] font-semibold text-indigo-700 hover:bg-indigo-100 transition shadow-2xs"
+                            title="Chat with Customer"
+                          >
+                            <MessageSquare size={11} className="text-indigo-600" /> Chat
+                          </Link>
                           <a
                             href={`tel:${order.customer_phone}`}
-                            className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-2.5 py-1 text-[11px] font-semibold text-slate-700 hover:bg-slate-50 hover:border-slate-300 transition shadow-2xs"
+                            className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-2 py-1 text-[11px] font-semibold text-slate-700 hover:bg-slate-50 hover:border-slate-300 transition shadow-2xs"
                           >
                             <Phone size={11} className="text-slate-500" /> Call
                           </a>
