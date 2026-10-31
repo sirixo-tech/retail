@@ -1927,6 +1927,9 @@ class SaleController
             ?? ($model->settings['online_store']['payments']['upiQr']['vpa']
             ?? '')))))
         ));
+        if (! preg_match('/^[A-Za-z0-9._-]{2,}@[A-Za-z]{2,64}$/', $upiVpa)) {
+            $upiVpa = '';
+        }
 
         $payeeName = trim((string) (
             ($phonepeCreds['config']['merchant_name'] ?? null)
@@ -2079,9 +2082,13 @@ class SaleController
             ->values()
             ->toArray();
 
-        $gatewayStatuses = $rawGateways
-            ->pluck('status', 'provider')
-            ->toArray();
+        $gatewayStatuses = [];
+        foreach ($rawGateways as $gatewayRow) {
+            $current = $gatewayStatuses[$gatewayRow->provider] ?? null;
+            if ($current !== 'active') {
+                $gatewayStatuses[$gatewayRow->provider] = $gatewayRow->status;
+            }
+        }
 
         $smsOtpEnabled = app(\App\Modules\Notifications\SmsGateway::class)->active() !== null;
 
@@ -2115,6 +2122,9 @@ class SaleController
             ?? ($store->settings['online_store']['payments']['upiQr']['vpa']
             ?? '')))))
         ));
+        if (! preg_match('/^[A-Za-z0-9._-]{2,}@[A-Za-z]{2,64}$/', $resolvedUpiVpa)) {
+            $resolvedUpiVpa = '';
+        }
 
         return ApiResponse::ok([
             'name' => is_string($displayName) && trim($displayName) !== '' ? $displayName : $store->name,

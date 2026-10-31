@@ -1599,48 +1599,15 @@ export function LiveShop() {
 
   // Payment gateways dynamic status from Tenant Settings -> Payment Gateways:
   // If an option is disabled in the tenant payment gateway settings, it MUST NOT show in the storefront.
-  const isCodActiveInGateway =
-    gatewayStatuses["cod"] !== undefined
-      ? gatewayStatuses["cod"] === "active"
-      : (activePaymentGateways.length === 0 || activePaymentGateways.includes("cod"));
+  const gatewayIsActive = (name: string) =>
+    gatewayStatuses[name] === "active" || activePaymentGateways.includes(name);
 
-  const isPayAtStoreActiveInGateway =
-    gatewayStatuses["pay_at_store"] !== undefined
-      ? gatewayStatuses["pay_at_store"] === "active"
-      : activePaymentGateways.includes("pay_at_store");
-
-  const isUpiActiveInGateway =
-    gatewayStatuses["upi_qr"] === "active" ||
-    gatewayStatuses["upi"] === "active" ||
-    activePaymentGateways.includes("upi_qr") ||
-    activePaymentGateways.includes("upi");
-
-  const isRazorpayActiveInGateway =
-    gatewayStatuses["razorpay"] === "active" ||
-    activePaymentGateways.includes("razorpay");
-
-  const isPhonePeActiveInGateway =
-    gatewayStatuses["phonepe"] === "active" ||
-    activePaymentGateways.includes("phonepe");
-
-  const isPaytmActiveInGateway =
-    gatewayStatuses["paytm"] === "active" ||
-    activePaymentGateways.includes("paytm");
-
-  const isCodEnabled = isCodActiveInGateway && paymentsConfig.cod?.enabled !== false;
-  const isPayAtStoreEnabled = isPayAtStoreActiveInGateway && paymentsConfig.payAtStore?.enabled !== false;
-
-  // UPI / Online Payment is enabled when active in Settings -> Payment Gateways or configured in online store settings
-  const isUpiQrEnabled = isUpiActiveInGateway || paymentsConfig.upiQr?.enabled === true;
-  const isRazorpayEnabled =
-    isRazorpayActiveInGateway ||
-    (paymentsConfig.razorpay?.enabled === true && Boolean(paymentsConfig.razorpay?.keyId));
-  const isPhonePeEnabled =
-    isPhonePeActiveInGateway ||
-    (paymentsConfig.phonepe?.enabled === true && Boolean(paymentsConfig.phonepe?.merchantId));
-  const isPaytmEnabled =
-    isPaytmActiveInGateway ||
-    ((paymentsConfig as any).paytm?.enabled === true && Boolean((paymentsConfig as any).paytm?.merchantId));
+  const isCodEnabled = gatewayIsActive("cod");
+  const isPayAtStoreEnabled = gatewayIsActive("pay_at_store");
+  const isUpiQrEnabled = gatewayIsActive("upi_qr") || gatewayIsActive("upi");
+  const isRazorpayEnabled = gatewayIsActive("razorpay");
+  const isPhonePeEnabled = gatewayIsActive("phonepe");
+  const isPaytmEnabled = gatewayIsActive("paytm");
 
   // Resolve UPI configuration from store & gateways (PhonePe, Paytm, or direct)
   const upiConfig = useMemo(() => {
@@ -1673,7 +1640,7 @@ export function LiveShop() {
 
   // Generate dynamic client-side UPI payment QR Code Data URL
   useEffect(() => {
-    if (payment !== "upi_qr" || grandTotalPaise <= 0 || !upiConfig.vpa) {
+    if (payment !== "upi_qr" || grandTotalPaise <= 0 || !upiConfig.vpa.includes("@")) {
       setUpiQrDataUrl(null);
       return;
     }
@@ -2174,7 +2141,8 @@ export function LiveShop() {
           return;
         } else {
           setMessage(
-            `Unable to initiate ${resolvedMethod.toUpperCase()} payment session. Please check gateway credentials in settings or select an alternate payment option.`
+            orderData.payment?.error ||
+              `Unable to start ${resolvedMethod.toUpperCase()}. Check the gateway keys in Settings and try again. The order is not confirmed.`
           );
           setSubmittingOrder(false);
           return;

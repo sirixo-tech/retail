@@ -84,8 +84,8 @@ class PaymentGatewayService
                     $config = array_merge($gwConfig, [
                         'salt_index' => $ph['saltIndex'] ?? ($gwConfig['salt_index'] ?? '1'),
                         'provider_id' => $gwConfig['provider_id'] ?? ($gwConfig['x_provider_id'] ?? ($gwConfig['store_terminal_id'] ?? null)),
-                        'store_id' => $gwConfig['store_id'] ?? ($ph['storeId'] ?? 'STORE01'),
-                        'terminal_id' => $gwConfig['terminal_id'] ?? ($ph['terminalId'] ?? 'TERM01'),
+                        'store_id' => $gwConfig['store_id'] ?? ($ph['storeId'] ?? null),
+                        'terminal_id' => $gwConfig['terminal_id'] ?? ($ph['terminalId'] ?? null),
                         'upi_vpa' => $gwConfig['upi_vpa'] ?? ($store->settings['online_store']['payments']['upiQr']['vpa'] ?? null),
                     ]);
                     return [
@@ -146,34 +146,47 @@ class PaymentGatewayService
             }
         }
 
-        // Fallback: check platform global gateway settings if enabled by super admin
-        try {
-            $platformSettings = DB::table('settings')->where('key', 'platform')->value('value');
-            if ($platformSettings) {
-                $parsed = json_decode($platformSettings, true);
-                $platGw = $parsed['gateways'][$provider] ?? [];
-                if (! empty($platGw['enabled'])) {
-                    if ($provider === 'phonepe' && ! empty($platGw['merchant_id']) && ! empty($platGw['salt_key'])) {
-                        return [
-                            'key_id' => (string) $platGw['merchant_id'],
-                            'key_secret' => (string) $platGw['salt_key'],
-                            'mode' => (string) ($platGw['mode'] ?? 'test'),
-                            'config' => [
-                                'salt_index' => (string) ($platGw['salt_index'] ?? '1'),
-                                'provider_id' => (string) ($platGw['provider_id'] ?? ''),
-                                'store_id' => (string) ($platGw['store_id'] ?? 'STORE01'),
-                                'terminal_id' => (string) ($platGw['terminal_id'] ?? 'TERM01'),
-                                'upi_vpa' => (string) ($platGw['upi_vpa'] ?? ''),
-                            ],
-                        ];
-                    }
-                }
-            }
-        } catch (\Throwable $e) {}
-
+        // Platform (Super Admin) gateway keys bill tenant subscriptions only.
+        // They are never used for a store's checkout or POS.
         return null;
+    }
 
-        return null;
+    /**
+     * @param  array{key_id?: string, mode?: string}|null  $creds
+     */
+    private function phonePeIsLive(?array $creds): bool
+    {
+        $mode = (string) ($creds['mode'] ?? 'test');
+        if ($mode === 'live') {
+            return true;
+        }
+        $merchantId = strtoupper((string) ($creds['key_id'] ?? ''));
+
+        return $merchantId !== ''
+            && ! str_contains($merchantId, 'TEST')
+            && ! str_contains($merchantId, 'UAT')
+            && ! str_contains($merchantId, 'SANDBOX');
+    }
+
+    /**
+     * @return array{dqr: string, pg: string}
+     */
+    private function phonePeHosts(bool $live): array
+    {
+        return $live
+            ? [
+                'dqr' => 'https://mercury.phonepe.com/enterprise',
+                'pg' => 'https://api.phonepe.com/apis/hermes',
+            ]
+            : [
+                'dqr' => 'https://mercury-uat.phonepe.com/enterprise-sandbox',
+                'pg' => 'https://api-preprod.phonepe.com/apis/pg-sandbox',
+            ];
+    }
+
+    private function validVpa(string $vpa): bool
+    {
+        return (bool) preg_match('/^[A-Za-z0-9._-]{2,}@[A-Za-z]{2,64}$/', trim($vpa));
     }
 
     /**
@@ -190,15 +203,15 @@ class PaymentGatewayService
         $amountPaise = (int) $order['total_paise'];
         $creds = $this->resolveCredentials($store->id, $provider);
 
-        $mode = $creds['mode'] ?? 'test';
+        $mode = is_array($creds) ? (string) ($creds['mode'] ?? 'test') : 'test';
         $vpa = trim((string) (
-            $creds['config']['upi_vpa']
+            (is_array($creds) ? ($creds['config']['upi_vpa'] ?? null) : null)
             ?? ($store->settings['online_store']['payments']['upiQr']['vpa']
             ?? ($store->settings['gateway_configs']['upi_qr']['upi_vpa']
             ?? ''))
         ));
         $payeeName = trim((string) (
-            $creds['config']['merchant_name']
+            (is_array($creds) ? ($creds['config']['merchant_name'] ?? null) : null)
             ?? ($store->settings['online_store']['payments']['upiQr']['merchantName']
             ?? ($store->settings['tenant']['tradeName']
             ?? $store->name))
@@ -209,6 +222,14 @@ class PaymentGatewayService
         $paymentUrl = null;
         $upiIntentUrl = null;
         $allUpiUris = [];
+
+        $gatewayError = null;
+
+        // A static UPI link is only valid when the payee is a real VPA (name@bank).
+        // A Merchant ID is not a UPI ID. PhonePe shows "Invalid UPI ID" if pa= is empty or a MID.
+        if (! $this->validVpa($vpa)) {
+            $vpa = '';
+        }
 
         // Build generic NPCI UPI URIs if VPA is available
         if ($vpa !== '') {
@@ -227,7 +248,7 @@ class PaymentGatewayService
             ];
         }
 
-        if ($provider === 'phonepe') {
+        if ($provider === 'phonepe' && is_array($creds)) {
             $merchantId = $creds['key_id'] ?? null;
             $saltKey = $creds['key_secret'] ?? null;
             $saltIndex = (string) ($creds['config']['salt_index'] ?? '1');
@@ -236,14 +257,14 @@ class PaymentGatewayService
                 ?? ($creds['config']['x_provider_id']
                 ?? ($creds['config']['store_terminal_id'] ?? ''))
             ));
-            $storeDqrId = (string) ($creds['config']['store_id'] ?? 'STORE01');
-            $terminalDqrId = (string) ($creds['config']['terminal_id'] ?? 'TERM01');
+            $storeDqrId = trim((string) ($creds['config']['store_id'] ?? ''));
+            $terminalDqrId = trim((string) ($creds['config']['terminal_id'] ?? ''));
 
             if (! empty($merchantId) && ! empty($saltKey)) {
                 $mercurySuccess = false;
-                $mercuryBase = $mode === 'live'
-                    ? 'https://mercury.phonepe.com'
-                    : 'https://mercury-uat.phonepe.com/enterprise-sandbox';
+                $live = $this->phonePeIsLive($creds);
+                $hosts = $this->phonePeHosts($live);
+                $mercuryBase = $hosts['dqr'];
 
                 // 1. First try PhonePe Mercury POS DQR API
                 $dqrPayload = [
@@ -252,9 +273,13 @@ class PaymentGatewayService
                     'merchantOrderId' => 'ORD_' . $order['number'],
                     'amount' => $amountPaise,
                     'expiresIn' => 1800,
-                    'storeId' => $storeDqrId,
-                    'terminalId' => $terminalDqrId,
                 ];
+                if ($storeDqrId !== '') {
+                    $dqrPayload['storeId'] = $storeDqrId;
+                }
+                if ($terminalDqrId !== '') {
+                    $dqrPayload['terminalId'] = $terminalDqrId;
+                }
 
                 $encodedDqr = base64_encode(json_encode($dqrPayload));
                 $checksumDqr = hash('sha256', $encodedDqr . '/v3/qr/init' . $saltKey) . '###' . $saltIndex;
@@ -300,9 +325,7 @@ class PaymentGatewayService
 
                 // 2. If Mercury DQR did not return a qrString, fallback to Hermes Web PG API
                 if (! $mercurySuccess) {
-                    $phonePeBase = $mode === 'live'
-                        ? 'https://api.phonepe.com/apis/hermes'
-                        : 'https://api-preprod.phonepe.com/apis/pg-sandbox';
+                    $phonePeBase = $hosts['pg'];
 
                     $custPhone = substr(preg_replace('/\D/', '', (string) ($customerData['phone'] ?? '9999999999')), -10);
 
@@ -355,13 +378,13 @@ class PaymentGatewayService
                 }
             }
 
-            // Fallback for PhonePe: If direct PG API didn't return a URL (e.g. sandbox credentials or app intent)
+            if (! $paymentUrl && $upiIntentUrl && $this->validVpa($vpa)) {
+                $paymentUrl = $upiIntentUrl;
+            }
             if (! $paymentUrl) {
-                if ($upiIntentUrl) {
-                    $paymentUrl = $upiIntentUrl;
-                } elseif (! empty($allUpiUris['phonepe'])) {
-                    $paymentUrl = $allUpiUris['phonepe'];
-                }
+                $gatewayError = $providerId === ''
+                    ? 'PhonePe did not open a payment page. Save the Provider ID with the Merchant ID, salt key, and salt index, then turn the gateway on in Live mode.'
+                    : 'PhonePe did not return a payment link. Check the Merchant ID, salt key, salt index, and Provider ID, and use Live mode for a production MID.';
             }
         } elseif ($provider === 'razorpay') {
             $keyId = $creds['key_id'] ?? null;
@@ -482,8 +505,9 @@ class PaymentGatewayService
             'redirect_url' => $paymentUrl,
             'upi_intent_url' => $upiIntentUrl,
             'upi_uris' => $allUpiUris,
-            'vpa' => $vpa,
+            'vpa' => $this->validVpa($vpa) ? $vpa : null,
             'payee_name' => $payeeName,
+            'error' => $gatewayError,
         ];
 
         if (app()->environment('local', 'testing')) {
@@ -513,13 +537,12 @@ class PaymentGatewayService
                 ?? ($creds['config']['x_provider_id']
                 ?? ($creds['config']['store_terminal_id'] ?? ''))
             ));
-            $storeDqrId = (string) ($creds['config']['store_id'] ?? 'STORE01');
-            $terminalDqrId = (string) ($creds['config']['terminal_id'] ?? 'TERM01');
+            $storeDqrId = trim((string) ($creds['config']['store_id'] ?? ''));
+            $terminalDqrId = trim((string) ($creds['config']['terminal_id'] ?? ''));
 
             $txnId = 'POS_' . preg_replace('/\W/', '', $orderRef) . '_' . time();
-            $mercuryBase = ($creds['mode'] ?? 'test') === 'live'
-                ? 'https://mercury.phonepe.com'
-                : 'https://mercury-uat.phonepe.com/enterprise-sandbox';
+            $hosts = $this->phonePeHosts($this->phonePeIsLive($creds));
+            $mercuryBase = $hosts['dqr'];
 
             $payload = [
                 'merchantId' => $merchantId,
@@ -527,9 +550,13 @@ class PaymentGatewayService
                 'merchantOrderId' => $orderRef,
                 'amount' => $amountPaise,
                 'expiresIn' => 1800,
-                'storeId' => $storeDqrId,
-                'terminalId' => $terminalDqrId,
             ];
+            if ($storeDqrId !== '') {
+                $payload['storeId'] = $storeDqrId;
+            }
+            if ($terminalDqrId !== '') {
+                $payload['terminalId'] = $terminalDqrId;
+            }
 
             $encoded = base64_encode(json_encode($payload));
             $checksum = hash('sha256', $encoded . '/v3/qr/init' . $saltKey) . '###' . $saltIndex;
@@ -552,9 +579,12 @@ class PaymentGatewayService
                     $body = $res->json();
                     if (! empty($body['success']) && ! empty($body['data']['qrString'])) {
                         $qrString = (string) $body['data']['qrString'];
-                        $vpa = (string) ($creds['config']['upi_vpa'] ?? '');
+                        $vpa = '';
                         if (preg_match('/[?&]pa=([^&]+)/', $qrString, $m)) {
                             $vpa = urldecode($m[1]);
+                        }
+                        if (! $this->validVpa($vpa)) {
+                            $vpa = '';
                         }
                         $payeeName = (string) ($creds['config']['merchant_name'] ?? ($store->name ?: 'Store'));
                         if (preg_match('/[?&]pn=([^&]+)/', $qrString, $m)) {
@@ -576,24 +606,35 @@ class PaymentGatewayService
             }
         }
 
-        // Generic NPCI UPI fallback if direct DQR failed
-        $vpa = trim((string) (
-            ($creds['config']['upi_vpa'] ?? null)
+        $fallbackVpa = trim((string) (
+            (is_array($creds) ? ($creds['config']['upi_vpa'] ?? null) : null)
             ?: ($store->settings['gateway_configs']['phonepe']['upi_vpa']
             ?? ($store->settings['online_store']['payments']['upiQr']['vpa']
             ?? ''))
         ));
-        $payee = (string) ($creds['config']['merchant_name'] ?? ($store->name ?: 'Store'));
-        $formattedAmount = number_format($amountPaise / 100, 2, '.', '');
-        $genericUri = "upi://pay?pa={$vpa}&pn=" . rawurlencode($payee) . "&am={$formattedAmount}&cu=INR&tn=" . rawurlencode("POS Counter Bill {$orderRef}");
+        if ($this->validVpa($fallbackVpa)) {
+            $payee = (string) ((is_array($creds) ? ($creds['config']['merchant_name'] ?? null) : null) ?: ($store->name ?: 'Store'));
+            $formattedAmount = number_format($amountPaise / 100, 2, '.', '');
+            $genericUri = "upi://pay?pa={$fallbackVpa}&pn=" . rawurlencode($payee) . "&am={$formattedAmount}&cu=INR&tn=" . rawurlencode("POS Counter Bill {$orderRef}");
+
+            return [
+                'success' => true,
+                'provider' => 'upi',
+                'transaction_id' => null,
+                'qr_string' => $genericUri,
+                'vpa' => $fallbackVpa,
+                'payee_name' => $payee,
+            ];
+        }
 
         return [
-            'success' => true,
-            'provider' => 'upi',
-            'transaction_id' => 'POS_LOCAL_' . time(),
-            'qr_string' => $genericUri,
-            'vpa' => $vpa,
-            'payee_name' => $payee,
+            'success' => false,
+            'provider' => 'phonepe',
+            'transaction_id' => null,
+            'qr_string' => null,
+            'vpa' => null,
+            'payee_name' => $store->name,
+            'error' => 'PhonePe did not return a dynamic QR. Re-save the Merchant ID, salt key, salt index, and Provider ID in Live mode, and turn PhonePe on. A Merchant ID is not a UPI ID, so no QR was shown.',
         ];
     }
 
@@ -619,6 +660,7 @@ class PaymentGatewayService
 
             $endpoint = "/v3/transaction/{$merchantId}/{$transactionId}/status";
             $checksum = hash('sha256', $endpoint . $saltKey) . '###' . $saltIndex;
+            $mercuryBase = $this->phonePeHosts($this->phonePeIsLive($creds))['dqr'];
 
             $headers = [
                 'Content-Type' => 'application/json',
@@ -630,7 +672,7 @@ class PaymentGatewayService
             }
 
             try {
-                $res = Http::withHeaders($headers)->timeout(5)->get("https://mercury.phonepe.com{$endpoint}");
+                $res = Http::withHeaders($headers)->timeout(5)->get("{$mercuryBase}{$endpoint}");
                 if ($res->successful()) {
                     $body = $res->json();
                     $state = $body['data']['paymentState'] ?? ($body['code'] ?? null);
@@ -713,12 +755,13 @@ class PaymentGatewayService
                 }
 
                 try {
-                    $mRes = Http::withHeaders($mercuryHeaders)->timeout(6)->get("https://mercury.phonepe.com{$mercuryEndpoint}");
+                    $mercuryBase = $this->phonePeHosts($this->phonePeIsLive($creds))['dqr'];
+                    $mRes = Http::withHeaders($mercuryHeaders)->timeout(6)->get("{$mercuryBase}{$mercuryEndpoint}");
                     if ($mRes->successful()) {
                         $mBody = $mRes->json();
                         $state = $mBody['data']['paymentState'] ?? ($mBody['code'] ?? null);
                         if ($state === 'COMPLETED' || $state === 'SUCCESS' || $state === 'PAYMENT_SUCCESS') {
-                            $this->capture->testCapture($payment->id, '');
+                            $this->capture->captureFromProvider($payment->id);
                             return [
                                 'paid' => true,
                                 'status' => 'captured',
@@ -730,9 +773,7 @@ class PaymentGatewayService
                 } catch (\Throwable $e) {}
 
                 // 2. Try Hermes PG Status
-                $phonePeBase = ($creds['mode'] ?? 'test') === 'live'
-                    ? 'https://api.phonepe.com/apis/hermes'
-                    : 'https://api-preprod.phonepe.com/apis/pg-sandbox';
+                $phonePeBase = $this->phonePeHosts($this->phonePeIsLive($creds))['pg'];
 
                 $endpoint = "/pg/v1/status/{$merchantId}/{$txnId}";
                 $checksum = hash('sha256', $endpoint . $saltKey) . '###' . $saltIndex;
@@ -751,7 +792,7 @@ class PaymentGatewayService
                         $state = $resData['data']['state'] ?? null;
 
                         if ($code === 'PAYMENT_SUCCESS' || $state === 'COMPLETED') {
-                            $this->capture->testCapture($payment->id, '');
+                            $this->capture->captureFromProvider($payment->id);
                             return [
                                 'paid' => true,
                                 'status' => 'captured',
@@ -774,7 +815,7 @@ class PaymentGatewayService
                         $items = $rzpRes->json()['items'] ?? [];
                         foreach ($items as $item) {
                             if (($item['status'] ?? '') === 'captured') {
-                                $this->capture->testCapture($payment->id, $item['id'] ?? '');
+                                $this->capture->captureFromProvider($payment->id);
                                 return [
                                     'paid' => true,
                                     'status' => 'captured',

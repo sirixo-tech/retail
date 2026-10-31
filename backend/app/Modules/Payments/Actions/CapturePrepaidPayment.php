@@ -101,6 +101,38 @@ class CapturePrepaidPayment
     }
 
     /**
+     * Mark a payment captured after the provider status API confirms it.
+     * Works for test and live. Does not accept a browser token.
+     *
+     * @return array<string, mixed>
+     */
+    public function captureFromProvider(string $paymentId): array
+    {
+        return DB::transaction(function () use ($paymentId) {
+            $payment = DB::table('payments')->where('id', $paymentId)->lockForUpdate()->first();
+            if (! $payment) {
+                throw new RuntimeException('resource.not_found');
+            }
+            if ((string) $payment->status !== 'captured') {
+                $this->markCaptured((string) $payment->order_id, (string) $payment->provider);
+                DB::table('payments')->where('id', $payment->id)->update([
+                    'status' => 'captured',
+                    'capture_token_hash' => null,
+                    'updated_at' => now(),
+                ]);
+            }
+            $order = DB::table('orders')->where('id', $payment->order_id)->first();
+
+            return [
+                'id' => $order->id,
+                'number' => $order->number,
+                'payment_status' => $order->payment_status,
+                'sale_id' => $order->sale_id,
+            ];
+        });
+    }
+
+    /**
      * @return array<string, mixed>
      */
     public function testCapture(string $paymentId, string $token): array
@@ -138,10 +170,14 @@ class CapturePrepaidPayment
             throw new RuntimeException('resource.not_found');
         }
         if ((string) $order->payment_status !== 'captured') {
-            DB::table('orders')->where('id', $order->id)->update([
+            $orderUpdate = [
                 'payment_status' => 'captured',
                 'updated_at' => now(),
-            ]);
+            ];
+            if ((string) $order->status === 'awaiting_payment') {
+                $orderUpdate['status'] = 'placed';
+            }
+            DB::table('orders')->where('id', $order->id)->update($orderUpdate);
             DB::table('payments')->where('order_id', $order->id)->where('status', 'created')->update([
                 'status' => 'captured',
                 'capture_token_hash' => null,
@@ -163,8 +199,9 @@ class CapturePrepaidPayment
         $gateway = DB::table('payment_gateways')
             ->where('store_id', $storeId)
             ->where('provider', $provider)
-            ->where('mode', 'test')
             ->where('status', 'active')
+            ->whereNotNull('credentials_ciphertext')
+            ->orderByDesc('updated_at')
             ->first();
         if (! $gateway || ! $gateway->credentials_ciphertext) {
             return null;

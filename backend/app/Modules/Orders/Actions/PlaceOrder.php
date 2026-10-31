@@ -3,6 +3,7 @@
 namespace App\Modules\Orders\Actions;
 
 use App\Modules\Catalog\Models\Product;
+use App\Modules\Payments\Http\Controllers\GatewayController;
 use App\Modules\Inventory\Actions\ReserveStock;
 use App\Modules\Inventory\Models\StoreItem;
 use App\Modules\Plans\Support\Entitlement;
@@ -19,6 +20,7 @@ class PlaceOrder
 
     /** @var array<string, list<string>> */
     public const EDGES = [
+        'awaiting_payment' => ['accepted', 'rejected', 'cancelled'],
         'placed' => ['accepted', 'rejected'],
         'accepted' => ['packing', 'cancelled'],
         'packing' => ['ready', 'cancelled'],
@@ -230,16 +232,19 @@ class PlaceOrder
                 : max(0, $subtotal + $totalGstPaise - $discount + $fee + $packagingFee);
 
             $resolvedPaymentMethod = in_array($paymentMethod, ['upi_qr', 'upi'], true) ? 'upi' : $paymentMethod;
-            $initialPaymentStatus = in_array($paymentMethod, ['upi_qr', 'upi'], true)
-                ? (! empty($addressData['upi_utr']) ? 'awaiting_verification' : 'unpaid')
-                : 'unpaid';
+            $isPrepaid = in_array($paymentMethod, GatewayController::PREPAID, true);
+            $initialPaymentStatus = $isPrepaid
+                ? 'unpaid'
+                : (in_array($paymentMethod, ['upi_qr', 'upi'], true)
+                    ? (! empty($addressData['upi_utr']) ? 'awaiting_verification' : 'unpaid')
+                    : 'unpaid');
 
             DB::table('orders')->insert([
                 'id' => $orderId,
                 'tenant_id' => $store->tenant_id,
                 'store_id' => $store->id,
                 'number' => $orderNumber,
-                'status' => 'placed',
+                'status' => $isPrepaid ? 'awaiting_payment' : 'placed',
                 'fulfillment' => $fulfillment,
                 'customer_name' => $name,
                 'customer_phone' => $phone,

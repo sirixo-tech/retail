@@ -666,7 +666,12 @@ export function PaymentGatewaysSection({
           "Content-Type": "application/json",
           "X-XSRF-TOKEN": token(),
         },
-        body: JSON.stringify({ key_id: keyId, key_secret: keySecret, config }),
+        body: JSON.stringify({
+          key_id: keyId,
+          key_secret: keySecret,
+          mode: config.gateway_mode === "test" ? "test" : "live",
+          config,
+        }),
       });
       await loadInternal();
       return res.ok;
@@ -929,6 +934,9 @@ export function PaymentGatewaysSection({
                 currentMeta.toggles.forEach((t) => {
                   extraConfig[t.name] = formData.get(t.name) === "on";
                 });
+                if (currentMeta.isPrepaid) {
+                  extraConfig.gateway_mode = String(formData.get("gateway_mode") ?? "live");
+                }
 
                 try {
                   const ok = await onSaveSetup(
@@ -955,6 +963,24 @@ export function PaymentGatewaysSection({
                   Keys are stored encrypted and used securely during online customer checkout.
                 </p>
               </div>
+
+              {currentMeta.isPrepaid ? (
+                <label className="block text-xs font-semibold text-slate-700">
+                  Environment
+                  <select
+                    name="gateway_mode"
+                    defaultValue={currentRow?.mode === "test" ? "test" : "live"}
+                    key={`${currentMeta.provider}-${currentRow?.mode ?? "live"}`}
+                    className="mt-1 h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm font-normal text-slate-900"
+                  >
+                    <option value="live">Live — production Merchant ID</option>
+                    <option value="test">Test — sandbox Merchant ID only</option>
+                  </select>
+                  <span className="mt-1 block font-normal text-slate-500">
+                    Use Live for the Merchant ID, salt key, salt index, and Provider ID from PhonePe production. Test only works with a sandbox MID such as PGTESTPAYUAT.
+                  </span>
+                </label>
+              ) : null}
 
               <div className="grid gap-4 sm:grid-cols-2">
                 {currentMeta.fields.map((field) => {
@@ -1472,7 +1498,7 @@ export function SettingsWorkspace({ section = "profile" }: { section?: TenantSet
         body: JSON.stringify({
           key_id: keyId,
           key_secret: keySecret,
-          mode: "test",
+          mode: config.gateway_mode === "test" ? "test" : "live",
           config,
         }),
       });

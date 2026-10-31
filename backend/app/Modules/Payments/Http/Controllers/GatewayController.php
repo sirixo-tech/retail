@@ -203,9 +203,8 @@ class GatewayController
         $gwConfigs = is_array($storeModel?->settings['gateway_configs'] ?? null) ? $storeModel->settings['gateway_configs'] : [];
         $rows = [];
         foreach ([...self::OFFLINE, ...self::PREPAID] as $provider) {
-            $wanted = in_array($provider, self::PREPAID, true) ? 'test' : 'live';
-            $row = $saved->first(fn ($item) => $item->provider === $provider && $item->mode === $wanted)
-                ?? $saved->first(fn ($item) => $item->provider === $provider);
+            $matches = $saved->filter(fn ($item) => $item->provider === $provider);
+            $row = $matches->sortByDesc(fn ($item) => ($item->status === 'active' ? '1' : '0').(string) $item->updated_at)->first();
             $rows[] = [
                 'provider' => $provider,
                 'status' => $row !== null ? $row->status : 'disabled',

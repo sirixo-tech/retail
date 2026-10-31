@@ -355,35 +355,20 @@ export default function CartPage() {
     : [];
   const cartGatewayStatuses: Record<string, string> = (storeInfo as any)?.payment_gateways_status ?? {};
 
-  const isCodActiveInGateway =
-    cartGatewayStatuses["cod"] !== undefined
-      ? cartGatewayStatuses["cod"] === "active"
-      : (cartActiveGateways.length === 0 || cartActiveGateways.includes("cod"));
+  const cartGatewayOn = (name: string) =>
+    cartGatewayStatuses[name] === "active" || cartActiveGateways.includes(name);
 
-  const isPayAtStoreActiveInGateway =
-    cartGatewayStatuses["pay_at_store"] !== undefined
-      ? cartGatewayStatuses["pay_at_store"] === "active"
-      : cartActiveGateways.includes("pay_at_store");
+  const isCodActiveInGateway = cartGatewayOn("cod");
+  const isPayAtStoreActiveInGateway = cartGatewayOn("pay_at_store");
+  const isUpiActiveInGateway = cartGatewayOn("upi_qr") || cartGatewayOn("upi");
+  const isRazorpayActiveInGateway = cartGatewayOn("razorpay");
+  const isPhonePeActiveInGateway = cartGatewayOn("phonepe");
 
-  const isUpiActiveInGateway =
-    cartGatewayStatuses["upi_qr"] === "active" ||
-    cartGatewayStatuses["upi"] === "active" ||
-    cartActiveGateways.includes("upi_qr") ||
-    cartActiveGateways.includes("upi");
-
-  const isRazorpayActiveInGateway =
-    cartGatewayStatuses["razorpay"] === "active" ||
-    cartActiveGateways.includes("razorpay");
-
-  const isPhonePeActiveInGateway =
-    cartGatewayStatuses["phonepe"] === "active" ||
-    cartActiveGateways.includes("phonepe");
-
-  const isCodEnabled = isCodActiveInGateway && cartPaymentsConfig.cod?.enabled !== false;
-  const isPayAtStoreEnabled = isPayAtStoreActiveInGateway && cartPaymentsConfig.payAtStore?.enabled !== false;
-  const isUpiEnabled = isUpiActiveInGateway && cartPaymentsConfig.upiQr?.enabled === true;
-  const isRazorpayEnabled = isRazorpayActiveInGateway || (cartPaymentsConfig.razorpay?.enabled === true && Boolean(cartPaymentsConfig.razorpay?.keyId));
-  const isPhonePeEnabled = isPhonePeActiveInGateway || (cartPaymentsConfig.phonepe?.enabled === true && Boolean(cartPaymentsConfig.phonepe?.merchantId));
+  const isCodEnabled = isCodActiveInGateway;
+  const isPayAtStoreEnabled = isPayAtStoreActiveInGateway;
+  const isUpiEnabled = isUpiActiveInGateway;
+  const isRazorpayEnabled = isRazorpayActiveInGateway;
+  const isPhonePeEnabled = isPhonePeActiveInGateway;
 
   // Auto-switch to delivery if pay_at_store is disabled in Payment Gateways
   useEffect(() => {

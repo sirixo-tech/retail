@@ -266,6 +266,7 @@ function PosScreen() {
   const [tipPercent, setTipPercent] = useState<number | null>(0);
   const [customTipRupees, setCustomTipRupees] = useState("");
   const [upiQrModalOpen, setUpiQrModalOpen] = useState(false);
+  const [upiQrError, setUpiQrError] = useState<string | null>(null);
   const [qrTimerSeconds, setQrTimerSeconds] = useState(300);
   const [activeGateways, setActiveGateways] = useState<string[]>([]);
   const [isSplitTender, setIsSplitTender] = useState(false);
@@ -1202,13 +1203,9 @@ function PosScreen() {
     return `ORD-${y}${m}${day}${rand}`;
   }, [panel]);
 
-  const hasOnlineGateway = useMemo(() => {
-    return (
-      activeGateways.some((g) =>
-        ["phonepe", "paytm", "razorpay", "cashfree", "stripe"].includes(g.toLowerCase())
-      ) || Boolean(storeUpiVpa)
-    );
-  }, [activeGateways, storeUpiVpa]);
+  const gatewayOn = (name: string) => activeGateways.some((g) => g.toLowerCase() === name);
+  const hasDynamicQr = gatewayOn("phonepe") || gatewayOn("paytm");
+  const hasManualUpi = gatewayOn("upi_qr");
 
   // UPI QR Countdown timer
   useEffect(() => {
@@ -1275,6 +1272,7 @@ function PosScreen() {
 
     let cancelled = false;
     setQrGenerating(true);
+    setUpiQrError(null);
     setAutoCaptureSuccess(false);
 
     // Call server to generate official gateway Dynamic QR (PhonePe Mercury DQR)
@@ -1295,8 +1293,8 @@ function PosScreen() {
       .then(async (body) => {
         if (cancelled) return;
         const d = body?.data;
-        if (d?.qr_string) {
-          if (d.vpa) setStoreUpiVpa(d.vpa);
+        if (d?.success !== false && d?.qr_string) {
+          if (typeof d.vpa === "string" && d.vpa.includes("@")) setStoreUpiVpa(d.vpa);
           if (d.payee_name) setStorePayeeName(d.payee_name);
           if (d.transaction_id) setActivePosTxnId(d.transaction_id);
 
@@ -1306,36 +1304,18 @@ function PosScreen() {
             color: { dark: "#0f172a", light: "#ffffff" },
           });
           if (!cancelled) setPosUpiQrUrl(url);
-        } else {
-          // Local fallback
-          const vpa = storeUpiVpa || "";
-          const amount = (totalDuePaise / 100).toFixed(2);
-          const payee = encodeURIComponent(storePayeeName || storeName || "Store");
-          const uri = vpa
-            ? `upi://pay?pa=${encodeURIComponent(vpa)}&pn=${payee}&am=${amount}&cu=INR&tn=${encodeURIComponent(posTempOrderRef)}`
-            : `upi://pay?pn=${payee}&am=${amount}&cu=INR&tn=${encodeURIComponent(posTempOrderRef)}`;
-          const url = await QRCode.toDataURL(uri, {
-            width: 280,
-            margin: 1,
-            color: { dark: "#0f172a", light: "#ffffff" },
-          });
-          if (!cancelled) setPosUpiQrUrl(url);
+        } else if (!cancelled) {
+          setPosUpiQrUrl(null);
+          setUpiQrError(
+            d?.error ||
+              "PhonePe did not return a QR. Re-save the Merchant ID, salt key, salt index, and Provider ID in Live mode.",
+          );
         }
       })
-      .catch(async () => {
+      .catch(() => {
         if (cancelled) return;
-        const vpa = storeUpiVpa || "";
-        const amount = (totalDuePaise / 100).toFixed(2);
-        const payee = encodeURIComponent(storePayeeName || storeName || "Store");
-        const uri = vpa
-          ? `upi://pay?pa=${encodeURIComponent(vpa)}&pn=${payee}&am=${amount}&cu=INR&tn=${encodeURIComponent(posTempOrderRef)}`
-          : `upi://pay?pn=${payee}&am=${amount}&cu=INR&tn=${encodeURIComponent(posTempOrderRef)}`;
-        const url = await QRCode.toDataURL(uri, {
-          width: 280,
-          margin: 1,
-          color: { dark: "#0f172a", light: "#ffffff" },
-        });
-        if (!cancelled) setPosUpiQrUrl(url);
+        setPosUpiQrUrl(null);
+        setUpiQrError("Could not reach the payment service. Check that PhonePe is turned on and try again.");
       })
       .finally(() => {
         if (!cancelled) setQrGenerating(false);
@@ -3109,7 +3089,8 @@ function PosScreen() {
                             </div>
                           </button>
 
-                          {/* 3. UPI (Soundbox / Standee - Manual settlement) */}
+                          {/* 3. Manual UPI — only when the UPI QR gateway is turned on */}
+                          {hasManualUpi && (
                           <button
                             type="button"
                             onClick={() => {
@@ -3130,6 +3111,7 @@ function PosScreen() {
                               <div className="text-[11px] text-slate-500 leading-tight">Soundbox / standee — mark paid after guest pays</div>
                             </div>
                           </button>
+                          )}
 
                           {/* 4. Wallet */}
                           <button
@@ -3176,7 +3158,7 @@ function PosScreen() {
                           </button>
 
                           {/* 6. UPI QR (Dynamic QR modal trigger - Only shown if online gateway is active) */}
-                          {hasOnlineGateway && (
+                          {hasDynamicQr && (
                             <button
                               type="button"
                               onClick={() => {
@@ -3935,15 +3917,21 @@ function PosScreen() {
                   className="h-56 w-56 object-contain rounded-lg"
                 />
               ) : (
-                <div className="h-56 w-56 flex flex-col items-center justify-center text-xs text-slate-400 gap-2">
-                  <QrCode className="h-12 w-12 animate-pulse text-slate-300" />
-                  <span>Generating QR...</span>
+                <div className="h-56 w-56 flex flex-col items-center justify-center text-xs text-slate-500 gap-2 px-3 text-center">
+                  {upiQrError ? (
+                    <span>{upiQrError}</span>
+                  ) : (
+                    <>
+                      <QrCode className="h-12 w-12 animate-pulse text-slate-300" />
+                      <span>Generating QR...</span>
+                    </>
+                  )}
                 </div>
               )}
             </div>
 
             {/* UPI ID */}
-            {storeUpiVpa && (
+            {storeUpiVpa.includes("@") && (
               <div className="mt-3 text-xs text-slate-600">
                 <span className="text-slate-400">UPI ID: </span>
                 <span className="font-mono font-bold text-slate-800">
@@ -3953,7 +3941,7 @@ function PosScreen() {
             )}
 
             {/* Open UPI App link */}
-            {storeUpiVpa && (
+            {storeUpiVpa.includes("@") && (
               <a
                 href={`upi://pay?pa=${encodeURIComponent(
                   storeUpiVpa
