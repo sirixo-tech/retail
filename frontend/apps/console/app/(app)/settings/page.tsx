@@ -107,13 +107,13 @@ const GATEWAY_CATALOG: GatewayMeta[] = [
         name: "store_id",
         label: "Store ID (UPI DQR)",
         placeholder: "STORE01",
-        helper: "Optional store code identifier for PhonePe Dynamic QR.",
+        helper: "Required for the POS QR. Copy the Store ID from the PhonePe dashboard. It is not the same as the Merchant ID.",
       },
       {
         name: "terminal_id",
         label: "Terminal ID (UPI DQR)",
         placeholder: "TERM01",
-        helper: "Optional counter terminal identifier for PhonePe Dynamic QR.",
+        helper: "Required for the POS QR. Copy the Terminal ID from the PhonePe dashboard.",
       },
       {
         name: "upi_vpa",
@@ -297,47 +297,6 @@ const GATEWAY_CATALOG: GatewayMeta[] = [
       { name: "apple_google_pay", label: "Enable Apple Pay & Google Pay Express Buttons", defaultChecked: true },
       { name: "enforce_3ds", label: "Enforce 3D Secure (SCA / OTP) on all card payments", defaultChecked: true },
       { name: "stripe_link", label: "Enable Stripe Link 1-click autofill", defaultChecked: true },
-    ],
-  },
-  {
-    provider: "cashfree",
-    title: "Cashfree Payments",
-    subtitle: "Instant UPI settlements, Cards, Netbanking & Split Easy.",
-    badgeText: "CF",
-    badgeBg: "#3b1d70",
-    badgeColor: "#00d290",
-    isPrepaid: true,
-    modeLabel: "Instant UPI & PG",
-    fields: [
-      {
-        name: "key_id",
-        label: "Cashfree App ID",
-        placeholder: "TEST10123456...",
-        required: true,
-      },
-      {
-        name: "key_secret",
-        label: "Cashfree Secret Key",
-        placeholder: "cfsk_ma_test_...",
-        type: "password",
-        required: true,
-      },
-      {
-        name: "api_version",
-        label: "API Version",
-        placeholder: "2023-08-01",
-        type: "select",
-        options: ["2023-08-01", "2022-09-01"],
-      },
-      {
-        name: "webhook_url",
-        label: "Webhook Notification URL",
-        placeholder: "https://api.yourstore.com/api/v1/public/webhooks/cashfree",
-      },
-    ],
-    toggles: [
-      { name: "seamless_upi", label: "Enable Seamless UPI QR & Intent", defaultChecked: true },
-      { name: "instant_refund", label: "Enable Instant Refunds on Cancelled Orders", defaultChecked: true },
     ],
   },
   {
@@ -546,18 +505,6 @@ function GatewayBrandLogo({ provider, size = "md", className = "" }: { provider:
         <img
           src="/logos/stripe.png"
           alt="Stripe"
-          className={size === "sm" ? "h-3.5 w-auto max-w-full object-contain" : "h-5 w-auto max-w-full object-contain"}
-        />
-      </div>
-    );
-  }
-
-  if (provider === "cashfree") {
-    return (
-      <div className={boxClass}>
-        <img
-          src="/logos/cashfree.svg"
-          alt="Cashfree"
           className={size === "sm" ? "h-3.5 w-auto max-w-full object-contain" : "h-5 w-auto max-w-full object-contain"}
         />
       </div>
@@ -917,6 +864,7 @@ export function PaymentGatewaysSection({
           {/* Left Column: Credentials & Operational Settings (7 cols) */}
           <div className="lg:col-span-7">
             <form
+              key={currentMeta.provider}
               onSubmit={async (e) => {
                 e.preventDefault();
                 setSavingSetup(true);
@@ -993,7 +941,7 @@ export function PaymentGatewaysSection({
 
                   return (
                     <div
-                      key={field.name}
+                      key={`${currentMeta.provider}-${field.name}`}
                       className={
                         field.name === "callback_url" ||
                         field.name === "webhook_url" ||

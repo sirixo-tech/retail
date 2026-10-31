@@ -91,7 +91,7 @@ class HardwareMarketplaceController
             'type' => ['required', 'string', 'in:buy,rent'],
             'delivery_store_id' => ['nullable', 'string'],
             'quantity' => ['nullable', 'integer', 'min:1', 'max:50'],
-            'gateway' => ['nullable', 'string', 'in:razorpay,stripe,phonepe,cashfree,bank_transfer,upi_qr'],
+            'gateway' => ['nullable', 'string', 'in:razorpay,stripe,phonepe,bank_transfer,upi_qr'],
             'contact_name' => ['required', 'string', 'max:120'],
             'contact_phone' => ['required', 'string', 'max:20'],
             'address_line' => ['required', 'string', 'max:255'],

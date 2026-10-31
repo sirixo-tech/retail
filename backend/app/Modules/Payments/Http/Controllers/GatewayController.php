@@ -17,7 +17,7 @@ class GatewayController
     public const OFFLINE = ['cod', 'pay_at_store'];
 
     /** @var list<string> */
-    public const PREPAID = ['razorpay', 'cashfree', 'phonepe', 'paytm', 'stripe'];
+    public const PREPAID = ['razorpay', 'phonepe', 'paytm', 'stripe'];
 
     public function index(Request $request): JsonResponse
     {
@@ -219,9 +219,16 @@ class GatewayController
 
     private function defaultStoreId(Request $request): ?string
     {
-        return DB::table('stores')
-            ->where('tenant_id', $request->session()->get('tenant_id'))
-            ->where('is_default', true)
-            ->value('id');
+        $tenantId = $request->session()->get('tenant_id');
+        $sessionStore = $request->session()->get('store_id') ?: $request->session()->get('active_store_id');
+        if (is_string($sessionStore) && $sessionStore !== '') {
+            $owns = DB::table('stores')->where('id', $sessionStore)->where('tenant_id', $tenantId)->exists();
+            if ($owns) {
+                return $sessionStore;
+            }
+        }
+
+        return DB::table('stores')->where('tenant_id', $tenantId)->where('is_default', true)->orderBy('created_at')->value('id')
+            ?? DB::table('stores')->where('tenant_id', $tenantId)->orderBy('created_at')->value('id');
     }
 }

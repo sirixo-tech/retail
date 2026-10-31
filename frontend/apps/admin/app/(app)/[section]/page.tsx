@@ -1615,7 +1615,6 @@ const DEFAULT_PLATFORM_SETTINGS: PlatformSettingsData = {
     razorpay: { enabled: false, key_id: "", key_secret: "", webhook_secret: "", mode: "test", currency: "INR" },
     phonepe: { enabled: false, merchant_id: "", salt_key: "", salt_index: "1", mode: "test", currency: "INR" },
     paytm: { enabled: false, mid: "", merchant_key: "", website: "DEFAULT", mode: "test", currency: "INR" },
-    cashfree: { enabled: false, app_id: "", secret_key: "", mode: "test", currency: "INR" },
     payu: { enabled: false, merchant_key: "", merchant_salt: "", mode: "test", currency: "INR" },
     paypal: { enabled: false, client_id: "", client_secret: "", mode: "test", currency: "USD" },
     paystack: { enabled: false, public_key: "", secret_key: "", mode: "test", currency: "NGN" },
@@ -4013,7 +4012,7 @@ function SettingsAndTemplatesSection({ mode }: { mode: string }) {
               <div className="flex items-center gap-2">
                 <span className="inline-flex items-center gap-1.5 rounded-full bg-blue-50 px-3 py-1 text-xs font-semibold text-blue-700 border border-blue-200">
                   <CreditCard className="h-3.5 w-3.5" />
-                  12 Gateways Available
+                  11 Gateways Available
                 </span>
               </div>
             </div>
@@ -4027,7 +4026,6 @@ function SettingsAndTemplatesSection({ mode }: { mode: string }) {
                 { id: "razorpay", name: "Razorpay", logo: "/superadmin/logos/razorpay.png" },
                 { id: "phonepe", name: "PhonePe", logo: "/superadmin/logos/phonepe.svg" },
                 { id: "paytm", name: "Paytm", logo: "/superadmin/logos/paytm.svg" },
-                { id: "cashfree", name: "Cashfree", logo: "/superadmin/logos/cashfree.svg" },
                 { id: "payu", name: "PayU", logo: "/superadmin/logos/payu.svg" },
                 { id: "paypal", name: "PayPal", logo: "/superadmin/logos/paypal.svg" },
                 { id: "paystack", name: "Paystack", logo: "/superadmin/logos/paystack.svg" },
@@ -4157,23 +4155,6 @@ function SettingsAndTemplatesSection({ mode }: { mode: string }) {
                   "Configure the Webhook URL for server-to-server transaction notification.",
                 ],
                 docUrl: "https://developer.paytm.com/docs",
-              },
-              cashfree: {
-                name: "Cashfree",
-                logo: "/superadmin/logos/cashfree.svg",
-                desc: "Instant payment gateway checkout, UPI auto-collect, payment links, and multi-vendor splits.",
-                currencies: ["INR", "USD"],
-                fields: [
-                  { key: "app_id", label: "App ID", placeholder: "CF_APP_SELFX_LIVE" },
-                  { key: "secret_key", label: "Secret Key", placeholder: "cf_sec_key_platform...", secret: true },
-                ],
-                steps: [
-                  "Log in to Cashfree Merchant Dashboard > Developers > API Keys.",
-                  "Generate App ID and Secret Key for Production environment.",
-                  "Add Webhook endpoint under Developers > Webhooks.",
-                  "Test payment links in sandbox mode before turning on Live.",
-                ],
-                docUrl: "https://docs.cashfree.com",
               },
               payu: {
                 name: "PayU",

@@ -4,11 +4,14 @@ namespace App\Modules\Payments\Services;
 
 use App\Modules\Payments\Actions\CapturePrepaidPayment;
 use App\Modules\Payments\Http\Controllers\GatewayController;
+use App\Modules\Payments\Support\PaytmChecksum;
 use App\Modules\Tenancy\Models\Store;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Crypt;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Str;
 
 class PaymentGatewayService
@@ -119,18 +122,6 @@ class PaymentGatewayService
                         'config' => $gwConfig,
                     ];
                 }
-            } elseif ($provider === 'cashfree') {
-                $cf = $onlinePayments['cashfree'] ?? [];
-                $appId = $cf['appId'] ?? ($gwConfig['key_id'] ?? null);
-                $secretKey = $cf['secretKey'] ?? ($gwConfig['key_secret'] ?? null);
-                if (! empty($appId) && ! empty($secretKey)) {
-                    return [
-                        'key_id' => (string) $appId,
-                        'key_secret' => (string) $secretKey,
-                        'mode' => (string) ($cf['mode'] ?? ($gwConfig['mode'] ?? 'test')),
-                        'config' => $gwConfig,
-                    ];
-                }
             } elseif ($provider === 'stripe') {
                 $st = $onlinePayments['stripe'] ?? [];
                 $key = $st['publishableKey'] ?? ($gwConfig['key_id'] ?? null);
@@ -189,6 +180,30 @@ class PaymentGatewayService
         return (bool) preg_match('/^[A-Za-z0-9._-]{2,}@[A-Za-z]{2,64}$/', trim($vpa));
     }
 
+    /** PhonePe accepts only letters and digits, 1–34 characters. */
+    private function phonePeRef(string $raw): string
+    {
+        $clean = strtoupper(preg_replace('/[^A-Za-z0-9]/', '', $raw) ?? '');
+        if ($clean === '') {
+            $clean = strtoupper(bin2hex(random_bytes(8)));
+        }
+
+        return substr($clean, 0, 34);
+    }
+
+    /**
+     * @param  array<string, mixed>  $body
+     */
+    private function phonePeFailure(array $body, int $status): string
+    {
+        $message = trim((string) ($body['message'] ?? $body['code'] ?? ''));
+        if ($message === '' && is_array($body['data'] ?? null)) {
+            $message = trim((string) ($body['data']['message'] ?? $body['data']['responseCode'] ?? ''));
+        }
+
+        return $message !== '' ? $message : 'PhonePe returned HTTP '.$status;
+    }
+
     /**
      * Initiate prepaid payment session and generate redirect / UPI intent URLs.
      *
@@ -217,7 +232,7 @@ class PaymentGatewayService
             ?? $store->name))
         ));
 
-        $txnId = 'TXN_' . $order['number'] . '_' . substr(str_replace('-', '', (string) $order['id']), 0, 8);
+        $txnId = $this->phonePeRef('TXN'.(string) $order['number'].(string) $order['id']);
 
         $paymentUrl = null;
         $upiIntentUrl = null;
@@ -230,6 +245,9 @@ class PaymentGatewayService
         if (! $this->validVpa($vpa)) {
             $vpa = '';
         }
+
+        $providerReference = null;
+        $redirectForm = null;
 
         // Build generic NPCI UPI URIs if VPA is available
         if ($vpa !== '') {
@@ -270,7 +288,7 @@ class PaymentGatewayService
                 $dqrPayload = [
                     'merchantId' => $merchantId,
                     'transactionId' => $txnId,
-                    'merchantOrderId' => 'ORD_' . $order['number'],
+                    'merchantOrderId' => $this->phonePeRef('ORD'.(string) $order['number']),
                     'amount' => $amountPaise,
                     'expiresIn' => 1800,
                 ];
@@ -288,6 +306,7 @@ class PaymentGatewayService
                     'Content-Type' => 'application/json',
                     'Accept' => 'application/json',
                     'X-VERIFY' => $checksumDqr,
+                    'X-CALLBACK-URL' => url('/api/v1/public/webhooks/phonepe'),
                 ];
                 if (! empty($providerId)) {
                     $headersDqr['X-PROVIDER-ID'] = $providerId;
@@ -298,10 +317,9 @@ class PaymentGatewayService
                         'request' => $encodedDqr,
                     ]);
 
-                    if ($dqrRes->successful()) {
-                        $dqrBody = $dqrRes->json();
-                        if (! empty($dqrBody['success']) && ! empty($dqrBody['data']['qrString'])) {
-                            $qrString = (string) $dqrBody['data']['qrString'];
+                    $dqrBody = $dqrRes->json() ?? [];
+                    $qrString = (string) ($dqrBody['data']['qrString'] ?? $dqrBody['data']['qrData'] ?? '');
+                    if ($dqrRes->successful() && ! empty($dqrBody['success']) && $qrString !== '') {
                             $paymentUrl = $qrString;
                             $upiIntentUrl = $qrString;
                             $mercurySuccess = true;
@@ -317,14 +335,17 @@ class PaymentGatewayService
                                 'paytm' => str_starts_with($qrString, 'upi://') ? 'paytmmp://' . substr($qrString, 6) : $qrString,
                                 'bhim' => str_starts_with($qrString, 'upi://') ? 'bhim://' . substr($qrString, 6) : $qrString,
                             ];
-                        }
+                    } else {
+                        $gatewayError = $this->phonePeFailure(is_array($dqrBody) ? $dqrBody : [], $dqrRes->status());
+                        Log::warning('PhonePe DQR rejected', ['order_id' => $order['id'], 'status' => $dqrRes->status(), 'message' => $gatewayError]);
                     }
                 } catch (\Throwable $e) {
+                    $gatewayError = 'PhonePe Dynamic QR could not be reached.';
                     Log::warning('PhonePe Mercury DQR Init error', ['order_id' => $order['id'], 'error' => $e->getMessage()]);
                 }
 
-                // 2. If Mercury DQR did not return a qrString, fallback to Hermes Web PG API
-                if (! $mercurySuccess) {
+                // The storefront needs the hosted https page. A upi:// QR link does not open checkout on a computer.
+                {
                     $phonePeBase = $hosts['pg'];
 
                     $custPhone = substr(preg_replace('/\D/', '', (string) ($customerData['phone'] ?? '9999999999')), -10);
@@ -351,28 +372,28 @@ class PaymentGatewayService
                         'Accept' => 'application/json',
                         'X-VERIFY' => $checksum,
                     ];
-                    if (! empty($providerId)) {
-                        $hermesHeaders['X-PROVIDER-ID'] = $providerId;
-                    }
 
                     try {
                         $response = Http::withHeaders($hermesHeaders)->timeout(8)->post("{$phonePeBase}/pg/v1/pay", [
                             'request' => $encodedPayload,
                         ]);
 
-                        if ($response->successful()) {
-                            $resData = $response->json();
-                            if (! empty($resData['success'])) {
+                        $resData = $response->json() ?? [];
+                        if ($response->successful() && ! empty($resData['success'])) {
                                 $redirectInfo = $resData['data']['instrumentResponse']['redirectInfo'] ?? [];
                                 if (! empty($redirectInfo['url'])) {
                                     $paymentUrl = (string) $redirectInfo['url'];
+                                    $gatewayError = null;
                                 }
                                 if (! empty($resData['data']['instrumentResponse']['intentUrl'])) {
                                     $upiIntentUrl = (string) $resData['data']['instrumentResponse']['intentUrl'];
                                 }
-                            }
+                        } else {
+                            $gatewayError = $this->phonePeFailure(is_array($resData) ? $resData : [], $response->status());
+                            Log::warning('PhonePe checkout rejected', ['order_id' => $order['id'], 'status' => $response->status(), 'message' => $gatewayError]);
                         }
                     } catch (\Throwable $e) {
+                        $gatewayError = 'PhonePe checkout could not be reached.';
                         Log::warning('PhonePe Hermes PG API error', ['order_id' => $order['id'], 'error' => $e->getMessage()]);
                     }
                 }
@@ -381,75 +402,20 @@ class PaymentGatewayService
             if (! $paymentUrl && $upiIntentUrl && $this->validVpa($vpa)) {
                 $paymentUrl = $upiIntentUrl;
             }
-            if (! $paymentUrl) {
-                $gatewayError = $providerId === ''
-                    ? 'PhonePe did not open a payment page. Save the Provider ID with the Merchant ID, salt key, and salt index, then turn the gateway on in Live mode.'
-                    : 'PhonePe did not return a payment link. Check the Merchant ID, salt key, salt index, and Provider ID, and use Live mode for a production MID.';
+            if (! $paymentUrl && $gatewayError === null) {
+                $gatewayError = 'PhonePe did not return a payment page. Check the Merchant ID, salt key, salt index, and Provider ID, then turn PhonePe on.';
             }
-        } elseif ($provider === 'razorpay') {
-            $keyId = $creds['key_id'] ?? null;
-            $keySecret = $creds['key_secret'] ?? null;
-            if (! empty($keyId) && ! empty($keySecret)) {
-                try {
-                    $rzpRes = Http::withBasicAuth($keyId, $keySecret)->timeout(8)->post('https://api.razorpay.com/v1/orders', [
-                        'amount' => $amountPaise,
-                        'currency' => 'INR',
-                        'receipt' => 'ORD_' . $order['number'],
-                        'notes' => [
-                            'order_id' => (string) $order['id'],
-                            'store_id' => (string) $store->id,
-                        ],
-                    ]);
-                    if ($rzpRes->successful()) {
-                        $rzpData = $rzpRes->json();
-                        $rzpOrderId = $rzpData['id'] ?? null;
-                        if ($rzpOrderId) {
-                            $paymentUrl = "https://api.razorpay.com/v1/checkout/hosted?order_id={$rzpOrderId}";
-                        }
-                    }
-                } catch (\Throwable $e) {
-                    Log::warning('Razorpay Order Create error', ['order_id' => $order['id'], 'error' => $e->getMessage()]);
-                }
-            }
-        } elseif ($provider === 'cashfree') {
-            $appId = $creds['key_id'] ?? null;
+        } elseif ($provider === 'razorpay' && is_array($creds)) {
+            $started = $this->startRazorpay($creds, $amountPaise, $order, $customerData, $returnUrl);
+            $paymentUrl = $started['url'];
+            $providerReference = $started['reference'];
+            $gatewayError = $started['error'];
+        } elseif ($provider === 'stripe' && is_array($creds)) {
             $secretKey = $creds['key_secret'] ?? null;
-            if (! empty($appId) && ! empty($secretKey)) {
-                $cfBase = $mode === 'live' ? 'https://api.cashfree.com/pg' : 'https://sandbox.cashfree.com/pg';
-                try {
-                    $custPhone = substr(preg_replace('/\D/', '', (string) ($customerData['phone'] ?? '9999999999')), -10);
-                    $cfRes = Http::withHeaders([
-                        'x-client-id' => $appId,
-                        'x-client-secret' => $secretKey,
-                        'x-api-version' => '2023-08-01',
-                        'Content-Type' => 'application/json',
-                    ])->timeout(8)->post("{$cfBase}/orders", [
-                        'order_id' => $txnId,
-                        'order_amount' => $amountPaise / 100,
-                        'order_currency' => 'INR',
-                        'customer_details' => [
-                            'customer_id' => 'CUST_' . $custPhone,
-                            'customer_phone' => $custPhone,
-                        ],
-                        'order_meta' => [
-                            'return_url' => $returnUrl,
-                        ],
-                    ]);
-                    if ($cfRes->successful()) {
-                        $cfData = $cfRes->json();
-                        $paymentSessionId = $cfData['payment_session_id'] ?? null;
-                        $paymentUrl = $cfData['payments']['url'] ?? ($paymentSessionId ? "{$cfBase}/orders/sessions/{$paymentSessionId}" : null);
-                    }
-                } catch (\Throwable $e) {
-                    Log::warning('Cashfree Order Create error', ['order_id' => $order['id'], 'error' => $e->getMessage()]);
-                }
-            }
-        } elseif ($provider === 'stripe') {
-            $secretKey = $creds['key_secret'] ?? null;
-            if (! empty($secretKey)) {
+            if (! empty($secretKey) && ! app()->environment('testing')) {
                 try {
                     $stripeRes = Http::withToken($secretKey)->asForm()->timeout(8)->post('https://api.stripe.com/v1/checkout/sessions', [
-                        'success_url' => $returnUrl,
+                        'success_url' => $returnUrl.(str_contains($returnUrl, '?') ? '&' : '?').'session_id={CHECKOUT_SESSION_ID}',
                         'cancel_url' => $returnUrl,
                         'mode' => 'payment',
                         'line_items' => [
@@ -469,19 +435,25 @@ class PaymentGatewayService
                     if ($stripeRes->successful()) {
                         $stripeData = $stripeRes->json();
                         $paymentUrl = $stripeData['url'] ?? null;
+                        $providerReference = $stripeData['id'] ?? null;
+                    } else {
+                        $gatewayError = (string) ($stripeRes->json('error.message') ?? 'Stripe did not open a checkout page.');
                     }
                 } catch (\Throwable $e) {
                     Log::warning('Stripe Session Create error', ['order_id' => $order['id'], 'error' => $e->getMessage()]);
                 }
             }
-        } elseif ($provider === 'paytm') {
-            if (! empty($allUpiUris['paytm'])) {
-                $paymentUrl = $allUpiUris['paytm'];
+        } elseif ($provider === 'paytm' && is_array($creds)) {
+            $started = $this->startPaytm($creds, $amountPaise, $order, $customerData, $returnUrl);
+            $redirectForm = $started['form'];
+            $providerReference = $started['reference'];
+            $gatewayError = $started['error'];
+            if ($redirectForm !== null) {
+                $paymentUrl = $redirectForm['action'];
             }
         }
 
-        // Store payment row in DB
-        DB::table('payments')->insert([
+        $paymentRow = [
             'id' => $paymentId,
             'tenant_id' => $store->tenant_id,
             'store_id' => $store->id,
@@ -490,10 +462,18 @@ class PaymentGatewayService
             'mode' => $mode,
             'amount_paise' => $amountPaise,
             'status' => 'created',
+            'provider_reference' => $providerReference,
             'capture_token_hash' => hash_hmac('sha256', $token, (string) config('app.key')),
             'created_at' => now(),
             'updated_at' => now(),
-        ]);
+        ];
+        if ($provider === 'phonepe') {
+            $paymentRow['provider_reference'] = $txnId;
+        }
+        if (! Schema::hasColumn('payments', 'provider_reference')) {
+            unset($paymentRow['provider_reference']);
+        }
+        DB::table('payments')->insert($paymentRow);
 
         $result = [
             'id' => $paymentId,
@@ -503,6 +483,7 @@ class PaymentGatewayService
             'transaction_id' => $txnId,
             'payment_url' => $paymentUrl,
             'redirect_url' => $paymentUrl,
+            'redirect_form' => $redirectForm,
             'upi_intent_url' => $upiIntentUrl,
             'upi_uris' => $allUpiUris,
             'vpa' => $this->validVpa($vpa) ? $vpa : null,
@@ -528,6 +509,7 @@ class PaymentGatewayService
     public function generatePosQr(Store $store, int $amountPaise, string $orderRef): array
     {
         $creds = $this->resolveCredentials($store->id, 'phonepe');
+        $phonePeError = null;
         if ($creds && ! empty($creds['key_id']) && ! empty($creds['key_secret'])) {
             $merchantId = $creds['key_id'];
             $saltKey = $creds['key_secret'];
@@ -540,14 +522,14 @@ class PaymentGatewayService
             $storeDqrId = trim((string) ($creds['config']['store_id'] ?? ''));
             $terminalDqrId = trim((string) ($creds['config']['terminal_id'] ?? ''));
 
-            $txnId = 'POS_' . preg_replace('/\W/', '', $orderRef) . '_' . time();
+            $txnId = $this->phonePeRef('POS'.$orderRef.(string) time());
             $hosts = $this->phonePeHosts($this->phonePeIsLive($creds));
             $mercuryBase = $hosts['dqr'];
 
             $payload = [
                 'merchantId' => $merchantId,
                 'transactionId' => $txnId,
-                'merchantOrderId' => $orderRef,
+                'merchantOrderId' => $this->phonePeRef($orderRef),
                 'amount' => $amountPaise,
                 'expiresIn' => 1800,
             ];
@@ -565,6 +547,7 @@ class PaymentGatewayService
                 'Content-Type' => 'application/json',
                 'Accept' => 'application/json',
                 'X-VERIFY' => $checksum,
+                'X-CALLBACK-URL' => url('/api/v1/public/webhooks/phonepe'),
             ];
             if (! empty($providerId)) {
                 $headers['X-PROVIDER-ID'] = $providerId;
@@ -575,10 +558,9 @@ class PaymentGatewayService
                     'request' => $encoded,
                 ]);
 
-                if ($res->successful()) {
-                    $body = $res->json();
-                    if (! empty($body['success']) && ! empty($body['data']['qrString'])) {
-                        $qrString = (string) $body['data']['qrString'];
+                $body = $res->json() ?? [];
+                $qrString = (string) ($body['data']['qrString'] ?? $body['data']['qrData'] ?? '');
+                if ($res->successful() && ! empty($body['success']) && $qrString !== '') {
                         $vpa = '';
                         if (preg_match('/[?&]pa=([^&]+)/', $qrString, $m)) {
                             $vpa = urldecode($m[1]);
@@ -599,9 +581,10 @@ class PaymentGatewayService
                             'vpa' => $vpa,
                             'payee_name' => $payeeName,
                         ];
-                    }
                 }
+                $phonePeError = $this->phonePeFailure(is_array($body) ? $body : [], $res->status());
             } catch (\Throwable $e) {
+                $phonePeError = 'PhonePe Dynamic QR could not be reached.';
                 Log::warning('POS PhonePe DQR Init error', ['error' => $e->getMessage()]);
             }
         }
@@ -627,6 +610,11 @@ class PaymentGatewayService
             ];
         }
 
+        $hosted = $this->hostedPosCheckout($store, $amountPaise, $orderRef);
+        if ($hosted !== null) {
+            return $hosted;
+        }
+
         return [
             'success' => false,
             'provider' => 'phonepe',
@@ -634,7 +622,7 @@ class PaymentGatewayService
             'qr_string' => null,
             'vpa' => null,
             'payee_name' => $store->name,
-            'error' => 'PhonePe did not return a dynamic QR. Re-save the Merchant ID, salt key, salt index, and Provider ID in Live mode, and turn PhonePe on. A Merchant ID is not a UPI ID, so no QR was shown.',
+            'error' => $phonePeError ?: 'No live payment gateway returned a QR. Turn on PhonePe, Razorpay, Stripe, or Paytm and save its live keys.',
         ];
     }
 
@@ -645,7 +633,28 @@ class PaymentGatewayService
      * @param string $transactionId
      * @return array{paid: bool, status: string}
      */
-    public function verifyPosQrStatus(Store $store, string $transactionId): array
+    public function verifyPosQrStatus(Store $store, string $transactionId, string $provider = 'phonepe'): array
+    {
+        if ($provider === 'razorpay') {
+            $paid = $this->razorpayLinkPaid($store->id, $transactionId);
+
+            return ['paid' => $paid, 'status' => $paid ? 'COMPLETED' : 'PENDING'];
+        }
+        if ($provider === 'stripe') {
+            $paid = $this->stripeSessionPaid($store->id, $transactionId);
+
+            return ['paid' => $paid, 'status' => $paid ? 'COMPLETED' : 'PENDING'];
+        }
+        if ($provider === 'paytm') {
+            $paid = $this->paytmOrderPaid($store->id, $transactionId);
+
+            return ['paid' => $paid, 'status' => $paid ? 'COMPLETED' : 'PENDING'];
+        }
+
+        return $this->phonePePosStatus($store, $transactionId);
+    }
+
+    public function phonePePosStatus(Store $store, string $transactionId): array
     {
         $creds = $this->resolveCredentials($store->id, 'phonepe');
         if ($creds && ! empty($creds['key_id']) && ! empty($creds['key_secret'])) {
@@ -740,7 +749,7 @@ class PaymentGatewayService
                     ?? ($creds['config']['store_terminal_id'] ?? ''))
                 ));
 
-                $txnId = 'TXN_' . $order->number . '_' . substr(str_replace('-', '', (string) $order->id), 0, 8);
+                $txnId = $this->phonePeRef('TXN'.$order->number.$order->id);
 
                 // 1. Try Mercury DQR Status
                 $mercuryEndpoint = "/v3/transaction/{$merchantId}/{$txnId}/status";
@@ -805,27 +814,16 @@ class PaymentGatewayService
                     Log::warning('PhonePe Status Check API error', ['order_id' => $orderId, 'error' => $e->getMessage()]);
                 }
             }
-        } elseif ($payment->provider === 'razorpay') {
-            $creds = $this->resolveCredentials($payment->store_id, 'razorpay');
-            if ($creds) {
-                try {
-                    $orderReceipt = 'ORD_' . $order->number;
-                    $rzpRes = Http::withBasicAuth($creds['key_id'], $creds['key_secret'])->timeout(8)->get("https://api.razorpay.com/v1/orders/{$payment->id}/payments");
-                    if ($rzpRes->successful()) {
-                        $items = $rzpRes->json()['items'] ?? [];
-                        foreach ($items as $item) {
-                            if (($item['status'] ?? '') === 'captured') {
-                                $this->capture->captureFromProvider($payment->id);
-                                return [
-                                    'paid' => true,
-                                    'status' => 'captured',
-                                    'method' => 'razorpay',
-                                    'sale_id' => DB::table('orders')->where('id', $orderId)->value('sale_id'),
-                                ];
-                            }
-                        }
-                    }
-                } catch (\Throwable $e) {}
+        } elseif (in_array($payment->provider, ['razorpay', 'stripe', 'paytm'], true)) {
+            if ($this->providerPaymentCaptured($payment, $order)) {
+                $this->capture->captureFromProvider($payment->id);
+
+                return [
+                    'paid' => true,
+                    'status' => 'captured',
+                    'method' => (string) $payment->provider,
+                    'sale_id' => DB::table('orders')->where('id', $orderId)->value('sale_id'),
+                ];
             }
         }
 
@@ -835,5 +833,455 @@ class PaymentGatewayService
             'method' => (string) $payment->provider,
             'sale_id' => null,
         ];
+    }
+
+    /**
+     * @param  array{key_id?: string, key_secret?: string, mode?: string, config?: array<string, mixed>}  $creds
+     * @param  array<string, mixed>  $order
+     * @param  array<string, mixed>  $customer
+     * @return array{url: ?string, reference: ?string, error: ?string}
+     */
+    private function startRazorpay(array $creds, int $amountPaise, array $order, array $customer, string $returnUrl): array
+    {
+        if (app()->environment('testing') || empty($creds['key_id']) || empty($creds['key_secret'])) {
+            return ['url' => null, 'reference' => null, 'error' => empty($creds['key_secret']) ? 'Save the Razorpay key id and key secret.' : null];
+        }
+        $phone = substr(preg_replace('/\D/', '', (string) ($customer['customer_phone'] ?? $customer['phone'] ?? '')) ?? '', -10);
+        $payload = [
+            'amount' => $amountPaise,
+            'currency' => 'INR',
+            'accept_partial' => false,
+            'description' => 'Order '.$order['number'],
+            'notify' => ['sms' => false, 'email' => false],
+            'reminder_enable' => false,
+            'callback_url' => $returnUrl,
+            'callback_method' => 'get',
+            'notes' => ['order_id' => (string) $order['id']],
+        ];
+        if ($phone !== '') {
+            $payload['customer'] = array_filter([
+                'name' => (string) ($customer['customer_name'] ?? $customer['name'] ?? 'Customer'),
+                'contact' => $phone,
+                'email' => $customer['customer_email'] ?? $customer['email'] ?? null,
+            ]);
+        }
+        try {
+            $response = Http::withBasicAuth((string) $creds['key_id'], (string) $creds['key_secret'])
+                ->timeout(8)
+                ->post('https://api.razorpay.com/v1/payment_links', $payload);
+            if ($response->successful() && is_string($response->json('short_url'))) {
+                return ['url' => $response->json('short_url'), 'reference' => $response->json('id'), 'error' => null];
+            }
+            $message = (string) ($response->json('error.description') ?? 'Razorpay did not open a payment page.');
+
+            return ['url' => null, 'reference' => null, 'error' => $message];
+        } catch (\Throwable $e) {
+            Log::warning('Razorpay payment link error', ['error' => $e->getMessage()]);
+
+            return ['url' => null, 'reference' => null, 'error' => 'Razorpay could not be reached.'];
+        }
+    }
+
+    /**
+     * @param  array{key_id?: string, key_secret?: string, mode?: string, config?: array<string, mixed>}  $creds
+     * @param  array<string, mixed>  $order
+     * @param  array<string, mixed>  $customer
+     * @return array{form: ?array{action: string, method: string, fields: array<string, string>}, reference: ?string, error: ?string}
+     */
+    private function startPaytm(array $creds, int $amountPaise, array $order, array $customer, string $returnUrl): array
+    {
+        if (app()->environment('testing') || empty($creds['key_id']) || empty($creds['key_secret'])) {
+            return ['form' => null, 'reference' => null, 'error' => empty($creds['key_secret']) ? 'Save the Paytm merchant id and merchant key.' : null];
+        }
+        $mid = (string) $creds['key_id'];
+        $orderId = strtoupper(substr(preg_replace('/[^A-Za-z0-9]/', '', 'PT'.$order['number'].$order['id']) ?? 'PT', 0, 40));
+        $live = ($creds['mode'] ?? 'test') === 'live';
+        $host = $live ? 'https://securegw.paytm.in' : 'https://securegw-stage.paytm.in';
+        $website = (string) ($creds['config']['website'] ?? ($live ? 'DEFAULT' : 'WEBSTAGING'));
+        $body = [
+            'requestType' => 'Payment',
+            'mid' => $mid,
+            'websiteName' => $website,
+            'orderId' => $orderId,
+            'callbackUrl' => url('/api/v1/public/webhooks/paytm'),
+            'txnAmount' => [
+                'value' => number_format($amountPaise / 100, 2, '.', ''),
+                'currency' => 'INR',
+            ],
+            'userInfo' => [
+                'custId' => 'CUST'.substr(preg_replace('/\D/', '', (string) ($customer['customer_phone'] ?? '10001')) ?? '10001', -10),
+            ],
+        ];
+        $payload = [
+            'body' => $body,
+            'head' => ['signature' => PaytmChecksum::signBody($body, (string) $creds['key_secret'])],
+        ];
+        try {
+            $response = Http::timeout(8)->post($host.'/theia/api/v1/initiateTransaction?mid='.rawurlencode($mid).'&orderId='.rawurlencode($orderId), $payload);
+            $token = $response->json('body.txnToken');
+            if ($response->successful() && is_string($token) && $token !== '') {
+                Cache::put('paytm_return_'.$orderId, $returnUrl, now()->addHours(3));
+
+                return [
+                    'form' => [
+                        'action' => $host.'/theia/api/v1/showPaymentPage?mid='.rawurlencode($mid).'&orderId='.rawurlencode($orderId),
+                        'method' => 'POST',
+                        'fields' => [
+                            'mid' => $mid,
+                            'orderId' => $orderId,
+                            'txnToken' => $token,
+                        ],
+                    ],
+                    'reference' => $orderId,
+                    'error' => null,
+                ];
+            }
+            $message = (string) ($response->json('body.resultInfo.resultMsg') ?? 'Paytm did not open a payment page.');
+
+            return ['form' => null, 'reference' => null, 'error' => $message];
+        } catch (\Throwable $e) {
+            Log::warning('Paytm initiate error', ['error' => $e->getMessage()]);
+
+            return ['form' => null, 'reference' => null, 'error' => 'Paytm could not be reached.'];
+        }
+    }
+
+    /**
+     * @return array{success: bool, provider: string, transaction_id: ?string, qr_string: ?string, vpa: ?string, payee_name: string, error?: string}|null
+     */
+    private function hostedPosCheckout(Store $store, int $amountPaise, string $orderRef): ?array
+    {
+        if (app()->environment('testing')) {
+            return null;
+        }
+        $returnUrl = url('/');
+        $stubOrder = ['id' => (string) Str::uuid7(), 'number' => $orderRef, 'total_paise' => $amountPaise];
+        $customer = ['customer_phone' => '9999999999', 'customer_name' => $store->name];
+        foreach (['razorpay', 'stripe', 'paytm'] as $provider) {
+            if (! $this->gatewayActive($store->id, $provider)) {
+                continue;
+            }
+            $creds = $this->resolveCredentials($store->id, $provider);
+            if (! is_array($creds)) {
+                continue;
+            }
+            if ($provider === 'razorpay') {
+                $started = $this->startRazorpay($creds, $amountPaise, $stubOrder, $customer, $returnUrl);
+                if (is_string($started['url']) && $started['url'] !== '') {
+                    return [
+                        'success' => true,
+                        'provider' => 'razorpay',
+                        'transaction_id' => $started['reference'],
+                        'qr_string' => $started['url'],
+                        'vpa' => null,
+                        'payee_name' => $store->name,
+                    ];
+                }
+            }
+            if ($provider === 'stripe' && ! empty($creds['key_secret'])) {
+                try {
+                    $response = Http::withToken((string) $creds['key_secret'])->asForm()->timeout(8)->post('https://api.stripe.com/v1/checkout/sessions', [
+                        'success_url' => $returnUrl,
+                        'cancel_url' => $returnUrl,
+                        'mode' => 'payment',
+                        'line_items' => [[
+                            'price_data' => [
+                                'currency' => 'inr',
+                                'product_data' => ['name' => 'Counter '.$orderRef],
+                                'unit_amount' => $amountPaise,
+                            ],
+                            'quantity' => 1,
+                        ]],
+                    ]);
+                    $url = $response->json('url');
+                    if (is_string($url) && $url !== '') {
+                        return [
+                            'success' => true,
+                            'provider' => 'stripe',
+                            'transaction_id' => $response->json('id'),
+                            'qr_string' => $url,
+                            'vpa' => null,
+                            'payee_name' => $store->name,
+                        ];
+                    }
+                } catch (\Throwable $e) {
+                    Log::warning('Stripe POS session error', ['error' => $e->getMessage()]);
+                }
+            }
+            if ($provider === 'paytm') {
+                $started = $this->startPaytm($creds, $amountPaise, $stubOrder, $customer, $returnUrl);
+                if (is_array($started['form'])) {
+                    return [
+                        'success' => true,
+                        'provider' => 'paytm',
+                        'transaction_id' => $started['reference'],
+                        'qr_string' => $started['form']['action'],
+                        'vpa' => null,
+                        'payee_name' => $store->name,
+                    ];
+                }
+            }
+        }
+
+        return null;
+    }
+
+    private function gatewayActive(string $storeId, string $provider): bool
+    {
+        return DB::table('payment_gateways')
+            ->where('store_id', $storeId)
+            ->where('provider', $provider)
+            ->where('status', 'active')
+            ->exists();
+    }
+
+    private function providerPaymentCaptured(object $payment, object $order): bool
+    {
+        $reference = (string) ($payment->provider_reference ?? '');
+        if ($reference === '') {
+            return false;
+        }
+        if ($payment->provider === 'razorpay') {
+            return $this->razorpayLinkPaid((string) $payment->store_id, $reference, (int) $order->total_paise);
+        }
+        if ($payment->provider === 'stripe') {
+            return $this->stripeSessionPaid((string) $payment->store_id, $reference, (int) $order->total_paise);
+        }
+        if ($payment->provider === 'paytm') {
+            return $this->paytmOrderPaid((string) $payment->store_id, $reference, (int) $order->total_paise);
+        }
+
+        return false;
+    }
+
+    private function razorpayLinkPaid(string $storeId, string $linkId, ?int $amountPaise = null): bool
+    {
+        $creds = $this->resolveCredentials($storeId, 'razorpay');
+        if (! is_array($creds) || $linkId === '') {
+            return false;
+        }
+        try {
+            $response = Http::withBasicAuth((string) $creds['key_id'], (string) $creds['key_secret'])
+                ->timeout(8)
+                ->get('https://api.razorpay.com/v1/payment_links/'.$linkId);
+            if (! $response->successful() || $response->json('status') !== 'paid') {
+                return false;
+            }
+            if ($amountPaise !== null && (int) $response->json('amount') !== $amountPaise) {
+                return false;
+            }
+
+            return true;
+        } catch (\Throwable) {
+            return false;
+        }
+    }
+
+    private function stripeSessionPaid(string $storeId, string $sessionId, ?int $amountPaise = null): bool
+    {
+        $creds = $this->resolveCredentials($storeId, 'stripe');
+        if (! is_array($creds) || $sessionId === '' || empty($creds['key_secret'])) {
+            return false;
+        }
+        try {
+            $response = Http::withToken((string) $creds['key_secret'])
+                ->timeout(8)
+                ->get('https://api.stripe.com/v1/checkout/sessions/'.$sessionId);
+            if (! $response->successful() || $response->json('payment_status') !== 'paid') {
+                return false;
+            }
+            if ($amountPaise !== null && (int) $response->json('amount_total') !== $amountPaise) {
+                return false;
+            }
+
+            return true;
+        } catch (\Throwable) {
+            return false;
+        }
+    }
+
+    private function paytmOrderPaid(string $storeId, string $orderId, ?int $amountPaise = null): bool
+    {
+        $creds = $this->resolveCredentials($storeId, 'paytm');
+        if (! is_array($creds) || $orderId === '' || empty($creds['key_secret'])) {
+            return false;
+        }
+        $live = ($creds['mode'] ?? 'test') === 'live';
+        $host = $live ? 'https://securegw.paytm.in' : 'https://securegw-stage.paytm.in';
+        $body = ['mid' => (string) $creds['key_id'], 'orderId' => $orderId];
+        try {
+            $response = Http::timeout(8)->post($host.'/v3/order/status', [
+                'body' => $body,
+                'head' => ['signature' => PaytmChecksum::signBody($body, (string) $creds['key_secret'])],
+            ]);
+            $status = (string) $response->json('body.resultInfo.resultStatus');
+            if ($status !== 'TXN_SUCCESS') {
+                return false;
+            }
+            if ($amountPaise !== null) {
+                $rupees = (float) $response->json('body.txnAmount');
+                if ((int) round($rupees * 100) !== $amountPaise) {
+                    return false;
+                }
+            }
+
+            return true;
+        } catch (\Throwable) {
+            return false;
+        }
+    }
+
+    /**
+     * Provider-native webhooks. Returns null when the body is the internal test format.
+     *
+     * @param  array<string, mixed>  $form
+     * @return array{status: int, redirect?: string}|null
+     */
+    public function handleNativeWebhook(string $provider, string $raw, ?string $signature, array $form = []): ?array
+    {
+        if ($provider === 'paytm' && isset($form['CHECKSUMHASH'], $form['ORDERID'])) {
+            $paid = $this->acceptPaytmCallback($form);
+            $redirect = Cache::get('paytm_return_'.(string) $form['ORDERID']);
+
+            return [
+                'status' => $paid ? 200 : 400,
+                'redirect' => is_string($redirect) ? $redirect : null,
+            ];
+        }
+
+        $payload = json_decode($raw, true);
+        if (! is_array($payload) || isset($payload['event_id'])) {
+            return null;
+        }
+        if ($provider === 'razorpay' && isset($payload['event'])) {
+            return ['status' => $this->acceptRazorpayWebhook($raw, $signature, $payload) ? 200 : 400];
+        }
+        if ($provider === 'stripe' && isset($payload['type'])) {
+            return ['status' => $this->acceptStripeWebhook($raw, $signature, $payload) ? 200 : 400];
+        }
+        if ($provider === 'phonepe' && isset($payload['response'])) {
+            return ['status' => $this->acceptPhonePeWebhook((string) $payload['response'], $signature) ? 200 : 400];
+        }
+
+        return null;
+    }
+
+    /**
+     * @param  array<string, mixed>  $payload
+     */
+    private function acceptRazorpayWebhook(string $raw, ?string $signature, array $payload): bool
+    {
+        $notes = $payload['payload']['payment_link']['entity']['notes']
+            ?? $payload['payload']['payment']['entity']['notes']
+            ?? [];
+        $orderId = is_array($notes) ? ($notes['order_id'] ?? null) : null;
+        if (! is_string($orderId) || $orderId === '') {
+            return false;
+        }
+        $payment = DB::table('payments')->where('order_id', $orderId)->where('provider', 'razorpay')->orderByDesc('created_at')->first();
+        if (! $payment) {
+            return false;
+        }
+        $creds = $this->resolveCredentials((string) $payment->store_id, 'razorpay');
+        $secret = is_array($creds) ? (string) ($creds['config']['webhook_secret'] ?? $creds['key_secret'] ?? '') : '';
+        if ($secret === '' || ! is_string($signature) || ! hash_equals(hash_hmac('sha256', $raw, $secret), $signature)) {
+            return false;
+        }
+        $event = (string) ($payload['event'] ?? '');
+        if (! in_array($event, ['payment_link.paid', 'payment.captured'], true)) {
+            return true;
+        }
+        $this->capture->captureFromProvider((string) $payment->id);
+
+        return true;
+    }
+
+    /**
+     * @param  array<string, mixed>  $payload
+     */
+    private function acceptStripeWebhook(string $raw, ?string $signature, array $payload): bool
+    {
+        $session = $payload['data']['object'] ?? [];
+        $orderId = is_array($session) ? ($session['client_reference_id'] ?? null) : null;
+        if (! is_string($orderId) || $orderId === '') {
+            return false;
+        }
+        $payment = DB::table('payments')->where('order_id', $orderId)->where('provider', 'stripe')->orderByDesc('created_at')->first();
+        if (! $payment) {
+            return false;
+        }
+        $creds = $this->resolveCredentials((string) $payment->store_id, 'stripe');
+        $secret = is_array($creds) ? (string) ($creds['config']['webhook_secret'] ?? '') : '';
+        if ($secret === '' || ! $this->stripeSignatureValid($raw, $signature, $secret)) {
+            return false;
+        }
+        if (($payload['type'] ?? '') === 'checkout.session.completed' && ($session['payment_status'] ?? '') === 'paid') {
+            $this->capture->captureFromProvider((string) $payment->id);
+        }
+
+        return true;
+    }
+
+    private function stripeSignatureValid(string $raw, ?string $header, string $secret): bool
+    {
+        if (! is_string($header) || ! preg_match('/t=(\d+),v1=([a-f0-9]+)/', $header, $match)) {
+            return false;
+        }
+        $expected = hash_hmac('sha256', $match[1].'.'.$raw, $secret);
+
+        return hash_equals($expected, $match[2]);
+    }
+
+    private function acceptPhonePeWebhook(string $encoded, ?string $signature): bool
+    {
+        $decoded = json_decode(base64_decode($encoded, true) ?: '', true);
+        if (! is_array($decoded)) {
+            return false;
+        }
+        $txnId = (string) ($decoded['data']['merchantTransactionId'] ?? '');
+        $payment = $txnId === '' ? null : DB::table('payments')->where('provider_reference', $txnId)->where('provider', 'phonepe')->first();
+        if (! $payment) {
+            return false;
+        }
+        $creds = $this->resolveCredentials((string) $payment->store_id, 'phonepe');
+        if (! is_array($creds)) {
+            return false;
+        }
+        $saltIndex = (string) ($creds['config']['salt_index'] ?? '1');
+        $expected = hash('sha256', $encoded.(string) $creds['key_secret']).'###'.$saltIndex;
+        if (! is_string($signature) || ! hash_equals($expected, $signature)) {
+            return false;
+        }
+        $code = (string) ($decoded['code'] ?? '');
+        if ($code === 'PAYMENT_SUCCESS') {
+            $this->capture->captureFromProvider((string) $payment->id);
+        }
+
+        return true;
+    }
+
+    /**
+     * @param  array<string, mixed>  $form
+     */
+    private function acceptPaytmCallback(array $form): bool
+    {
+        $orderId = (string) ($form['ORDERID'] ?? '');
+        $payment = DB::table('payments')->where('provider', 'paytm')->where('provider_reference', $orderId)->first();
+        if (! $payment) {
+            return false;
+        }
+        $creds = $this->resolveCredentials((string) $payment->store_id, 'paytm');
+        if (! is_array($creds) || empty($creds['key_secret'])) {
+            return false;
+        }
+        $checksum = (string) ($form['CHECKSUMHASH'] ?? '');
+        if (! PaytmChecksum::verifyParams($form, (string) $creds['key_secret'], $checksum)) {
+            return false;
+        }
+        if (($form['STATUS'] ?? '') === 'TXN_SUCCESS') {
+            $this->capture->captureFromProvider((string) $payment->id);
+        }
+
+        return true;
     }
 }

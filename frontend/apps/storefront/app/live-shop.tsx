@@ -2092,6 +2092,7 @@ export function LiveShop() {
         special_instructions: combinedInstructions || undefined,
         coupon_code: appliedCoupon?.code || coupon.trim() || undefined,
         loyalty_points: loyaltyPoints > 0 ? loyaltyPoints : undefined,
+        return_url: typeof window !== "undefined" ? window.location.origin + window.location.pathname : undefined,
         lines,
       };
 
@@ -2111,11 +2112,29 @@ export function LiveShop() {
       const pickupQrCode = orderData.pickup_qr || `SELFX-ORD-${orderData.number}`;
 
       // Check if prepaid gateway returned a redirect URL (PhonePe, Paytm, etc.)
-      const paymentUrl = orderData.payment?.payment_url || orderData.payment?.redirect_url || orderData.payment?.upi_intent_url;
-      const isPrepaidMethod = ["phonepe", "paytm", "razorpay"].includes(resolvedMethod);
+      const paymentUrl = orderData.payment?.redirect_url || orderData.payment?.payment_url;
+      const redirectForm = orderData.payment?.redirect_form;
+      const isPrepaidMethod = ["phonepe", "paytm", "razorpay", "stripe"].includes(resolvedMethod);
+      const canRedirect = typeof paymentUrl === "string" && /^https?:\/\//i.test(paymentUrl);
+
+      if (isPrepaidMethod && redirectForm?.action && redirectForm?.fields) {
+        const form = document.createElement("form");
+        form.method = "POST";
+        form.action = String(redirectForm.action);
+        Object.entries(redirectForm.fields as Record<string, string>).forEach(([name, value]) => {
+          const input = document.createElement("input");
+          input.type = "hidden";
+          input.name = name;
+          input.value = String(value);
+          form.appendChild(input);
+        });
+        document.body.appendChild(form);
+        form.submit();
+        return;
+      }
 
       if (isPrepaidMethod) {
-        if (paymentUrl) {
+        if (canRedirect) {
           try {
             window.localStorage.setItem(
               "selfx_pending_payment_order",

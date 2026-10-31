@@ -267,6 +267,7 @@ function PosScreen() {
   const [customTipRupees, setCustomTipRupees] = useState("");
   const [upiQrModalOpen, setUpiQrModalOpen] = useState(false);
   const [upiQrError, setUpiQrError] = useState<string | null>(null);
+  const [posQrProvider, setPosQrProvider] = useState("phonepe");
   const [qrTimerSeconds, setQrTimerSeconds] = useState(300);
   const [activeGateways, setActiveGateways] = useState<string[]>([]);
   const [isSplitTender, setIsSplitTender] = useState(false);
@@ -1204,7 +1205,7 @@ function PosScreen() {
   }, [panel]);
 
   const gatewayOn = (name: string) => activeGateways.some((g) => g.toLowerCase() === name);
-  const hasDynamicQr = gatewayOn("phonepe") || gatewayOn("paytm");
+  const hasDynamicQr = ["phonepe", "paytm", "razorpay", "stripe"].some((name) => gatewayOn(name));
   const hasManualUpi = gatewayOn("upi_qr");
 
   // UPI QR Countdown timer
@@ -1296,6 +1297,7 @@ function PosScreen() {
         if (d?.success !== false && d?.qr_string) {
           if (typeof d.vpa === "string" && d.vpa.includes("@")) setStoreUpiVpa(d.vpa);
           if (d.payee_name) setStorePayeeName(d.payee_name);
+          if (d.provider) setPosQrProvider(d.provider);
           if (d.transaction_id) setActivePosTxnId(d.transaction_id);
 
           const url = await QRCode.toDataURL(d.qr_string, {
@@ -1331,7 +1333,7 @@ function PosScreen() {
     if (!upiQrModalOpen || !activePosTxnId || !storeId || autoCaptureSuccess) return;
 
     const poll = setInterval(() => {
-      fetch(`/api/v1/stores/${storeId}/pos/dynamic-qr/${encodeURIComponent(activePosTxnId)}/status`, {
+      fetch(`/api/v1/stores/${storeId}/pos/dynamic-qr/${encodeURIComponent(activePosTxnId)}/status?provider=${encodeURIComponent(posQrProvider)}`, {
         credentials: "include",
         headers: { Accept: "application/json", "X-XSRF-TOKEN": csrf() },
       })
@@ -1341,7 +1343,7 @@ function PosScreen() {
             clearInterval(poll);
             setAutoCaptureSuccess(true);
             if (settings.tapSound) playPosSound("chime", settings.soundVolume);
-            showNotice("Payment confirmed by PhonePe! Completing order...", "ok");
+            showNotice("Payment confirmed. Completing the sale...", "ok");
             setTimeout(async () => {
               setPayMethod("upi");
               setUpiQrModalOpen(false);
@@ -1353,7 +1355,7 @@ function PosScreen() {
     }, 3000);
 
     return () => clearInterval(poll);
-  }, [upiQrModalOpen, activePosTxnId, storeId, autoCaptureSuccess, settings]);
+  }, [upiQrModalOpen, activePosTxnId, storeId, autoCaptureSuccess, settings, posQrProvider]);
 
   useEffect(() => {
     try {

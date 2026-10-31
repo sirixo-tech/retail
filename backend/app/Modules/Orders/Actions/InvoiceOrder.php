@@ -15,7 +15,7 @@ use RuntimeException;
 class InvoiceOrder
 {
     /** @var list<string> */
-    private const PREPAID = ['razorpay', 'cashfree', 'phonepe', 'paytm'];
+    private const PREPAID = ['razorpay', 'phonepe', 'paytm', 'stripe'];
 
     public function __construct(private ReserveStock $reservations, private PostLoyalty $loyalty)
     {

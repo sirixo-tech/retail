@@ -1944,7 +1944,7 @@ export function OnlineStoreWorkspace({ initialSection = "settings" }: { initialS
                       <div>
                         <h3 className="text-xs font-semibold text-slate-900">Unified Payment Gateways (POS &amp; Storefront)</h3>
                         <p className="mt-1 text-[11px] text-slate-500">
-                          All online &amp; POS payment integrations (Razorpay, PhonePe, Stripe, Cashfree, UPI) are managed in Settings → Payment Gateways.
+                          All online and POS payment integrations (Razorpay, PhonePe, Paytm, Stripe, UPI) are managed in Settings → Payment Gateways.
                         </p>
                       </div>
                       <a

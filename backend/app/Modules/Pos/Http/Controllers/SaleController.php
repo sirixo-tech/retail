@@ -667,7 +667,13 @@ class SaleController
         }
 
         if (in_array($method, GatewayController::PREPAID, true)) {
-            $returnUrl = (string) ($request->input('return_url') ?: url("/{$slug}?payment_order_id={$order['id']}&order_number={$order['number']}"));
+            $clientReturn = trim((string) $request->input('return_url', ''));
+            if ($clientReturn !== '' && preg_match('#^https?://#', $clientReturn)) {
+                $join = str_contains($clientReturn, '?') ? '&' : '?';
+                $returnUrl = $clientReturn.$join.'payment_order_id='.$order['id'].'&order_number='.rawurlencode((string) $order['number']);
+            } else {
+                $returnUrl = url("/{$slug}?payment_order_id={$order['id']}&order_number={$order['number']}");
+            }
             $order['payment'] = app(PaymentGatewayService::class)->initiate($store, $order, $method, $data, $returnUrl);
         }
 
@@ -2233,7 +2239,7 @@ class SaleController
             return $model;
         }
 
-        $status = app(PaymentGatewayService::class)->verifyPosQrStatus($model, $transactionId);
+        $status = app(PaymentGatewayService::class)->verifyPosQrStatus($model, $transactionId, (string) $request->query('provider', 'phonepe'));
 
         return ApiResponse::ok($status);
     }

@@ -14,8 +14,28 @@ class WebhookController
     {
     }
 
-    public function store(Request $request, string $provider): JsonResponse
+    public function store(Request $request, string $provider): JsonResponse|\Illuminate\Http\RedirectResponse
     {
+        $native = app(\App\Modules\Payments\Services\PaymentGatewayService::class)->handleNativeWebhook(
+            $provider,
+            $request->getContent(),
+            $request->header('X-Razorpay-Signature')
+                ?? $request->header('Stripe-Signature')
+                ?? $request->header('X-VERIFY'),
+            $request->post()
+        );
+        if ($native !== null) {
+            if ($provider === 'paytm' && is_string($native['redirect'] ?? null)) {
+                return redirect()->away($native['redirect']);
+            }
+            $status = (int) ($native['status'] ?? 400);
+            if ($status !== 200) {
+                return ApiResponse::error('validation.failed', 'The payment notice was rejected.', 400);
+            }
+
+            return ApiResponse::ok(['received' => true]);
+        }
+
         $status = $this->capture->fromWebhook($provider, $request->getContent(), $request->header('X-Gateway-Signature'));
         if ($status === 404) {
             return ApiResponse::error('resource.not_found', 'Unknown gateway.', 404);
