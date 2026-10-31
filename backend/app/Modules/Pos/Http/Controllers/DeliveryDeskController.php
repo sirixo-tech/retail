@@ -87,7 +87,7 @@ class DeliveryDeskController
         $orders = $this->deliveryQuery($tenantId, $mineOnly ? $staffId : null)
             ->where('fulfillment', 'delivery')
             ->orderByDesc('updated_at')
-            ->limit(40)
+            ->limit(50)
             ->get();
         $ids = $orders->pluck('id');
         $latest = DB::table('delivery_messages')
@@ -101,16 +101,24 @@ class DeliveryDeskController
             $message = $latest->get($order->id);
 
             return [
-                'order_id' => $order->id,
-                'number' => $order->number,
-                'customer_name' => $order->customer_name,
+                'order_id' => (string) $order->id,
+                'number' => (string) $order->number,
+                'customer_name' => $order->customer_name ?: 'Customer',
                 'customer_phone' => $order->customer_phone,
                 'status' => $order->status,
+                'delivery_status' => $order->delivery_status,
+                'total_paise' => (int) $order->total_paise,
+                'payment_method' => $order->payment_method,
+                'has_messages' => $message !== null,
                 'last_message' => $message->body ?? null,
                 'last_sender' => $message->sender ?? null,
                 'last_at' => $message->created_at ?? null,
             ];
-        })->sortByDesc(fn ($row) => $row['last_at'] ?? '')->values();
+        })->sortByDesc(function ($row) {
+            $hasMsg = ! empty($row['has_messages']) ? '1' : '0';
+            $isLive = in_array($row['status'], ['out_for_delivery', 'ready', 'packing', 'placed'], true) ? '1' : '0';
+            return $hasMsg . '_' . $isLive . '_' . ($row['last_at'] ?? $row['number'] ?? '');
+        })->values();
 
         return ApiResponse::ok($threads);
     }
@@ -236,7 +244,14 @@ class DeliveryDeskController
             return $scope;
         }
         [$tenantId, $staffId, $mineOnly] = $scope;
-        $order = DB::table('orders')->where('id', $orderId)->where('tenant_id', $tenantId)->first();
+        $order = DB::table('orders')
+            ->where('tenant_id', $tenantId)
+            ->where(function ($query) use ($orderId) {
+                $query->where('id', $orderId)
+                    ->orWhere('number', $orderId);
+            })
+            ->first();
+
         if (! $order || ($mineOnly && ! $this->assignedTo($order, $staffId))) {
             return ApiResponse::error('resource.not_found', 'Order not found.', 404);
         }
@@ -282,17 +297,24 @@ class DeliveryDeskController
      */
     private function orderCard(object $order): array
     {
+        $address = null;
+        if (! empty($order->address_snapshot)) {
+            $address = is_string($order->address_snapshot) ? json_decode($order->address_snapshot, true) : (array) $order->address_snapshot;
+        }
+
         return [
-            'id' => $order->id,
-            'number' => $order->number,
-            'customer_name' => $order->customer_name,
-            'customer_phone' => $order->customer_phone,
-            'status' => $order->status,
-            'fulfillment' => $order->fulfillment,
-            'delivery_status' => $order->delivery_status,
+            'id' => (string) $order->id,
+            'number' => (string) $order->number,
+            'customer_name' => (string) ($order->customer_name ?: 'Customer'),
+            'customer_phone' => (string) ($order->customer_phone ?: ''),
+            'status' => (string) ($order->status ?: 'placed'),
+            'fulfillment' => (string) ($order->fulfillment ?: 'delivery'),
+            'delivery_status' => (string) ($order->delivery_status ?: 'unassigned'),
             'total_paise' => (int) $order->total_paise,
-            'payment_method' => $order->payment_method,
-            'payment_status' => $order->payment_status,
+            'payment_method' => (string) ($order->payment_method ?: 'cod'),
+            'payment_status' => (string) ($order->payment_status ?: 'pending'),
+            'address' => $address,
+            'order_notes' => (string) ($order->order_notes ?: ''),
         ];
     }
 
