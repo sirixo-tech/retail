@@ -56,14 +56,17 @@ class PaymentGatewayService
                     $keyId = (string) $decoded['key_id'];
 
                     if ($provider === 'phonepe') {
-                        if (empty($config['provider_id'])) {
+                        if (trim((string) ($config['provider_id'] ?? '')) === '') {
                             $config['provider_id'] = $config['x_provider_id'] ?? ($config['store_terminal_id'] ?? null);
+                        }
+                        if (trim((string) ($config['salt_index'] ?? '')) === '') {
+                            $config['salt_index'] = '1';
                         }
                     }
 
                     return [
-                        'key_id' => $keyId,
-                        'key_secret' => (string) $decoded['key_secret'],
+                        'key_id' => trim($keyId),
+                        'key_secret' => trim((string) $decoded['key_secret']),
                         'mode' => (string) ($gateway->mode ?? 'test'),
                         'config' => $config,
                     ];
@@ -200,8 +203,68 @@ class PaymentGatewayService
         if ($message === '' && is_array($body['data'] ?? null)) {
             $message = trim((string) ($body['data']['message'] ?? $body['data']['responseCode'] ?? ''));
         }
+        if ($message === '' && $status === 401) {
+            return 'PhonePe rejected the Merchant ID, salt key, salt index, or Provider ID (401). Save those four values in Live mode and turn PhonePe on.';
+        }
 
         return $message !== '' ? $message : 'PhonePe returned HTTP '.$status;
+    }
+
+    /**
+     * Dynamic QR used by POS and the storefront. PhonePe accounts onboarded with a
+     * Provider ID are authorized on this API, not always on the hosted pay-page API.
+     *
+     * @param  array{key_id?: string, key_secret?: string, mode?: string, config?: array<string, mixed>}  $creds
+     * @param  array<string, mixed>  $payload
+     * @return array{ok: bool, qr: ?string, error: ?string}
+     */
+    private function phonePeQrInit(array $creds, array $payload): array
+    {
+        $saltKey = trim((string) ($creds['key_secret'] ?? ''));
+        $saltIndex = trim((string) ($creds['config']['salt_index'] ?? ''));
+        if ($saltIndex === '') {
+            $saltIndex = '1';
+        }
+        $providerId = trim((string) ($creds['config']['provider_id'] ?? ''));
+        $encoded = base64_encode((string) json_encode($payload, JSON_UNESCAPED_SLASHES));
+        $checksum = hash('sha256', $encoded.'/v3/qr/init'.$saltKey).'###'.$saltIndex;
+        $headers = [
+            'Content-Type' => 'application/json',
+            'Accept' => 'application/json',
+            'X-VERIFY' => $checksum,
+        ];
+        if ($providerId !== '') {
+            $headers['X-PROVIDER-ID'] = $providerId;
+        }
+        $callback = url('/api/v1/public/webhooks/phonepe');
+        if (str_starts_with($callback, 'https://')) {
+            $headers['X-CALLBACK-URL'] = $callback;
+        }
+        $bases = $this->phonePeIsLive($creds)
+            ? ['https://mercury.phonepe.com/enterprise', 'https://mercury.phonepe.com']
+            : ['https://mercury-uat.phonepe.com/enterprise-sandbox', 'https://mercury-uat.phonepe.com'];
+        $lastError = 'PhonePe did not return a QR.';
+        foreach ($bases as $base) {
+            try {
+                $response = Http::withHeaders($headers)->timeout(8)->post($base.'/v3/qr/init', [
+                    'request' => $encoded,
+                ]);
+                $body = $response->json() ?? [];
+                $qr = (string) ($body['data']['qrString'] ?? $body['data']['qrData'] ?? '');
+                if ($response->successful() && ! empty($body['success']) && $qr !== '') {
+                    return ['ok' => true, 'qr' => $qr, 'error' => null];
+                }
+                $lastError = $this->phonePeFailure(is_array($body) ? $body : [], $response->status());
+                if (! in_array($response->status(), [401, 403, 404], true)) {
+                    break;
+                }
+            } catch (\Throwable $e) {
+                $lastError = 'PhonePe could not be reached.';
+                Log::warning('PhonePe DQR error', ['error' => $e->getMessage(), 'host' => $base]);
+            }
+        }
+
+        return ['ok' => false, 'qr' => null, 'error' => $lastError];
     }
 
     /**
@@ -248,6 +311,7 @@ class PaymentGatewayService
 
         $providerReference = null;
         $redirectForm = null;
+        $checkoutQr = null;
 
         // Build generic NPCI UPI URIs if VPA is available
         if ($vpa !== '') {
@@ -299,53 +363,20 @@ class PaymentGatewayService
                     $dqrPayload['terminalId'] = $terminalDqrId;
                 }
 
-                $encodedDqr = base64_encode(json_encode($dqrPayload));
-                $checksumDqr = hash('sha256', $encodedDqr . '/v3/qr/init' . $saltKey) . '###' . $saltIndex;
-
-                $headersDqr = [
-                    'Content-Type' => 'application/json',
-                    'Accept' => 'application/json',
-                    'X-VERIFY' => $checksumDqr,
-                    'X-CALLBACK-URL' => url('/api/v1/public/webhooks/phonepe'),
-                ];
-                if (! empty($providerId)) {
-                    $headersDqr['X-PROVIDER-ID'] = $providerId;
-                }
-
-                try {
-                    $dqrRes = Http::withHeaders($headersDqr)->timeout(6)->post("{$mercuryBase}/v3/qr/init", [
-                        'request' => $encodedDqr,
-                    ]);
-
-                    $dqrBody = $dqrRes->json() ?? [];
-                    $qrString = (string) ($dqrBody['data']['qrString'] ?? $dqrBody['data']['qrData'] ?? '');
-                    if ($dqrRes->successful() && ! empty($dqrBody['success']) && $qrString !== '') {
-                            $paymentUrl = $qrString;
-                            $upiIntentUrl = $qrString;
-                            $mercurySuccess = true;
-
-                            if (preg_match('/[?&]pa=([^&]+)/', $qrString, $vpaM)) {
-                                $vpa = urldecode($vpaM[1]);
-                            }
-
-                            $allUpiUris = [
-                                'standard' => $qrString,
-                                'phonepe' => str_starts_with($qrString, 'upi://') ? 'phonepe://' . substr($qrString, 6) : $qrString,
-                                'gpay' => str_starts_with($qrString, 'upi://') ? 'tez://upi/' . substr($qrString, 6) : $qrString,
-                                'paytm' => str_starts_with($qrString, 'upi://') ? 'paytmmp://' . substr($qrString, 6) : $qrString,
-                                'bhim' => str_starts_with($qrString, 'upi://') ? 'bhim://' . substr($qrString, 6) : $qrString,
-                            ];
-                    } else {
-                        $gatewayError = $this->phonePeFailure(is_array($dqrBody) ? $dqrBody : [], $dqrRes->status());
-                        Log::warning('PhonePe DQR rejected', ['order_id' => $order['id'], 'status' => $dqrRes->status(), 'message' => $gatewayError]);
+                $qrInit = $this->phonePeQrInit($creds, $dqrPayload);
+                if ($qrInit['ok'] && is_string($qrInit['qr'])) {
+                    $checkoutQr = $qrInit['qr'];
+                    $upiIntentUrl = $qrInit['qr'];
+                    $mercurySuccess = true;
+                    $gatewayError = null;
+                    if (preg_match('/[?&]pa=([^&]+)/', $qrInit['qr'], $vpaM)) {
+                        $vpa = urldecode($vpaM[1]);
                     }
-                } catch (\Throwable $e) {
-                    $gatewayError = 'PhonePe Dynamic QR could not be reached.';
-                    Log::warning('PhonePe Mercury DQR Init error', ['order_id' => $order['id'], 'error' => $e->getMessage()]);
+                } else {
+                    $gatewayError = $qrInit['error'];
                 }
 
-                // The storefront needs the hosted https page. A upi:// QR link does not open checkout on a computer.
-                {
+                if (! $mercurySuccess) {
                     $phonePeBase = $hosts['pg'];
 
                     $custPhone = substr(preg_replace('/\D/', '', (string) ($customerData['phone'] ?? '9999999999')), -10);
@@ -364,14 +395,17 @@ class PaymentGatewayService
                         ],
                     ];
 
-                    $encodedPayload = base64_encode(json_encode($payload));
-                    $checksum = hash('sha256', $encodedPayload . '/pg/v1/pay' . $saltKey) . '###' . $saltIndex;
+                    $encodedPayload = base64_encode((string) json_encode($payload, JSON_UNESCAPED_SLASHES));
+                    $checksum = hash('sha256', $encodedPayload.'/pg/v1/pay'.$saltKey).'###'.$saltIndex;
 
                     $hermesHeaders = [
                         'Content-Type' => 'application/json',
                         'Accept' => 'application/json',
                         'X-VERIFY' => $checksum,
                     ];
+                    if ($providerId !== '') {
+                        $hermesHeaders['X-PROVIDER-ID'] = $providerId;
+                    }
 
                     try {
                         $response = Http::withHeaders($hermesHeaders)->timeout(8)->post("{$phonePeBase}/pg/v1/pay", [
@@ -402,7 +436,9 @@ class PaymentGatewayService
             if (! $paymentUrl && $upiIntentUrl && $this->validVpa($vpa)) {
                 $paymentUrl = $upiIntentUrl;
             }
-            if (! $paymentUrl && $gatewayError === null) {
+            if ($checkoutQr) {
+                $gatewayError = null;
+            } elseif (! $paymentUrl && $gatewayError === null) {
                 $gatewayError = 'PhonePe did not return a payment page. Check the Merchant ID, salt key, salt index, and Provider ID, then turn PhonePe on.';
             }
         } elseif ($provider === 'razorpay' && is_array($creds)) {
@@ -484,6 +520,7 @@ class PaymentGatewayService
             'payment_url' => $paymentUrl,
             'redirect_url' => $paymentUrl,
             'redirect_form' => $redirectForm,
+            'qr_string' => $checkoutQr,
             'upi_intent_url' => $upiIntentUrl,
             'upi_uris' => $allUpiUris,
             'vpa' => $this->validVpa($vpa) ? $vpa : null,
@@ -540,53 +577,31 @@ class PaymentGatewayService
                 $payload['terminalId'] = $terminalDqrId;
             }
 
-            $encoded = base64_encode(json_encode($payload));
-            $checksum = hash('sha256', $encoded . '/v3/qr/init' . $saltKey) . '###' . $saltIndex;
-
-            $headers = [
-                'Content-Type' => 'application/json',
-                'Accept' => 'application/json',
-                'X-VERIFY' => $checksum,
-                'X-CALLBACK-URL' => url('/api/v1/public/webhooks/phonepe'),
-            ];
-            if (! empty($providerId)) {
-                $headers['X-PROVIDER-ID'] = $providerId;
-            }
-
-            try {
-                $res = Http::withHeaders($headers)->timeout(6)->post("{$mercuryBase}/v3/qr/init", [
-                    'request' => $encoded,
-                ]);
-
-                $body = $res->json() ?? [];
-                $qrString = (string) ($body['data']['qrString'] ?? $body['data']['qrData'] ?? '');
-                if ($res->successful() && ! empty($body['success']) && $qrString !== '') {
-                        $vpa = '';
-                        if (preg_match('/[?&]pa=([^&]+)/', $qrString, $m)) {
-                            $vpa = urldecode($m[1]);
-                        }
-                        if (! $this->validVpa($vpa)) {
-                            $vpa = '';
-                        }
-                        $payeeName = (string) ($creds['config']['merchant_name'] ?? ($store->name ?: 'Store'));
-                        if (preg_match('/[?&]pn=([^&]+)/', $qrString, $m)) {
-                            $payeeName = urldecode($m[1]);
-                        }
-
-                        return [
-                            'success' => true,
-                            'provider' => 'phonepe',
-                            'transaction_id' => $txnId,
-                            'qr_string' => $qrString,
-                            'vpa' => $vpa,
-                            'payee_name' => $payeeName,
-                        ];
+            $qrInit = $this->phonePeQrInit($creds, $payload);
+            if ($qrInit['ok'] && is_string($qrInit['qr'])) {
+                $qrString = $qrInit['qr'];
+                $vpa = '';
+                if (preg_match('/[?&]pa=([^&]+)/', $qrString, $m)) {
+                    $vpa = urldecode($m[1]);
                 }
-                $phonePeError = $this->phonePeFailure(is_array($body) ? $body : [], $res->status());
-            } catch (\Throwable $e) {
-                $phonePeError = 'PhonePe Dynamic QR could not be reached.';
-                Log::warning('POS PhonePe DQR Init error', ['error' => $e->getMessage()]);
+                if (! $this->validVpa($vpa)) {
+                    $vpa = '';
+                }
+                $payeeName = (string) ($creds['config']['merchant_name'] ?? ($store->name ?: 'Store'));
+                if (preg_match('/[?&]pn=([^&]+)/', $qrString, $m)) {
+                    $payeeName = urldecode($m[1]);
+                }
+
+                return [
+                    'success' => true,
+                    'provider' => 'phonepe',
+                    'transaction_id' => $txnId,
+                    'qr_string' => $qrString,
+                    'vpa' => $vpa,
+                    'payee_name' => $payeeName,
+                ];
             }
+            $phonePeError = $qrInit['error'];
         }
 
         $fallbackVpa = trim((string) (
