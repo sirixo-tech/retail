@@ -637,6 +637,12 @@ export default function CartPage() {
       const pickupQrCode = orderData.pickup_qr || `SELFX-ORD-${orderData.number}`;
 
       // Check if prepaid gateway returned a redirect URL (PhonePe, Paytm, Razorpay)
+      const phoneAppUrl = (orderData.payment?.app_url || orderData.payment?.qr_string) as string | undefined;
+      if (payment === "phonepe" && typeof phoneAppUrl === "string" && (phoneAppUrl.startsWith("upi://") || phoneAppUrl.startsWith("phonepe://"))) {
+        window.location.href = phoneAppUrl.startsWith("phonepe://") ? phoneAppUrl : `phonepe://${phoneAppUrl.slice("upi://".length)}`;
+        return;
+      }
+
       const paymentUrl = orderData.payment?.redirect_url || orderData.payment?.payment_url;
       const redirectForm = orderData.payment?.redirect_form;
       const isPrepaid = ["phonepe", "paytm", "razorpay", "stripe"].includes(payment);

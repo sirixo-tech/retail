@@ -500,14 +500,6 @@ export function LiveShop() {
   const [profileRefundsOpen, setProfileRefundsOpen] = useState(false);
   const [fulfillment, setFulfillment] = useState<"delivery" | "pickup">("delivery");
   const [payment, setPayment] = useState<string>("cod");
-  const [phonePeQr, setPhonePeQr] = useState<string | null>(null);
-  const [phonePeWatch, setPhonePeWatch] = useState<{
-    id: string;
-    number: string;
-    totalPaise: number;
-    fulfillment: "delivery" | "pickup";
-    address: string;
-  } | null>(null);
   const [checkoutStep, setCheckoutStep] = useState<"details" | "payment">("details");
   const [savedAddresses, setSavedAddresses] = useState<SavedCustomerAddress[]>([]);
   const [selectedAddressId, setSelectedAddressId] = useState<string | null>(null);
@@ -2120,19 +2112,28 @@ export function LiveShop() {
       const pickupQrCode = orderData.pickup_qr || `SELFX-ORD-${orderData.number}`;
 
       // Check if prepaid gateway returned a redirect URL (PhonePe, Paytm, etc.)
-      const phoneQr = orderData.payment?.qr_string as string | undefined;
-      if (resolvedMethod === "phonepe" && typeof phoneQr === "string" && phoneQr.startsWith("upi://")) {
-        const img = await QRCode.toDataURL(phoneQr, { width: 280, margin: 1 });
-        setPhonePeQr(img);
-        setPhonePeWatch({
-          id: orderData.id,
-          number: orderData.number,
-          totalPaise: grandTotalPaise,
-          fulfillment,
-          address: address || "Store Counter",
-        });
-        setQty({});
-        setSubmittingOrder(false);
+      const phoneAppUrl = (orderData.payment?.app_url || orderData.payment?.qr_string) as string | undefined;
+      if (resolvedMethod === "phonepe" && typeof phoneAppUrl === "string" && (phoneAppUrl.startsWith("upi://") || phoneAppUrl.startsWith("phonepe://"))) {
+        const appUrl = phoneAppUrl.startsWith("phonepe://") ? phoneAppUrl : `phonepe://${phoneAppUrl.slice("upi://".length)}`;
+        try {
+          window.localStorage.setItem(
+            "selfx_pending_payment_order",
+            JSON.stringify({
+              orderId: orderData.id,
+              orderNumber: orderData.number,
+              totalPaise: grandTotalPaise,
+              fulfillment,
+              payment: "phonepe",
+              address: address || "Store Counter",
+              name,
+              phone,
+              timestamp: Date.now(),
+            }),
+          );
+        } catch {
+          // ignore
+        }
+        window.location.href = appUrl;
         return;
       }
 
@@ -2453,38 +2454,6 @@ export function LiveShop() {
   const useCustomThemeCatalog =
     viewMode === "catalog" && !orderConfirmed && activeThemeVariant !== "default";
 
-  useEffect(() => {
-    if (!phonePeWatch) return;
-    const watch = phonePeWatch;
-    const timer = setInterval(() => {
-      void fetch(`/api/v1/public/orders/${encodeURIComponent(watch.id)}/verify-payment`, {
-        method: "POST",
-        headers: { Accept: "application/json", "Content-Type": "application/json" },
-      })
-        .then((res) => (res.ok ? res.json() : null))
-        .then((body) => {
-          if (!body?.data?.paid) return;
-          setOrderConfirmed({
-            id: watch.id,
-            number: watch.number,
-            totalPaise: watch.totalPaise,
-            fulfillment: watch.fulfillment,
-            payment: "phonepe",
-            deliverySlot: null,
-            pickupQr: null,
-            qrDataUrl: null,
-            deliveryOtp: null,
-            address: watch.address,
-          });
-          setPhonePeQr(null);
-          setPhonePeWatch(null);
-          setViewMode("catalog");
-        })
-        .catch(() => {});
-    }, 3000);
-    return () => clearInterval(timer);
-  }, [phonePeWatch]);
-
   return (
     <div
       className={`min-h-screen ${darkMode ? "bg-slate-900 text-slate-100" : "bg-[#f6f5f2] text-slate-900"} transition-colors pb-24 sm:pb-0`}
@@ -2494,26 +2463,6 @@ export function LiveShop() {
         ["--brand-secondary" as any]: brandSecondaryColor,
       }}
     >
-      {phonePeQr ? (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 p-4">
-          <div className="w-full max-w-sm rounded-2xl bg-white p-6 text-center text-slate-900">
-            <h3 className="text-base font-semibold">Scan to pay with PhonePe</h3>
-            <p className="mt-1 text-xs text-slate-500">Use PhonePe, GPay, or Paytm. The order confirms after payment succeeds.</p>
-            <img src={phonePeQr} alt="PhonePe QR" className="mx-auto mt-4 h-56 w-56" />
-            <p className="mt-3 text-xs text-slate-500">Waiting for payment...</p>
-            <button
-              type="button"
-              className="mt-4 text-xs font-semibold text-slate-500"
-              onClick={() => {
-                setPhonePeQr(null);
-                setPhonePeWatch(null);
-              }}
-            >
-              Close
-            </button>
-          </div>
-        </div>
-      ) : null}
       {/* Top Announcement Bar (shown on Default theme or Checkout/Confirmation views; themed catalogs render their own bespoke topbars) */}
       {!useCustomThemeCatalog &&
       onlineSettings?.topbarFooter?.showTopbar !== false &&

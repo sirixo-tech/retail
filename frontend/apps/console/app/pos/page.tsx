@@ -1290,19 +1290,23 @@ function PosScreen() {
         order_ref: posTempOrderRef,
       }),
     })
-      .then((res) => (res.ok ? res.json() : null))
-      .then(async (body) => {
+      .then(async (res) => {
+        const body = await res.json().catch(() => null);
+        return { ok: res.ok, body };
+      })
+      .then(async ({ ok, body }) => {
         if (cancelled) return;
         const d = body?.data;
-        if (d?.success !== false && d?.qr_string) {
+        if (ok && d?.success !== false && d?.qr_string) {
           if (typeof d.vpa === "string" && d.vpa.includes("@")) setStoreUpiVpa(d.vpa);
           if (d.payee_name) setStorePayeeName(d.payee_name);
           if (d.provider) setPosQrProvider(d.provider);
           if (d.transaction_id) setActivePosTxnId(d.transaction_id);
 
           const url = await QRCode.toDataURL(d.qr_string, {
-            width: 280,
+            width: 320,
             margin: 1,
+            errorCorrectionLevel: "L",
             color: { dark: "#0f172a", light: "#ffffff" },
           });
           if (!cancelled) setPosUpiQrUrl(url);

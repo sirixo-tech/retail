@@ -267,6 +267,18 @@ class PaymentGatewayService
         return ['ok' => false, 'qr' => null, 'error' => $lastError];
     }
 
+    private function phonePeAppUrl(string $qr): string
+    {
+        if (str_starts_with($qr, 'phonepe://')) {
+            return $qr;
+        }
+        if (str_starts_with($qr, 'upi://')) {
+            return 'phonepe://'.substr($qr, strlen('upi://'));
+        }
+
+        return $qr;
+    }
+
     /**
      * Initiate prepaid payment session and generate redirect / UPI intent URLs.
      *
@@ -521,6 +533,7 @@ class PaymentGatewayService
             'redirect_url' => $paymentUrl,
             'redirect_form' => $redirectForm,
             'qr_string' => $checkoutQr,
+            'app_url' => is_string($checkoutQr) ? $this->phonePeAppUrl($checkoutQr) : null,
             'upi_intent_url' => $upiIntentUrl,
             'upi_uris' => $allUpiUris,
             'vpa' => $this->validVpa($vpa) ? $vpa : null,
@@ -546,6 +559,17 @@ class PaymentGatewayService
     public function generatePosQr(Store $store, int $amountPaise, string $orderRef): array
     {
         $creds = $this->resolveCredentials($store->id, 'phonepe');
+        if (! $creds) {
+            $otherStore = DB::table('payment_gateways')
+                ->where('tenant_id', $store->tenant_id)
+                ->where('provider', 'phonepe')
+                ->where('status', 'active')
+                ->whereNotNull('credentials_ciphertext')
+                ->value('store_id');
+            if (is_string($otherStore) && $otherStore !== '') {
+                $creds = $this->resolveCredentials($otherStore, 'phonepe');
+            }
+        }
         $phonePeError = null;
         if ($creds && ! empty($creds['key_id']) && ! empty($creds['key_secret'])) {
             $merchantId = $creds['key_id'];
