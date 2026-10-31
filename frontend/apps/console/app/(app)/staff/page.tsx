@@ -63,7 +63,10 @@ const PERMISSION_GROUPS: {
     items: [
       { key: "purchases.manage", label: "Manage Purchases (GRN) & Suppliers", desc: "Receive supplier bills, purchase returns, and payouts" },
       { key: "orders.manage", label: "Fulfil Online & POS Orders", desc: "Pack pick-lists and transition order delivery status" },
-      { key: "orders.delivery", label: "Delivery Partner & Rider App", desc: "Access live delivery dashboard, route navigation, and COD collection" },
+      { key: "orders.delivery", label: "Delivery orders", desc: "See assigned deliveries, navigate, and collect payment" },
+      { key: "delivery.dashboard", label: "Delivery partner dashboard", desc: "See today's assigned, on-road, and completed deliveries" },
+      { key: "delivery.chat", label: "Customer delivery chat", desc: "Message the customer on an active delivery" },
+      { key: "delivery.settings", label: "Delivery partner settings", desc: "Vehicle, phone sharing, and delivery alerts" },
       { key: "storefront.manage", label: "Configure Online Storefront", desc: "Manage store banners, collections, delivery zones, and gateways" },
     ],
   },

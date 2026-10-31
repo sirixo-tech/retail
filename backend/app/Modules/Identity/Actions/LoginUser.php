@@ -535,6 +535,11 @@ class LoginUser
                     'pos.sell', 'pos.access', 'catalog.view', 'products.view', 'orders.manage', 'orders.view', 'customers.view',
                 ];
             }
+            if ($effectiveRole === 'delivery') {
+                foreach (['orders.delivery', 'delivery.dashboard', 'delivery.chat', 'delivery.settings'] as $extra) {
+                    $rawPerms[] = $extra;
+                }
+            }
 
             // Expand reciprocal aliases for frontend and backend compatibility
             $expanded = [];

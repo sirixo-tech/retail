@@ -58,6 +58,7 @@ class StaffController
         ],
         'delivery' => [
             'orders.manage', 'orders.delivery', 'orders.view', 'orders.manage_status',
+            'delivery.dashboard', 'delivery.chat', 'delivery.settings',
             'customers.view',
             'staff.attendance',
         ],

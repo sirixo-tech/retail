@@ -42,7 +42,17 @@ const groups: NavGroup[] = [
     label: "Sell",
     items: [
       { href: "/orders", label: "Orders", icon: ShoppingBag },
-      { href: "/delivery", label: "Delivery Orders", icon: Truck },
+      {
+        href: "/delivery",
+        label: "Delivery",
+        icon: Truck,
+        children: [
+          { href: "/delivery", label: "Delivery orders" },
+          { href: "/delivery/dashboard", label: "Partner dashboard" },
+          { href: "/delivery/chat", label: "Customer chat" },
+          { href: "/delivery/settings", label: "Partner settings" },
+        ],
+      },
       { href: "/customers", label: "Customers", icon: Users },
       {
         href: "/products",
@@ -242,6 +252,9 @@ function formatInrPaise(paise: number): string {
 const ROUTE_PERMISSIONS: Record<string, string[]> = {
   "/": ["*"],
   "/orders": ["orders.manage", "orders.view"],
+  "/delivery/dashboard": ["delivery.dashboard", "orders.delivery", "orders.manage"],
+  "/delivery/chat": ["delivery.chat", "orders.delivery", "orders.manage"],
+  "/delivery/settings": ["delivery.settings", "orders.delivery", "orders.manage"],
   "/delivery": ["orders.delivery", "orders.manage"],
   "/customers": ["customers.view", "customers.khata", "customers.edit"],
   "/products": ["catalog.view", "catalog.manage", "products.view", "products.create"],
@@ -490,15 +503,15 @@ export function ConsoleShell({ children }: { children: ReactNode }) {
       const rows = ((await response.json()) as { data: { id: string; status: string; number?: string; customer_name?: string; total_paise?: number; channel?: string; fulfillment?: string; payment_status?: string }[] }).data ?? [];
       const fresh = rows.filter((row) => {
         if (row.channel === "counter") return row.status !== "voided";
-        return row.payment_status === "captured" || ["placed", "awaiting_payment", "accepted", "packing", "ready", "ready_for_pickup", "out_for_delivery"].includes(row.status);
+        return row.payment_status === "captured" || ["placed", "accepted", "packing", "ready", "ready_for_pickup", "out_for_delivery"].includes(row.status);
       });
       const arrived = fresh.filter((row) => !seen.has(row.id));
       if (!ready) {
-        fresh.forEach((row) => claimOrderAnnouncement(row.id));
+        fresh.forEach((row) => claimOrderAnnouncement(`paid:${row.id}`));
       } else if (arrived.length > 0) {
         let played = false;
         for (const row of arrived) {
-          if (!claimOrderAnnouncement(row.id)) continue;
+          if (!claimOrderAnnouncement(`paid:${row.id}`)) continue;
           if (!played) {
             beep();
             played = true;

@@ -1040,12 +1040,20 @@ class SaleController
 
         $staffName = $row->delivery_staff_name ?? null;
         $staffPhone = $row->delivery_staff_phone ?? null;
-        if (! $staffName && ! empty($row->delivery_staff_id)) {
+        if (! empty($row->delivery_staff_id)) {
             $staffProfile = DB::table('staff_profiles')->where('id', $row->delivery_staff_id)->first();
             if ($staffProfile) {
-                $staffName = $staffProfile->display_name;
-                $staffUser = DB::table('users')->where('id', $staffProfile->user_id)->first();
-                $staffPhone = $staffPhone ?: ($staffUser?->phone_e164 ?? $staffUser?->phone);
+                if (! $staffName) {
+                    $staffName = $staffProfile->display_name;
+                }
+                if (! $staffPhone) {
+                    $staffUser = DB::table('users')->where('id', $staffProfile->user_id)->first();
+                    $staffPhone = $staffUser?->phone_e164 ?? $staffUser?->phone;
+                }
+                $sharePhone = DB::table('delivery_partner_settings')->where('user_id', $staffProfile->user_id)->value('share_phone');
+                if ($sharePhone !== null && ! $sharePhone) {
+                    $staffPhone = null;
+                }
             }
         }
 
